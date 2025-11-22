@@ -1,0 +1,81 @@
+---
+import { getTranslations } from '../../lib/i18n';
+
+const locale = Astro.locals.locale || 'zh';
+const user = Astro.locals.user;
+const t = getTranslations(locale);
+
+const { currentPath } = Astro.props;
+---
+
+<header class="py-6 flex items-center justify-between">
+  <a href="/" class="text-2xl font-bold text-white flex items-center gap-2">
+    <span class="bg-blue-600 text-white p-1 rounded">T</span>
+    Trend Now
+  </a>
+
+  <nav class="hidden md:flex items-center gap-6">
+    <a href="/" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/' ? 'text-blue-400' : 'text-gray-300'}`}>
+      {t.nav.home}
+    </a>
+    <a href="/about" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/about' ? 'text-blue-400' : 'text-gray-300'}`}>
+      {t.nav.about}
+    </a>
+    <a href="/contact" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/contact' ? 'text-blue-400' : 'text-gray-300'}`}>
+      {t.nav.contact}
+    </a>
+  </nav>
+
+  <div class="flex items-center gap-4">
+    <!-- Language Switcher -->
+    <div class="flex items-center bg-gray-800 rounded-full p-1">
+      <button 
+        class={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'zh' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+        onclick="document.cookie='locale=zh; path=/; max-age=31536000'; window.location.reload()"
+      >
+        中
+      </button>
+      <button 
+        class={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+        onclick="document.cookie='locale=en; path=/; max-age=31536000'; window.location.reload()"
+      >
+        EN
+      </button>
+    </div>
+
+    <!-- Auth Menu -->
+    {user ? (
+      <div class="relative group">
+        <button class="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-white">
+          {user.username}
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+        </button>
+        <div class="absolute right-0 mt-2 w-48 bg-gray-900 border border-gray-700 rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+          <button 
+            id="logout-btn"
+            class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white rounded-md"
+          >
+            {t.nav.logout}
+          </button>
+        </div>
+      </div>
+    ) : (
+      <div class="flex items-center gap-4">
+        <a href="/login" class="text-sm font-medium text-gray-300 hover:text-white">{t.nav.login}</a>
+        <a href="/register" class="text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors">{t.nav.register}</a>
+      </div>
+    )}
+  </div>
+</header>
+
+<script>
+  document.getElementById('logout-btn')?.addEventListener('click', async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Logout failed', error);
+    }
+  });
+</script>
+

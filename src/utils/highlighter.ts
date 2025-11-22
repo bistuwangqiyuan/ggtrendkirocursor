@@ -1,6 +1,6 @@
-import { createHighlighter } from 'shiki';
+// import { createHighlighter } from 'shiki';
 
-export const highlighterPromise = createHighlighter({
-    langs: ['jsx', 'js'],
-    themes: ['min-dark']
+// Mock highlighter to avoid shiki issues in Netlify Functions
+export const highlighterPromise = Promise.resolve({
+    codeToHtml: (code: string) => `<pre><code>${code}</code></pre>`
 });

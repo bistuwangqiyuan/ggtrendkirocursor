@@ -1,34 +1,40 @@
 ---
-import '../../src/styles/globals.css';
+import '../styles/globals.css';
 import '@fontsource-variable/inter/wght.css';
-import interWoff2 from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
-import Header from '../components/Header.astro';
-import Footer from '../components/Footer.astro';
+import Header from '../components/layout/Header.astro';
+import Footer from '../components/layout/Footer.astro';
+import { ClientRouter } from 'astro:transitions';
+import { getTranslations } from '../lib/i18n';
 
 interface Props {
-    title: string;
+  title: string;
+  description?: string;
 }
 
-const { title } = Astro.props;
+const { title, description = "Google Trends Data" } = Astro.props;
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+const currentPath = Astro.url.pathname;
 ---
 
 <!doctype html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <title>{title}</title>
-        <meta name="viewport" content="width=device-width" />
-        <meta name="generator" content={Astro.generator} />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <link rel="preload" as="font" type="font/woff2" href={interWoff2} crossorigin />
-    </head>
-    <body class="antialiased text-white bg-complementary">
-        <div class="flex flex-col min-h-screen px-6 bg-noise sm:px-12">
-            <div class="flex flex-col w-full max-w-5xl mx-auto grow">
-                <Header />
-                <main class="grow"><slot /></main>
-                <Footer />
-            </div>
-        </div>
-    </body>
+<html lang={locale}>
+  <head>
+    <meta charset="UTF-8" />
+    <title>{title} | {t.common.appName}</title>
+    <meta name="description" content={description} />
+    <meta name="viewport" content="width=device-width" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+    <ClientRouter />
+  </head>
+  <body class="bg-gray-950 text-white font-sans min-h-screen flex flex-col">
+    <div class="flex-grow px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full flex flex-col">
+      <Header currentPath={currentPath} />
+      <main class="flex-grow py-8 w-full">
+        <slot />
+      </main>
+      <Footer />
+    </div>
+  </body>
 </html>

@@ -1,0 +1,30 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getTranslations } from '../lib/i18n';
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+---
+
+<Layout title={t.footer.terms}>
+  <div class="max-w-3xl mx-auto prose prose-invert">
+    <h1 class="text-3xl font-bold mb-6 text-white">{t.footer.terms}</h1>
+    
+    <div class="space-y-4 text-gray-300">
+      <p>Last updated: {new Date().toLocaleDateString()}</p>
+      
+      <p>
+        {locale === 'zh'
+          ? '欢迎使用 Trend Now。使用本服务即表示您同意遵守以下条款。'
+          : 'Welcome to Trend Now. By using our service, you agree to comply with the following terms.'}
+      </p>
+
+      <h2 class="text-xl font-semibold text-white mt-8 mb-4">1. Acceptance of Terms</h2>
+      <p>By accessing and using this website, you accept and agree to be bound by the terms and provision of this agreement.</p>
+
+      <h2 class="text-xl font-semibold text-white mt-8 mb-4">2. Use License</h2>
+      <p>Permission is granted to temporarily download one copy of the materials (information or software) on Trend Now's website for personal, non-commercial transitory viewing only.</p>
+    </div>
+  </div>
+</Layout>
+

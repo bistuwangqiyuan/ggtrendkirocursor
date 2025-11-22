@@ -1,0 +1,23 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getTranslations } from '../lib/i18n';
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+---
+
+<Layout title="404 Not Found">
+  <div class="flex flex-col items-center justify-center min-h-[60vh] text-center">
+    <h1 class="text-6xl font-bold text-blue-600 mb-4">404</h1>
+    <h2 class="text-2xl font-bold text-white mb-6">Page Not Found</h2>
+    <p class="text-gray-400 mb-8">
+      {locale === 'zh' 
+        ? '抱歉，您访问的页面不存在。' 
+        : 'Sorry, the page you are looking for does not exist.'}
+    </p>
+    <a href="/" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition-colors">
+      {t.nav.home}
+    </a>
+  </div>
+</Layout>
+

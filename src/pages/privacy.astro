@@ -1,0 +1,30 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getTranslations } from '../lib/i18n';
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+---
+
+<Layout title={t.footer.privacy}>
+  <div class="max-w-3xl mx-auto prose prose-invert">
+    <h1 class="text-3xl font-bold mb-6 text-white">{t.footer.privacy}</h1>
+    
+    <div class="space-y-4 text-gray-300">
+      <p>Last updated: {new Date().toLocaleDateString()}</p>
+      
+      <p>
+        {locale === 'zh'
+          ? '我们非常重视您的隐私。本隐私政策说明了我们如何收集、使用和保护您的个人信息。'
+          : 'We value your privacy. This Privacy Policy explains how we collect, use, and protect your personal information.'}
+      </p>
+
+      <h2 class="text-xl font-semibold text-white mt-8 mb-4">1. Information We Collect</h2>
+      <p>We collect information you provide directly to us, such as when you create an account, submit feedback, or contact us.</p>
+
+      <h2 class="text-xl font-semibold text-white mt-8 mb-4">2. How We Use Information</h2>
+      <p>We use the information we collect to provide, maintain, and improve our services.</p>
+    </div>
+  </div>
+</Layout>
+

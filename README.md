@@ -1,43 +1,91 @@
-# Astro on Netlify Platform Starter
+# Trend Now
 
-[Live Demo](https://astro-platform-starter.netlify.app/)
+Trend Now is a real-time Google Trends data visualization platform built with Astro, React, and Netlify. It provides marketers and analysts with instant access to US search trends, featuring advanced filtering, multi-language support, and a modern responsive interface.
 
-A modern starter based on Astro.js, Tailwind, and [Netlify Core Primitives](https://docs.netlify.com/core/overview/#develop) (Edge Functions, Image CDN, Blobs).
+## Features
 
-## Astro Commands
+- **Real-time Trends**: View the latest Google Trends data (past 4h, 24h, 48h).
+- **Advanced Filtering**: Filter by time range, category, and keyword search.
+- **User System**: Secure registration and login (bcrypt hashing, session cookies).
+- **Internationalization**: Full support for English and Chinese (switchable).
+- **Responsive Design**: Optimized for Mobile, Tablet, and Desktop.
+- **SEO Optimized**: Server-Side Rendering (SSR), semantic HTML, and structured data.
+- **Feedback System**: Integrated user feedback submission.
+- **Performance**: Low latency, partial hydration with Astro Islands.
 
-All commands are run from the root of the project, from a terminal:
+## Tech Stack
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+- **Framework**: [Astro 5](https://astro.build) (SSR Mode)
+- **UI Library**: [React 19](https://react.dev)
+- **Styling**: [Tailwind CSS 4](https://tailwindcss.com)
+- **Database**: PostgreSQL (Neon via Netlify)
+- **Authentication**: Custom Session-based Auth with `bcryptjs`
+- **Testing**: Vitest, Fast-Check (Property-based testing)
+- **Deployment**: Netlify (Edge Functions & Serverless)
 
-## Deploying to Netlify
+## Prerequisites
 
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/netlify-templates/astro-platform-starter)
+- Node.js v18.20.8+
+- PostgreSQL Database (Neon recommended)
 
-## Developing Locally
+## Environment Variables
 
-| Prerequisites                                                                |
-| :--------------------------------------------------------------------------- |
-| [Node.js](https://nodejs.org/) v18.20.8+.                                    |
-| (optional) [nvm](https://github.com/nvm-sh/nvm) for Node version management. |
+Create a `.env` file in the root directory with the following variables:
 
-1. Clone this repository, then run `npm install` in its root directory.
+```env
+# Database Connection String
+DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 
-2. Recommended: link your local repository to a Netlify project. This will ensure you're using the same runtime version for both local development and your deployed project.
-
+# Node Environment
+NODE_ENV=development
 ```
-netlify link
+
+## Installation
+
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd trend-now
+   ```
+
+2. Install dependencies (using pnpm):
+   ```bash
+   pnpm install
+   ```
+
+3. Initialize Database:
+   Run the SQL script in `scripts/init-db.sql` against your PostgreSQL database to create the required tables.
+
+4. Start Development Server:
+   ```bash
+   pnpm run dev
+   ```
+
+## Deployment
+
+This project is designed to be deployed on Netlify.
+
+1. Link your project to Netlify:
+   ```bash
+   netlify link
+   ```
+
+2. Set Environment Variables in Netlify Dashboard.
+
+3. Deploy:
+   ```bash
+   pnpm run build
+   netlify deploy --prod
+   ```
+
+## Testing
+
+Run the test suite:
+
+```bash
+pnpm test
 ```
 
-3. Run the Astro.js development server:
+## License
 
-```
-npm run dev
-```
+MIT

@@ -1,19 +1,81 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Markdown from '../components/Markdown.astro';
+import TrendsTable from '../components/trends/TrendsTable.astro';
+import { TrendsFilters } from '../components/trends/TrendsFilters';
+import { Pagination } from '../components/trends/Pagination';
+import { trendsService } from '../lib/services/trends';
+import { getTranslations } from '../lib/i18n';
+import type { TrendsQueryParams } from '../types';
 
-const explainer = `
-An Astro website can go way beyond static pages - on the right platform.
+// Enable SSR back
+export const prerender = false;
 
-Netlify supports not only [Streaming SSR](https://docs.astro.build/en/guides/server-side-rendering/#html-streaming) and fast [Edge Middleware](https://docs.astro.build/en/guides/middleware/), but also [on-demand revalidation](https://www.netlify.com/blog/cache-tags-and-purge-api-on-netlify/) and [stale-while-revalidate](https://www.netlify.com/blog/swr-and-fine-grained-cache-control/). 
-Any page or data can be rebuilt only when needed, without site visitors ever getting a performance hit.
-`;
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+
+// Parse Query Params
+const timeRange = (Astro.url.searchParams.get('timeRange') as any) || 'past_4_hours';
+const keyword = Astro.url.searchParams.get('keyword') || '';
+const category = Astro.url.searchParams.get('category') || '';
+const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
+const pageSize = 20;
+
+const params: TrendsQueryParams = {
+  timeRange,
+  keyword: keyword || undefined,
+  category: category || undefined,
+  page,
+  pageSize,
+  sortBy: 'search_volume', 
+  sortOrder: 'desc'
+};
+
+// Fetch Data
+const [trendsResult, categoriesResult] = await Promise.all([
+  trendsService.getTrends(params),
+  trendsService.getCategories()
+]);
+
+const trendsData = trendsResult.success ? trendsResult.data : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
+const categories = categoriesResult.success ? categoriesResult.data : [];
+const error = !trendsResult.success ? trendsResult.error : null;
 ---
 
-<Layout title="Welcome to Astro.">
-    <h1 class="mb-10">Netlify Platform Starter for Astro</h1>
-    <Markdown content={explainer} class="mb-10 text-lg" />
-    <p>
-        <a href="https://docs.netlify.com/frameworks/astro/" class="btn btn-lg sm:min-w-64">Read the Docs</a>
-    </p>
+<Layout title={t.trends.title}>
+  <div class="space-y-6">
+    <div class="flex items-center justify-between">
+      <h1 class="text-3xl font-bold tracking-tight text-white">
+        {t.trends.title}
+      </h1>
+      <div class="text-sm text-gray-400">
+         {t.trends.timeRange[timeRange as keyof typeof t.trends.timeRange]}
+      </div>
+    </div>
+
+    {error && (
+      <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-md">
+        {t.auth.errors.generic}
+      </div>
+    )}
+
+    <TrendsFilters 
+      client:load 
+      initialFilters={{ timeRange, keyword, category }} 
+      categories={categories}
+      locale={locale}
+      translations={{ trends: t.trends }}
+    />
+
+    <TrendsTable trends={trendsData.trends} locale={locale} />
+
+    <Pagination 
+      client:load
+      currentPage={trendsData.pagination.currentPage}
+      totalPages={trendsData.pagination.totalPages}
+      totalItems={trendsData.pagination.totalItems}
+      pageSize={trendsData.pagination.pageSize}
+      locale={locale}
+      translations={{ trends: t.trends }}
+    />
+  </div>
 </Layout>

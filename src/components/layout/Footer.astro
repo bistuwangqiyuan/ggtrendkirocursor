@@ -1,0 +1,22 @@
+---
+import { getTranslations } from '../../lib/i18n';
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+const year = new Date().getFullYear();
+---
+
+<footer class="py-8 mt-12 border-t border-gray-800">
+  <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+    <div class="text-gray-400 text-sm">
+      {t.footer.copyright.replace('2024', year.toString())}
+    </div>
+    <div class="flex items-center gap-6">
+      <a href="/about" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.nav.about}</a>
+      <a href="/contact" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.nav.contact}</a>
+      <a href="/privacy" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.footer.privacy}</a>
+      <a href="/terms" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.footer.terms}</a>
+    </div>
+  </div>
+</footer>
+
