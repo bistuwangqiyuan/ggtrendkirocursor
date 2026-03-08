@@ -21,25 +21,25 @@ const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
 const pageSize = 20;
 
 const params: TrendsQueryParams = {
-  timeRange: urlTimeRange || '4h',
-  keyword: keyword || undefined,
-  category: category || undefined,
-  page,
-  pageSize,
-  sortBy: 'search_volume', 
-  sortOrder: 'desc'
+    timeRange: urlTimeRange || undefined,
+    keyword: keyword || undefined,
+    category: category || undefined,
+    page,
+    pageSize,
+    sortBy: 'search_volume',
+    sortOrder: 'desc'
 };
 
 // Fetch Data
 const categoriesResult = await trendsService.getCategories();
 let trendsResult = await trendsService.getTrends(params);
 
-// Fallback: if no data for the selected time_range, try without filter
-if (trendsResult.success && trendsResult.data.trends.length === 0 && !urlTimeRange) {
-  trendsResult = await trendsService.getTrends({
-    ...params,
-    timeRange: '',
-  });
+// Fallback: if no data for the selected time range, try without time_range filter
+if (trendsResult.success && trendsResult.data.trends.length === 0 && urlTimeRange) {
+    trendsResult = await trendsService.getTrends({
+        ...params,
+        timeRange: undefined
+    });
 }
 
 const timeRange = urlTimeRange || '4h';
@@ -49,40 +49,36 @@ const error = !trendsResult.success ? trendsResult.error : null;
 ---
 
 <Layout title={t.trends.title}>
-  <div class="space-y-6">
-    <div class="flex items-center justify-between">
-      <h1 class="text-3xl font-bold tracking-tight text-white">
-        {t.trends.title}
-      </h1>
-      <div class="text-sm text-gray-400">
-         {t.trends.timeRange[timeRange as keyof typeof t.trends.timeRange]}
-      </div>
+    <div class="space-y-6">
+        <div class="flex items-center justify-between">
+            <h1 class="text-3xl font-bold tracking-tight text-white">
+                {t.trends.title}
+            </h1>
+            <div class="text-sm text-gray-400">
+                {t.trends.timeRange[timeRange as keyof typeof t.trends.timeRange]}
+            </div>
+        </div>
+
+        {error && <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-md">{t.auth.errors.generic}</div>}
+
+        <TrendsFilters
+            client:load
+            initialFilters={{ timeRange, keyword, category }}
+            categories={categories}
+            locale={locale}
+            translations={{ trends: t.trends }}
+        />
+
+        <TrendsTable trends={trendsData.trends} locale={locale} />
+
+        <Pagination
+            client:load
+            currentPage={trendsData.pagination.currentPage}
+            totalPages={trendsData.pagination.totalPages}
+            totalItems={trendsData.pagination.totalItems}
+            pageSize={trendsData.pagination.pageSize}
+            locale={locale}
+            translations={{ trends: t.trends }}
+        />
     </div>
-
-    {error && (
-      <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-md">
-        {t.auth.errors.generic}
-      </div>
-    )}
-
-    <TrendsFilters 
-      client:load 
-      initialFilters={{ timeRange, keyword, category }} 
-      categories={categories}
-      locale={locale}
-      translations={{ trends: t.trends }}
-    />
-
-    <TrendsTable trends={trendsData.trends} locale={locale} />
-
-    <Pagination 
-      client:load
-      currentPage={trendsData.pagination.currentPage}
-      totalPages={trendsData.pagination.totalPages}
-      totalItems={trendsData.pagination.totalItems}
-      pageSize={trendsData.pagination.pageSize}
-      locale={locale}
-      translations={{ trends: t.trends }}
-    />
-  </div>
 </Layout>

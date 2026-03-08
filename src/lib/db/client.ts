@@ -77,3 +77,31 @@ export async function queryOne<T = any>(text: string, params?: any[]): Promise<T
 export async function getClient() {
   return await pool.connect();
 }
+
+/** Resolve trends table name: env TRENDS_TABLE, or trends_trending_now (preferred), else google_trends. */
+let cachedTrendsTableName: string | null = null;
+
+export async function getTrendsTableName(): Promise<string> {
+  if (cachedTrendsTableName) return cachedTrendsTableName;
+  const fromEnv = process.env.TRENDS_TABLE?.trim();
+  if (fromEnv) {
+    cachedTrendsTableName = fromEnv;
+    return cachedTrendsTableName;
+  }
+  try {
+    const p = getPool();
+    if (!p) {
+      cachedTrendsTableName = 'trends_trending_now';
+      return cachedTrendsTableName;
+    }
+    const res = await p.query(
+      `SELECT table_name FROM information_schema.tables 
+       WHERE table_schema = 'public' AND table_name IN ('trends_trending_now', 'google_trends') 
+       ORDER BY CASE table_name WHEN 'trends_trending_now' THEN 0 ELSE 1 END LIMIT 1`
+    );
+    cachedTrendsTableName = res.rows[0]?.table_name || 'trends_trending_now';
+  } catch {
+    cachedTrendsTableName = 'trends_trending_now';
+  }
+  return cachedTrendsTableName;
+}

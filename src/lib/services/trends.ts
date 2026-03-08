@@ -1,17 +1,26 @@
-import { query, queryOne } from '../db/client';
+import { query, queryOne, getTrendsTableName } from '../db/client';
 import type { Trend, PaginatedTrends, TrendsStats, TrendsQueryParams, Result, DatabaseError, TimeRange } from '../../types';
 
-const TABLE_NAME = 'google_trends';
+/** Map frontend timeRange to DB time_range values (DB may store past_4_hours etc.) */
+const TIME_RANGE_TO_DB: Record<string, string> = {
+  '4h': 'past_4_hours',
+  '24h': 'past_24_hours',
+  '48h': 'past_48_hours',
+  past_4_hours: 'past_4_hours',
+  past_24_hours: 'past_24_hours',
+  past_48_hours: 'past_48_hours',
+};
 
 const SORT_COLUMN_MAP: Record<string, string> = {
   search_volume: 'search_volume',
   growth_rate: 'growth_rate',
-  timestamp: 'trend_timestamp',
+  timestamp: 'timestamp',
 };
 
 export class TrendsService {
   async getTrends(params: TrendsQueryParams): Promise<Result<PaginatedTrends, DatabaseError>> {
     try {
+      const tableName = await getTrendsTableName();
       const {
         timeRange,
         keyword,
@@ -28,8 +37,9 @@ export class TrendsService {
       let paramIndex = 1;
 
       if (timeRange) {
+        const dbTimeRange = TIME_RANGE_TO_DB[timeRange] ?? timeRange;
         whereClauses.push(`time_range = $${paramIndex++}`);
-        values.push(timeRange);
+        values.push(dbTimeRange);
       }
 
       if (keyword) {
@@ -47,13 +57,14 @@ export class TrendsService {
 
       const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
       
-      const countSql = `SELECT COUNT(*) as total FROM ${TABLE_NAME} ${whereSql}`;
+      const countSql = `SELECT COUNT(*) as total FROM "${tableName}" ${whereSql}`;
       const countResult = await queryOne<{ total: string }>(countSql, values);
       const totalItems = parseInt(countResult?.total || '0', 10);
       const totalPages = Math.ceil(totalItems / pageSize);
 
       const safeSortBy = SORT_COLUMN_MAP[sortBy] || 'search_volume';
       const safeSortOrder = sortOrder === 'asc' ? 'ASC' : 'DESC';
+      const orderByCol = safeSortBy === 'timestamp' ? '"timestamp"' : safeSortBy;
       const offset = (page - 1) * pageSize;
       
       const dataSql = `
@@ -63,11 +74,11 @@ export class TrendsService {
                category,
                time_range as "timeRange",
                region,
-               trend_timestamp as "timestamp",
+               "timestamp" as "timestamp",
                created_at as "createdAt"
-        FROM ${TABLE_NAME}
+        FROM "${tableName}"
         ${whereSql}
-        ORDER BY ${safeSortBy} ${safeSortOrder}
+        ORDER BY ${orderByCol} ${safeSortOrder}
         LIMIT $${paramIndex++} OFFSET $${paramIndex++}
       `;
       
@@ -92,7 +103,8 @@ export class TrendsService {
 
   async getCategories(): Promise<Result<string[], DatabaseError>> {
     try {
-      const sql = `SELECT DISTINCT category FROM ${TABLE_NAME} ORDER BY category ASC`;
+      const tableName = await getTrendsTableName();
+      const sql = `SELECT DISTINCT category FROM "${tableName}" ORDER BY category ASC`;
       const rows = await query<{ category: string }>(sql);
       return {
         success: true,
@@ -106,23 +118,25 @@ export class TrendsService {
 
   async getTrendsStats(timeRange: TimeRange): Promise<Result<TrendsStats, DatabaseError>> {
     try {
-      const countSql = `SELECT COUNT(*) as total FROM ${TABLE_NAME} WHERE time_range = $1`;
-      const countRes = await queryOne<{ total: string }>(countSql, [timeRange]);
+      const tableName = await getTrendsTableName();
+      const dbTimeRange = TIME_RANGE_TO_DB[timeRange] ?? timeRange;
+      const countSql = `SELECT COUNT(*) as total FROM "${tableName}" WHERE time_range = $1`;
+      const countRes = await queryOne<{ total: string }>(countSql, [dbTimeRange]);
       const totalTrends = parseInt(countRes?.total || '0', 10);
 
-      const avgSql = `SELECT AVG(growth_rate) as avg_growth FROM ${TABLE_NAME} WHERE time_range = $1`;
-      const avgRes = await queryOne<{ avg_growth: string }>(avgSql, [timeRange]);
+      const avgSql = `SELECT AVG(growth_rate) as avg_growth FROM "${tableName}" WHERE time_range = $1`;
+      const avgRes = await queryOne<{ avg_growth: string }>(avgSql, [dbTimeRange]);
       const averageGrowthRate = parseFloat(avgRes?.avg_growth || '0');
 
       const catSql = `
         SELECT category, COUNT(*) as count 
-        FROM ${TABLE_NAME} 
+        FROM "${tableName}" 
         WHERE time_range = $1 
         GROUP BY category 
         ORDER BY count DESC 
         LIMIT 5
       `;
-      const topCategories = await query<{ category: string; count: string }>(catSql, [timeRange]);
+      const topCategories = await query<{ category: string; count: string }>(catSql, [dbTimeRange]);
 
       return {
         success: true,

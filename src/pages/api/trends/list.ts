@@ -7,7 +7,7 @@ export const GET: APIRoute = async ({ request }) => {
   const timeRange = url.searchParams.get('timeRange') || '';
 
   const params: TrendsQueryParams = {
-    timeRange: timeRange || '4h',
+    timeRange: timeRange || undefined,
     keyword: url.searchParams.get('keyword') || undefined,
     category: url.searchParams.get('category') || undefined,
     sortBy: (url.searchParams.get('sortBy') as any) || 'search_volume',
@@ -18,9 +18,9 @@ export const GET: APIRoute = async ({ request }) => {
 
   let result = await trendsService.getTrends(params);
 
-  // Fallback: if no results for selected time range, try without filter
-  if (result.success && result.data.trends.length === 0 && !timeRange) {
-    result = await trendsService.getTrends({ ...params, timeRange: '' });
+  // Fallback: if no results for selected time range, try without time_range filter
+  if (result.success && result.data.trends.length === 0 && timeRange) {
+    result = await trendsService.getTrends({ ...params, timeRange: undefined });
   }
 
   if (!result.success) {

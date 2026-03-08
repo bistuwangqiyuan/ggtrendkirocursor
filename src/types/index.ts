@@ -79,7 +79,7 @@ export interface ValidationError {
 }
 
 export interface TrendsQueryParams {
-  timeRange: '4h' | '24h' | '48h' | string;
+  timeRange?: '4h' | '24h' | '48h' | string;
   keyword?: string;
   category?: string;
   excludeCategories?: string[];
