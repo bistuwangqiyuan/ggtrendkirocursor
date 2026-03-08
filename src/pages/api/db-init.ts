@@ -4,10 +4,6 @@ import { pool } from '../../lib/db/client';
 const INIT_SQL = `
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-DROP TABLE IF EXISTS sessions CASCADE;
-DROP TABLE IF EXISTS feedback CASCADE;
-DROP TABLE IF EXISTS users CASCADE;
-
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   username VARCHAR(50) UNIQUE NOT NULL,
