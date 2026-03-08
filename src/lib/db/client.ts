@@ -105,3 +105,29 @@ export async function getTrendsTableName(): Promise<string> {
   }
   return cachedTrendsTableName;
 }
+
+/** Resolve timestamp column name for trends table (timestamp or trend_timestamp). Cached per table. */
+const cachedTimestampColumn = new Map<string, string>();
+
+export async function getTimestampColumnName(tableName: string): Promise<string> {
+  if (cachedTimestampColumn.has(tableName)) return cachedTimestampColumn.get(tableName)!;
+  try {
+    const p = getPool();
+    if (!p) {
+      cachedTimestampColumn.set(tableName, 'timestamp');
+      return 'timestamp';
+    }
+    const res = await p.query(
+      `SELECT column_name FROM information_schema.columns 
+       WHERE table_schema = 'public' AND table_name = $1 AND column_name IN ('timestamp', 'trend_timestamp') 
+       ORDER BY CASE column_name WHEN 'timestamp' THEN 0 ELSE 1 END LIMIT 1`,
+      [tableName]
+    );
+    const col = res.rows[0]?.column_name || 'timestamp';
+    cachedTimestampColumn.set(tableName, col);
+    return col;
+  } catch {
+    cachedTimestampColumn.set(tableName, 'timestamp');
+    return 'timestamp';
+  }
+}

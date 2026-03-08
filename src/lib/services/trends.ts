@@ -1,4 +1,4 @@
-import { query, queryOne, getTrendsTableName } from '../db/client';
+import { query, queryOne, getTrendsTableName, getTimestampColumnName, pool } from '../db/client';
 import type { Trend, PaginatedTrends, TrendsStats, TrendsQueryParams, Result, DatabaseError, TimeRange } from '../../types';
 
 /** Map frontend timeRange to DB time_range values (DB may store past_4_hours etc.) */
@@ -64,9 +64,11 @@ export class TrendsService {
 
       const safeSortBy = SORT_COLUMN_MAP[sortBy] || 'search_volume';
       const safeSortOrder = sortOrder === 'asc' ? 'ASC' : 'DESC';
-      const orderByCol = safeSortBy === 'timestamp' ? '"timestamp"' : safeSortBy;
+      const timestampCol = await getTimestampColumnName(tableName);
+      const orderByCol = safeSortBy === 'timestamp' ? (timestampCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp') : safeSortBy;
       const offset = (page - 1) * pageSize;
-      
+      const tsSelect = timestampCol === 'timestamp' ? '"timestamp" as "timestamp"' : 'trend_timestamp as "timestamp"';
+
       const dataSql = `
         SELECT id, keyword,
                search_volume as "searchVolume",
@@ -74,16 +76,33 @@ export class TrendsService {
                category,
                time_range as "timeRange",
                region,
-               "timestamp" as "timestamp",
+               ${tsSelect},
                created_at as "createdAt"
         FROM "${tableName}"
         ${whereSql}
         ORDER BY ${orderByCol} ${safeSortOrder}
         LIMIT $${paramIndex++} OFFSET $${paramIndex++}
       `;
-      
+
       values.push(pageSize, offset);
-      const trends = await query<Trend>(dataSql, values);
+      let trends: Trend[];
+      try {
+        const res = await pool.query(dataSql, values);
+        trends = (res.rows as any[]).map((row) => ({
+          id: row.id,
+          keyword: row.keyword,
+          searchVolume: typeof row.searchVolume === 'number' ? row.searchVolume : Number(row.searchVolume) || 0,
+          growthRate: typeof row.growthRate === 'number' ? row.growthRate : parseFloat(row.growthRate) || 0,
+          category: row.category ?? '',
+          timeRange: row.timeRange ?? '',
+          region: row.region ?? '',
+          timestamp: row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp),
+          createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt ?? 0),
+        })) as Trend[];
+      } catch (err) {
+        console.error('getTrends data query error:', (err as Error).message, 'sql:', dataSql.substring(0, 200));
+        throw err;
+      }
 
       return {
         success: true,
