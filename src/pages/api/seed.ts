@@ -30,7 +30,6 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   try {
-    // Use pool directly
     const client = await pool.connect();
     
     await client.query(`
@@ -44,37 +43,38 @@ export const POST: APIRoute = async ({ request }) => {
         region VARCHAR(10) DEFAULT 'US',
         timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-      
-      CREATE INDEX IF NOT EXISTS idx_trends_trending_now_timestamp ON trends_trending_now(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_trends_trending_now_time_range ON trends_trending_now(time_range);
-      CREATE INDEX IF NOT EXISTS idx_trends_trending_now_category ON trends_trending_now(category);
-      CREATE INDEX IF NOT EXISTS idx_trends_trending_now_search_volume ON trends_trending_now(search_volume);
-    `, []);
+      )
+    `);
 
-    await client.query('DELETE FROM trends_trending_now', []);
+    await client.query('DELETE FROM trends_trending_now');
 
-    const totalRecords = 2500; 
-    
-    for (let i = 0; i < totalRecords; i++) {
-      const keyword = uniqueNamesGenerator({
-        dictionaries: [adjectives, colors, animals],
-        separator: ' ',
-        length: 2,
-        style: 'capital'
-      });
+    const totalRecords = 2500;
+    const batchSize = 50;
 
-      const searchVolume = getRandomInt(1000, 10000000);
-      const growthRate = parseFloat(getRandomFloat(-50, 500).toFixed(2));
-      const category = CATEGORIES[getRandomInt(0, CATEGORIES.length - 1)];
-      const timeRange = TIME_RANGES[getRandomInt(0, TIME_RANGES.length - 1)];
-      const region = 'US';
-      const timestamp = new Date(Date.now() - getRandomInt(0, 48 * 60 * 60 * 1000));
+    for (let batch = 0; batch < totalRecords; batch += batchSize) {
+      const count = Math.min(batchSize, totalRecords - batch);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+
+      for (let i = 0; i < count; i++) {
+        const offset = i * 7;
+        placeholders.push(`($${offset+1}, $${offset+2}, $${offset+3}, $${offset+4}, $${offset+5}, $${offset+6}, $${offset+7})`);
+
+        values.push(
+          uniqueNamesGenerator({ dictionaries: [adjectives, colors, animals], separator: ' ', length: 2, style: 'capital' }),
+          getRandomInt(1000, 10000000),
+          parseFloat(getRandomFloat(-50, 500).toFixed(2)),
+          CATEGORIES[getRandomInt(0, CATEGORIES.length - 1)],
+          TIME_RANGES[getRandomInt(0, TIME_RANGES.length - 1)],
+          'US',
+          new Date(Date.now() - getRandomInt(0, 48 * 60 * 60 * 1000))
+        );
+      }
 
       await client.query(
         `INSERT INTO trends_trending_now (keyword, search_volume, growth_rate, category, time_range, region, timestamp)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [keyword, searchVolume, growthRate, category, timeRange, region, timestamp]
+         VALUES ${placeholders.join(', ')}`,
+        values
       );
     }
 
@@ -83,13 +83,19 @@ export const POST: APIRoute = async ({ request }) => {
     return new Response(JSON.stringify({
       success: true,
       message: `Successfully seeded ${totalRecords} trends`
-    }), { status: 200 });
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
 
   } catch (error: any) {
     console.error('Seed error:', error);
     return new Response(JSON.stringify({
       success: false,
       error: error.message
-    }), { status: 500 });
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 };
