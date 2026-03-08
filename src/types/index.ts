@@ -24,7 +24,7 @@ export interface Trend {
   searchVolume: number;
   growthRate: number;
   category: string;
-  timeRange: 'past_4_hours' | 'past_24_hours' | 'past_48_hours';
+  timeRange: '4h' | '24h' | '48h';
   region: string;
   timestamp: Date;
   createdAt: Date;
@@ -58,7 +58,7 @@ export interface TrendsStats {
   timeRange: string;
 }
 
-export type TimeRange = 'past_4_hours' | 'past_24_hours' | 'past_48_hours';
+export type TimeRange = '4h' | '24h' | '48h';
 
 export type Result<T, E = Error> = { success: true; data: T } | { success: false; error: E };
 
@@ -79,7 +79,7 @@ export interface ValidationError {
 }
 
 export interface TrendsQueryParams {
-  timeRange: 'past_4_hours' | 'past_24_hours' | 'past_48_hours' | string;
+  timeRange: '4h' | '24h' | '48h' | string;
   keyword?: string;
   category?: string;
   excludeCategories?: string[];

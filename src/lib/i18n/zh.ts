@@ -21,9 +21,9 @@ export const zh = {
     category: '分类',
     timestamp: '时间',
     timeRange: {
-      past_4_hours: '过去 4 小时',
-      past_24_hours: '过去 24 小时',
-      past_48_hours: '过去 48 小时'
+      '4h': '过去 4 小时',
+      '24h': '过去 24 小时',
+      '48h': '过去 48 小时'
     },
     filters: {
       searchPlaceholder: '搜索关键词...',

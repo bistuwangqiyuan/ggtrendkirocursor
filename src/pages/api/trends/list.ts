@@ -7,7 +7,7 @@ export const GET: APIRoute = async ({ request }) => {
   const timeRange = url.searchParams.get('timeRange') || '';
 
   const params: TrendsQueryParams = {
-    timeRange: timeRange || 'past_4_hours',
+    timeRange: timeRange || '4h',
     keyword: url.searchParams.get('keyword') || undefined,
     category: url.searchParams.get('category') || undefined,
     sortBy: (url.searchParams.get('sortBy') as any) || 'search_volume',

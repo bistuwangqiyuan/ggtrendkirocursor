@@ -21,7 +21,7 @@ const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
 const pageSize = 20;
 
 const params: TrendsQueryParams = {
-  timeRange: (urlTimeRange || 'past_4_hours') as any,
+  timeRange: urlTimeRange || '4h',
   keyword: keyword || undefined,
   category: category || undefined,
   page,
@@ -34,15 +34,15 @@ const params: TrendsQueryParams = {
 const categoriesResult = await trendsService.getCategories();
 let trendsResult = await trendsService.getTrends(params);
 
-// Fallback: if no data for the selected time_range, try without time_range filter
+// Fallback: if no data for the selected time_range, try without filter
 if (trendsResult.success && trendsResult.data.trends.length === 0 && !urlTimeRange) {
   trendsResult = await trendsService.getTrends({
     ...params,
-    timeRange: '' as any,
+    timeRange: '',
   });
 }
 
-const timeRange = urlTimeRange || 'past_4_hours';
+const timeRange = urlTimeRange || '4h';
 const trendsData = trendsResult.success ? trendsResult.data : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
 const categories = categoriesResult.success ? categoriesResult.data : [];
 const error = !trendsResult.success ? trendsResult.error : null;

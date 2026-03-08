@@ -56,7 +56,7 @@ export function TrendsFilters({ initialFilters, categories, locale, translations
   return (
     <div class="bg-gray-900/50 border border-gray-800 p-4 rounded-lg mb-6 flex flex-col md:flex-row gap-4 items-center justify-between">
       <div class="flex flex-wrap gap-2">
-        {(['past_4_hours', 'past_24_hours', 'past_48_hours'] as const).map((range) => (
+        {(['4h', '24h', '48h'] as const).map((range) => (
           <button
             key={range}
             onClick={() => handleChange('timeRange', range)}

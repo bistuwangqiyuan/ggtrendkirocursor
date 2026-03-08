@@ -21,9 +21,9 @@ export const en = {
     category: 'Category',
     timestamp: 'Time',
     timeRange: {
-      past_4_hours: 'Past 4 Hours',
-      past_24_hours: 'Past 24 Hours',
-      past_48_hours: 'Past 48 Hours'
+      '4h': 'Past 4 Hours',
+      '24h': 'Past 24 Hours',
+      '48h': 'Past 48 Hours'
     },
     filters: {
         searchPlaceholder: 'Search keywords...',
