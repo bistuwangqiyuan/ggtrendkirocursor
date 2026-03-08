@@ -86,12 +86,33 @@ export const POST: APIRoute = async ({ request }) => {
       results.push(`OK: ${firstLine.substring(0, 60)}`);
     }
 
+    // Diagnostic: test inserting into users table
+    const diagnostics: Record<string, string> = {};
+    try {
+      const tableCheck = await client.query(`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'users' ORDER BY ordinal_position`);
+      diagnostics.usersColumns = JSON.stringify(tableCheck.rows);
+    } catch (e: any) { diagnostics.usersColumnsError = e.message; }
+
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3)`,
+        ['__diag_test__', 'diag@test.com', 'fakehash']
+      );
+      await client.query('ROLLBACK');
+      diagnostics.insertTest = 'OK';
+    } catch (e: any) {
+      await client.query('ROLLBACK').catch(() => {});
+      diagnostics.insertTestError = e.message;
+    }
+
     client.release();
 
     return new Response(JSON.stringify({
       success: true,
       message: `Executed ${results.length} statements`,
-      details: results
+      details: results,
+      diagnostics
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
