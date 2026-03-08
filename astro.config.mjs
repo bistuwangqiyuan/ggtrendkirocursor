@@ -8,9 +8,6 @@ export default defineConfig({
     output: 'server',
     vite: {
         plugins: [tailwindcss()],
-        ssr: {
-            // external: ['pg'] // pg is removed
-        }
     },
     integrations: [react()],
     adapter: netlify({

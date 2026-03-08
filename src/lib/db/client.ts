@@ -3,27 +3,33 @@ const { Pool } = pg;
 
 let poolInstance: pg.Pool | null = null;
 
+function getConnectionString(): string | undefined {
+  return process.env.DATABASE_URL
+    || process.env.NETLIFY_DATABASE_URL
+    || process.env.NEON_DATABASE_URL;
+}
+
 function getPool() {
   if (!poolInstance) {
-    const connectionString = process.env.DATABASE_URL || process.env.NETLIFY_DATABASE_URL;
+    const connectionString = getConnectionString();
     
     if (!connectionString) {
-      console.error('DB Connection string missing');
-      // Don't throw here, let the query fail gracefully
+      console.error('[DB] Connection string missing. Checked: DATABASE_URL, NETLIFY_DATABASE_URL, NEON_DATABASE_URL');
+    } else {
+      console.log('[DB] Connecting with URL pattern:', connectionString.replace(/\/\/.*@/, '//***@'));
     }
 
-    // Optimized for serverless
     poolInstance = new Pool({
       connectionString,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-      max: 2, // Keep connections low for serverless
-      idleTimeoutMillis: 5000, // Close idle quickly
-      connectionTimeoutMillis: 3000, // Fail fast
+      ssl: { rejectUnauthorized: false },
+      max: 2,
+      idleTimeoutMillis: 5000,
+      connectionTimeoutMillis: 10000,
     });
     
     poolInstance.on('error', (err) => {
-      console.error('Unexpected error on idle client', err);
-      poolInstance = null; // Reset on error
+      console.error('[DB] Unexpected pool error:', err.message);
+      poolInstance = null;
     });
   }
   return poolInstance;
@@ -53,8 +59,12 @@ export async function query<T = any>(text: string, params?: any[]): Promise<T[]>
     const res = await pool.query(text, params);
     return res.rows;
   } catch (error) {
-    console.error('Database query error', { text: text.substring(0, 50), error: (error as Error).message });
-    // Return empty array on error to prevent crash
+    console.error('[DB] Query error:', {
+      sql: text.substring(0, 100),
+      params: params?.map(p => typeof p === 'string' && p.length > 50 ? p.substring(0, 50) + '...' : p),
+      error: (error as Error).message,
+      stack: (error as Error).stack?.split('\n').slice(0, 3).join('\n')
+    });
     return [];
   }
 }

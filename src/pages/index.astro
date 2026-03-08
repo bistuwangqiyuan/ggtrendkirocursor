@@ -5,7 +5,7 @@ import { TrendsFilters } from '../components/trends/TrendsFilters';
 import { Pagination } from '../components/trends/Pagination';
 import { trendsService } from '../lib/services/trends';
 import { getTranslations } from '../lib/i18n';
-import type { TrendsQueryParams } from '../types';
+import type { TrendsQueryParams } from '../types/index';
 
 // Enable SSR back
 export const prerender = false;
@@ -14,14 +14,14 @@ const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
 
 // Parse Query Params
-const timeRange = (Astro.url.searchParams.get('timeRange') as any) || 'past_4_hours';
+const urlTimeRange = Astro.url.searchParams.get('timeRange') || '';
 const keyword = Astro.url.searchParams.get('keyword') || '';
 const category = Astro.url.searchParams.get('category') || '';
 const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
 const pageSize = 20;
 
 const params: TrendsQueryParams = {
-  timeRange,
+  timeRange: (urlTimeRange || 'past_4_hours') as any,
   keyword: keyword || undefined,
   category: category || undefined,
   page,
@@ -31,11 +31,18 @@ const params: TrendsQueryParams = {
 };
 
 // Fetch Data
-const [trendsResult, categoriesResult] = await Promise.all([
-  trendsService.getTrends(params),
-  trendsService.getCategories()
-]);
+const categoriesResult = await trendsService.getCategories();
+let trendsResult = await trendsService.getTrends(params);
 
+// Fallback: if no data for the selected time_range, try without time_range filter
+if (trendsResult.success && trendsResult.data.trends.length === 0 && !urlTimeRange) {
+  trendsResult = await trendsService.getTrends({
+    ...params,
+    timeRange: '' as any,
+  });
+}
+
+const timeRange = urlTimeRange || 'past_4_hours';
 const trendsData = trendsResult.success ? trendsResult.data : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
 const categories = categoriesResult.success ? categoriesResult.data : [];
 const error = !trendsResult.success ? trendsResult.error : null;

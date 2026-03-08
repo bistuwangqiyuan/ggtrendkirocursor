@@ -8,7 +8,7 @@ export class TrendsService {
         timeRange,
         keyword,
         category,
-        excludeCategories = ['sports', 'entertainment'],
+        excludeCategories,
         sortBy = 'search_volume',
         sortOrder = 'desc',
         page = 1,
@@ -19,22 +19,20 @@ export class TrendsService {
       let values: any[] = [];
       let paramIndex = 1;
 
-      // Time range filter
-      whereClauses.push(`time_range = $${paramIndex++}`);
-      values.push(timeRange);
+      if (timeRange) {
+        whereClauses.push(`time_range = $${paramIndex++}`);
+        values.push(timeRange);
+      }
 
-      // Keyword filter
       if (keyword) {
         whereClauses.push(`keyword ILIKE $${paramIndex++}`);
         values.push(`%${keyword}%`);
       }
 
-      // Category filter
       if (category) {
         whereClauses.push(`category = $${paramIndex++}`);
         values.push(category);
       } else if (excludeCategories && excludeCategories.length > 0) {
-        // Exclude categories
         whereClauses.push(`category != ALL($${paramIndex++})`);
         values.push(excludeCategories);
       }
