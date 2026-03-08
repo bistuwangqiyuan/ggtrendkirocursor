@@ -4,6 +4,10 @@ import { pool } from '../../lib/db/client';
 const INIT_SQL = `
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+DROP TABLE IF EXISTS sessions CASCADE;
+DROP TABLE IF EXISTS feedback CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   username VARCHAR(50) UNIQUE NOT NULL,
@@ -86,24 +90,13 @@ export const POST: APIRoute = async ({ request }) => {
       results.push(`OK: ${firstLine.substring(0, 60)}`);
     }
 
-    // Diagnostic: test inserting into users table
-    const diagnostics: Record<string, string> = {};
-    try {
-      const tableCheck = await client.query(`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'users' ORDER BY ordinal_position`);
-      diagnostics.usersColumns = JSON.stringify(tableCheck.rows);
-    } catch (e: any) { diagnostics.usersColumnsError = e.message; }
-
-    try {
-      await client.query('BEGIN');
-      await client.query(
-        `INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3)`,
-        ['__diag_test__', 'diag@test.com', 'fakehash']
+    // Verify table structures
+    const verify: Record<string, any> = {};
+    for (const table of ['users', 'sessions', 'feedback', 'trends_trending_now']) {
+      const cols = await client.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`, [table]
       );
-      await client.query('ROLLBACK');
-      diagnostics.insertTest = 'OK';
-    } catch (e: any) {
-      await client.query('ROLLBACK').catch(() => {});
-      diagnostics.insertTestError = e.message;
+      verify[table] = cols.rows.map((r: any) => r.column_name);
     }
 
     client.release();
@@ -112,7 +105,7 @@ export const POST: APIRoute = async ({ request }) => {
       success: true,
       message: `Executed ${results.length} statements`,
       details: results,
-      diagnostics
+      tables: verify
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
