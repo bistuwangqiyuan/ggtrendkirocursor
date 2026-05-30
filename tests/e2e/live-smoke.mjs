@@ -93,11 +93,13 @@ async function run() {
   expect(/<link[^>]+rel=["']canonical["']/.test(home.body), 'R5', 'has canonical link', 'canonical present', 'no canonical');
 
   // ---- Req 4: i18n ----
+  // Use the <title> tag (locale-specific) to avoid matching the bilingual keywords meta tag.
   const homeEn = await http('/', { headers: { Cookie: 'locale=en' } });
-  expect(homeEn.status === 200 && homeEn.body.includes('Trends Data') && !homeEn.body.includes('趋势数据'),
-    'R4', 'english locale renders english UI', 'en strings found, zh absent',
-    `status=${homeEn.status} hasTrendsData=${homeEn.body.includes('Trends Data')} hasZh=${homeEn.body.includes('趋势数据')}`);
-  expect(home.body.includes('首页'), 'R4', 'chinese locale renders chinese nav', 'zh nav found', 'zh nav missing');
+  expect(homeEn.status === 200 && homeEn.body.includes('<title>Trends Data | Trend Now</title>'),
+    'R4', 'english locale renders english UI', 'en title rendered',
+    `status=${homeEn.status} titleEn=${homeEn.body.includes('<title>Trends Data | Trend Now</title>')}`);
+  expect(home.body.includes('<title>趋势数据 | Trend Now</title>') && home.body.includes('首页'),
+    'R4', 'chinese locale renders chinese UI', 'zh title + nav found', 'zh title/nav missing');
 
   // ---- Req 7: static pages ----
   const staticPages = [
