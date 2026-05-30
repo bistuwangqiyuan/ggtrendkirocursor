@@ -9,23 +9,68 @@ import { getTranslations } from '../lib/i18n';
 interface Props {
   title: string;
   description?: string;
+  image?: string;
 }
 
-const { title, description = "Google Trends Data" } = Astro.props;
+const {
+  title,
+  description = "Trend Now —  实时 Google Trends 数据可视化平台，提供美国热门搜索趋势的查询、筛选与分析。",
+  image = "/og-image.jpg",
+} = Astro.props;
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
 const currentPath = Astro.url.pathname;
+
+const siteOrigin = Astro.site?.origin ?? Astro.url.origin;
+const canonicalURL = new URL(Astro.url.pathname, siteOrigin).href;
+const ogImage = new URL(image, siteOrigin).href;
+const fullTitle = `${title} | ${t.common.appName}`;
+const ogLocale = locale === 'zh' ? 'zh_CN' : 'en_US';
+
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: t.common.appName,
+  url: siteOrigin,
+  description,
+  inLanguage: ogLocale,
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: `${siteOrigin}/?keyword={search_term_string}`,
+    'query-input': 'required name=search_term_string',
+  },
+};
 ---
 
 <!doctype html>
 <html lang={locale}>
   <head>
     <meta charset="UTF-8" />
-    <title>{title} | {t.common.appName}</title>
+    <title>{fullTitle}</title>
     <meta name="description" content={description} />
-    <meta name="viewport" content="width=device-width" />
+    <meta name="keywords" content="Google Trends, 趋势数据, 热门搜索, 实时趋势, trend analysis, trending now" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href={canonicalURL} />
     <meta name="generator" content={Astro.generator} />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={t.common.appName} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:locale" content={ogLocale} />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+
     <ClientRouter />
   </head>
   <body class="bg-gray-950 text-white font-sans min-h-screen flex flex-col">

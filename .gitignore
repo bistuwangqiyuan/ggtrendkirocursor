@@ -23,3 +23,9 @@ pnpm-debug.log*
 
 # Local Netlify folder
 .netlify
+
+# Cursor local plans/scratch
+.cursor/
+
+# e2e run artifact
+tests/e2e/last-run.json

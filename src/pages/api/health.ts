@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { pool } from '../../lib/db/client';
+import { APP_VERSION } from '../../version';
 
 export const GET: APIRoute = async () => {
   const dbUrl = process.env.DATABASE_URL
@@ -51,6 +52,7 @@ export const GET: APIRoute = async () => {
 
   return new Response(JSON.stringify({
     status: dbConnected ? 'ok' : 'degraded',
+    version: APP_VERSION,
     timestamp: new Date().toISOString(),
     env: {
       hasDbUrl: !!dbUrl,
