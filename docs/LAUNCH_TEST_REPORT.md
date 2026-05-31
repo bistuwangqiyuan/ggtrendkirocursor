@@ -114,7 +114,9 @@
 
 **受影响功能（待 DB 恢复后即可验证）**：趋势数据查询与展示、筛选/排序/分页结果、用户注册/登录/会话、反馈落库。
 
-**处置选项（任选其一）**：
+**重要：必须由站点所有者处理。** 经核实，线上站点 `ggtrendkirocursor` 不在当前可用的 Netlify 账号下（`netlify link` 报 “No projects found named ggtrendkirocursor”）。因此测试方**无法访问该站点的 Netlify 环境变量或其数据库**，只能通过推送 GitHub `main` 触发自动部署（代码层）。更换/修复数据库这类需要改动 Netlify 环境变量或数据库的操作，**只能由拥有该 Netlify 站点的账号所有者执行**。
+
+**处置选项（由站点所有者任选其一）**：
 1. 在 Neon 控制台升级套餐，或等待免费额度在新计费周期重置；
 2. 新建一个 Neon（或其他 PostgreSQL）实例，将新的连接串更新到 Netlify 环境变量 `DATABASE_URL`（或 `NETLIFY_DATABASE_URL`）后重新部署。
 
