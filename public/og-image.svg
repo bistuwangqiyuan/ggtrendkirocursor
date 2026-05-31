@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Trend Now">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0a0f"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g transform="translate(90,150)">
+    <rect x="0" y="0" width="86" height="86" rx="16" fill="#2563eb"/>
+    <text x="43" y="62" font-family="Inter, Arial, sans-serif" font-size="56" font-weight="800" fill="#ffffff" text-anchor="middle">T</text>
+    <text x="116" y="64" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="800" fill="#ffffff">Trend Now</text>
+  </g>
+  <text x="90" y="350" font-family="Inter, Arial, sans-serif" font-size="46" font-weight="700" fill="#e5e7eb">žö Google Trends pnïÆsð</text>
+  <text x="90" y="412" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="400" fill="#9ca3af">Real-time US search trends · filtering · analysis</text>
+  <g transform="translate(90,470)">
+    <rect x="0" y="0" width="380" height="8" rx="4" fill="url(#accent)"/>
+  </g>
+  <g transform="translate(760,150)" opacity="0.9">
+    <rect x="0"   y="180" width="44" height="120" rx="6" fill="#1f2937"/>
+    <rect x="64"  y="120" width="44" height="180" rx="6" fill="#334155"/>
+    <rect x="128" y="60"  width="44" height="240" rx="6" fill="#3b82f6"/>
+    <rect x="192" y="20"  width="44" height="280" rx="6" fill="#06b6d4"/>
+    <rect x="256" y="90"  width="44" height="210" rx="6" fill="#334155"/>
+  </g>
+</svg>

@@ -116,6 +116,18 @@ async function run() {
     expect(ok, req, `static page ${path} loads`, `status=${r.status}`, `status=${r.status} contains=${mustContain ? r.body.includes(mustContain) : 'n/a'}`);
   }
 
+  // ---- Req 5: crawler assets (robots / sitemap / og image) ----
+  const robots = await http('/robots.txt');
+  expect(robots.status === 200 && /sitemap/i.test(robots.body), 'R5', 'robots.txt served with sitemap', `status=${robots.status}`, `status=${robots.status}`);
+  const sitemap = await http('/sitemap.xml');
+  expect(sitemap.status === 200 && sitemap.body.includes('<urlset'), 'R5', 'sitemap.xml served', `status=${sitemap.status}`, `status=${sitemap.status}`);
+  const ogImg = await http('/og-image.svg');
+  expect(ogImg.status === 200, 'R5', 'og:image asset resolves (not 404)', `status=${ogImg.status}`, `status=${ogImg.status}`);
+
+  // ---- Req 11: /error page renders ----
+  const errPage = await http('/error', { headers: { Cookie: 'locale=zh' } });
+  expect(errPage.status === 200 && errPage.body.includes('Trend Now'), 'R11', '/error page renders', `status=${errPage.status}`, `status=${errPage.status}`);
+
   // ---- Req 11: 404 handling ----
   const notFound = await http('/this-page-does-not-exist-xyz', { headers: { Cookie: 'locale=zh' } });
   expect(notFound.status === 404, 'R11', '404 page returns 404 status', `status=${notFound.status}`, `status=${notFound.status}`);
