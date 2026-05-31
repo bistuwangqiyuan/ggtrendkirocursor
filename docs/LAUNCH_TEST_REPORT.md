@@ -13,7 +13,7 @@
 | 测试层 | 结果 |
 | --- | --- |
 | 本地单元测试 (vitest) | 8 / 8 通过 |
-| 线上端到端 HTTP 探测 (35 项) | 27 PASS / 0 FAIL / 8 BLOCKED |
+| 线上端到端 HTTP 探测 (39 项) | 31 PASS / 0 FAIL / 8 BLOCKED |
 | 浏览器交互测试 (9 项) | 9 / 9 通过 |
 
 结论：**所有可测试的功能（非数据库依赖）100% 通过**。代码层面发现并修复的全部缺陷已上线验证。唯一未通过项是 **8 个数据库依赖功能**，它们被一个外部基础设施问题阻塞——线上 Neon (PostgreSQL) 项目报 “compute time quota exceeded”（计算时长配额超限），数据库连接被拒绝。该问题**无法通过修改代码解决**，需在 Neon/Netlify 侧处理（见第 6 节）。
@@ -24,13 +24,13 @@
 
 ### 复测结论 (2026-05-31 Re-verification)
 
-整套测试在次日重跑一次以确认无回归：
+整套测试在次日重跑并补强了 SEO 抓取相关的检查：
 
 - 本地单元测试 (vitest)：8 / 8 通过（无回归）。
-- 线上端到端探测：**27 PASS / 0 FAIL / 8 BLOCKED**（与上一日完全一致，线上版本 `2026.05.30-3`）。
-- 数据库：经短间隔多次探测，Neon 仍返回 “compute time quota exceeded”，连接持续被拒。距首次发现已逾一天仍未恢复，**确认为月度计算配额耗尽（硬限制），非瞬时抖动**。
-- 本轮无新增代码缺陷，因此未触发新的部署（循环仅由代码缺陷或数据库恢复驱动，不做无意义的空转重部署）。
-- 8 个数据库依赖项仍待外部修复（见第 6 节处置建议）后方可转为实测。
+- 线上端到端探测：在原 35 项基础上**新增 4 项 SEO 抓取检查**（robots.txt、sitemap.xml、og:image 资源、`/error` 页），最终 **31 PASS / 0 FAIL / 8 BLOCKED（共 39 项）**，线上版本 `2026.05.31-2`。
+- 本轮发现并修复的真实代码缺陷（详见第 3 节第 4 项）：`/robots.txt`、`/sitemap.xml`、`/og-image.*` 均为 404。已补齐 `public/robots.txt`、`public/sitemap.xml`、`public/og-image.svg`，并将 `Layout` 的 `og:image` 指向存在的资源。复测全部转为 PASS。
+- 数据库：经多日多次探测，Neon 仍返回 “compute time quota exceeded”，连接持续被拒，**确认为月度计算配额耗尽（硬限制），非瞬时抖动**。
+- 经核实，线上站点不在当前可用的 Netlify 账号下（`netlify link` 报 “No projects found”），测试方无法改动其环境变量或数据库，**8 个数据库依赖项必须由站点所有者修复 DB 后**方可转为实测（见第 6 节）。
 
 ## 2. 测试-修复-上线循环记录 (Iterations)
 
@@ -38,7 +38,8 @@
 | --- | --- | --- | --- |
 | Iter 0 (基线) | 首次全量探测 | `2026.05.30-2` 前的线上版本 | 5 FAIL（3 个真实代码缺陷 + 2 个测试断言误报）, 8 BLOCKED |
 | Iter 1 (修复+上线) | 修复 SEO 缺陷、修正测试断言、提交 push 触发 Netlify 部署，poll `/api/health` 确认 `version=2026.05.30-2` 上线（约 40s） | `2026.05.30-2` | 复测 27 PASS / 0 FAIL / 8 BLOCKED |
-| Iter 2..N (DB 重试) | 每 90s 探测一次 `/api/health`，并尝试 `/api/db-init`、`/api/seed` | 无代码变更 | 数据库持续 “quota exceeded”，DB 项保持 BLOCKED |
+| Iter 2 (2026-05-31 SEO 补强) | 修复 robots.txt/sitemap.xml/og-image 三处 404，扩充 e2e 检查，push 触发部署，poll 确认 `2026.05.31-2` 上线 | `2026.05.31-2` | 复测 **31 PASS / 0 FAIL / 8 BLOCKED**（39 项） |
+| DB 重试（每轮） | 多日多次探测 `/api/health`，并尝试 `/api/db-init`、`/api/seed` | 无代码变更 | 数据库持续 “quota exceeded”，DB 项保持 BLOCKED |
 
 为支撑循环，新增了可复用的部署校验机制：在 `/api/health` 暴露 `APP_VERSION`（来自 [src/version.ts](../src/version.ts)），每次部署后轮询该字段即可确认新构建已生效。
 
@@ -53,6 +54,12 @@
    - 修复：在 [src/layouts/Layout.astro](../src/layouts/Layout.astro) 中补全 `og:*`、`twitter:*`、`canonical`、`keywords` 元标签，并注入 `WebSite` + `SearchAction` 的 JSON-LD。
    - 验证：上线后 `has Open Graph tags` / `has JSON-LD structured data` / `has canonical link` 均由 FAIL 转为 PASS。
    - 提交：`a67a6ac`
+
+4. **缺少 robots.txt / sitemap.xml / OG 图片资源（均 404）** — 对应需求 5（SEO，含 sitemap）。
+   - 现象：`/robots.txt`、`/sitemap.xml` 均 404；且第 1 项补的 `og:image` 指向了不存在的 `/og-image.jpg`（404，社交分享预览图失效）。
+   - 修复：新增 [public/robots.txt](../public/robots.txt)（含 sitemap 指向）、[public/sitemap.xml](../public/sitemap.xml)（覆盖首页与各主要静态页），新增品牌图 [public/og-image.svg](../public/og-image.svg) 并将 [src/layouts/Layout.astro](../src/layouts/Layout.astro) 的 `og:image` 改为该资源。
+   - 验证：上线后 `robots.txt served` / `sitemap.xml served` / `og:image asset resolves` / `/error page renders` 均 PASS。
+   - 提交：`14cbf1d`
 
 ### 测试侧修正 (非产品代码缺陷)
 
