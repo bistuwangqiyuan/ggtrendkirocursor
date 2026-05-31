@@ -20,6 +20,10 @@ const initialUser = user ? { name: user.username, email: user.email } : undefine
           ? '我们非常重视您的反馈。如果您有任何问题、建议或发现任何错误，请随时通过下方表单告诉我们。' 
           : 'We value your feedback. If you have any questions, suggestions, or bugs to report, please let us know using the form below.'}
       </p>
+      <p class="flex items-center gap-2">
+        <span class="text-gray-300 font-medium">{locale === 'zh' ? '邮箱：' : 'Email:'}</span>
+        <a href="mailto:13426086861@139.com" class="text-blue-400 hover:text-blue-300 underline-offset-4 hover:underline">13426086861@139.com</a>
+      </p>
     </div>
 
     <FeedbackForm 

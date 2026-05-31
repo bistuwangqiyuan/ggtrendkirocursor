@@ -116,6 +116,12 @@ async function run() {
     expect(ok, req, `static page ${path} loads`, `status=${r.status}`, `status=${r.status} contains=${mustContain ? r.body.includes(mustContain) : 'n/a'}`);
   }
 
+  // ---- Req 8: contact email is shown ----
+  const contactPage = await http('/contact', { headers: { Cookie: 'locale=zh' } });
+  expect(contactPage.status === 200 && contactPage.body.includes('13426086861@139.com'),
+    'R8', 'contact page shows real email', 'email present',
+    `status=${contactPage.status} hasEmail=${contactPage.body.includes('13426086861@139.com')}`);
+
   // ---- Req 5: crawler assets (robots / sitemap / og image) ----
   const robots = await http('/robots.txt');
   expect(robots.status === 200 && /sitemap/i.test(robots.body), 'R5', 'robots.txt served with sitemap', `status=${robots.status}`, `status=${robots.status}`);
