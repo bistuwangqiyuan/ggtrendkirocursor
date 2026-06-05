@@ -91,17 +91,42 @@ export async function getTrendsTableName(): Promise<string> {
   try {
     const p = getPool();
     if (!p) {
-      cachedTrendsTableName = 'trends_trending_now';
+      cachedTrendsTableName = 'google_trends';
       return cachedTrendsTableName;
     }
-    const res = await p.query(
+    // Find which candidate tables exist.
+    const existing = await p.query(
       `SELECT table_name FROM information_schema.tables 
-       WHERE table_schema = 'public' AND table_name IN ('trends_trending_now', 'google_trends') 
-       ORDER BY CASE table_name WHEN 'trends_trending_now' THEN 0 ELSE 1 END LIMIT 1`
+       WHERE table_schema = 'public' AND table_name IN ('trends_trending_now', 'google_trends')`
     );
-    cachedTrendsTableName = res.rows[0]?.table_name || 'trends_trending_now';
+    const names: string[] = existing.rows.map((r: any) => r.table_name);
+
+    if (names.length === 0) {
+      cachedTrendsTableName = 'google_trends';
+      return cachedTrendsTableName;
+    }
+    if (names.length === 1) {
+      cachedTrendsTableName = names[0];
+      return cachedTrendsTableName;
+    }
+
+    // Both exist: pick the one that actually has rows, preferring google_trends.
+    const counts = new Map<string, number>();
+    for (const name of names) {
+      try {
+        const c = await p.query(`SELECT COUNT(*)::int AS cnt FROM "${name}"`);
+        counts.set(name, c.rows[0]?.cnt ?? 0);
+      } catch {
+        counts.set(name, -1); // table unusable (e.g. wrong schema)
+      }
+    }
+    const preference = ['google_trends', 'trends_trending_now'];
+    const populated = preference.filter((n) => (counts.get(n) ?? -1) > 0);
+    cachedTrendsTableName = populated[0]
+      ?? preference.find((n) => (counts.get(n) ?? -1) === 0)
+      ?? 'google_trends';
   } catch {
-    cachedTrendsTableName = 'trends_trending_now';
+    cachedTrendsTableName = 'google_trends';
   }
   return cachedTrendsTableName;
 }

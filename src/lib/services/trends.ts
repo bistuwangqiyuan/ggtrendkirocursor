@@ -1,15 +1,23 @@
 import { query, queryOne, getTrendsTableName, getTimestampColumnName, pool } from '../db/client';
 import type { Trend, PaginatedTrends, TrendsStats, TrendsQueryParams, Result, DatabaseError, TimeRange } from '../../types';
 
-/** Map frontend timeRange to DB time_range values (DB may store past_4_hours etc.) */
-const TIME_RANGE_TO_DB: Record<string, string> = {
-  '4h': 'past_4_hours',
-  '24h': 'past_24_hours',
-  '48h': 'past_48_hours',
-  past_4_hours: 'past_4_hours',
-  past_24_hours: 'past_24_hours',
-  past_48_hours: 'past_48_hours',
+/**
+ * Different deployments store time_range either as the short form ('4h') or the
+ * long form ('past_4_hours'). Match against all known variants so filtering works
+ * regardless of which schema the live table uses.
+ */
+const TIME_RANGE_VARIANTS: Record<string, string[]> = {
+  '4h': ['4h', 'past_4_hours'],
+  '24h': ['24h', 'past_24_hours'],
+  '48h': ['48h', 'past_48_hours'],
+  past_4_hours: ['past_4_hours', '4h'],
+  past_24_hours: ['past_24_hours', '24h'],
+  past_48_hours: ['past_48_hours', '48h'],
 };
+
+function timeRangeVariants(tr: string): string[] {
+  return TIME_RANGE_VARIANTS[tr] ?? [tr];
+}
 
 const SORT_COLUMN_MAP: Record<string, string> = {
   search_volume: 'search_volume',
@@ -37,9 +45,8 @@ export class TrendsService {
       let paramIndex = 1;
 
       if (timeRange) {
-        const dbTimeRange = TIME_RANGE_TO_DB[timeRange] ?? timeRange;
-        whereClauses.push(`time_range = $${paramIndex++}`);
-        values.push(dbTimeRange);
+        whereClauses.push(`time_range = ANY($${paramIndex++})`);
+        values.push(timeRangeVariants(timeRange));
       }
 
       if (keyword) {
@@ -138,24 +145,24 @@ export class TrendsService {
   async getTrendsStats(timeRange: TimeRange): Promise<Result<TrendsStats, DatabaseError>> {
     try {
       const tableName = await getTrendsTableName();
-      const dbTimeRange = TIME_RANGE_TO_DB[timeRange] ?? timeRange;
-      const countSql = `SELECT COUNT(*) as total FROM "${tableName}" WHERE time_range = $1`;
-      const countRes = await queryOne<{ total: string }>(countSql, [dbTimeRange]);
+      const variants = timeRangeVariants(timeRange);
+      const countSql = `SELECT COUNT(*) as total FROM "${tableName}" WHERE time_range = ANY($1)`;
+      const countRes = await queryOne<{ total: string }>(countSql, [variants]);
       const totalTrends = parseInt(countRes?.total || '0', 10);
 
-      const avgSql = `SELECT AVG(growth_rate) as avg_growth FROM "${tableName}" WHERE time_range = $1`;
-      const avgRes = await queryOne<{ avg_growth: string }>(avgSql, [dbTimeRange]);
+      const avgSql = `SELECT AVG(growth_rate) as avg_growth FROM "${tableName}" WHERE time_range = ANY($1)`;
+      const avgRes = await queryOne<{ avg_growth: string }>(avgSql, [variants]);
       const averageGrowthRate = parseFloat(avgRes?.avg_growth || '0');
 
       const catSql = `
         SELECT category, COUNT(*) as count 
         FROM "${tableName}" 
-        WHERE time_range = $1 
+        WHERE time_range = ANY($1) 
         GROUP BY category 
         ORDER BY count DESC 
         LIMIT 5
       `;
-      const topCategories = await query<{ category: string; count: string }>(catSql, [dbTimeRange]);
+      const topCategories = await query<{ category: string; count: string }>(catSql, [variants]);
 
       return {
         success: true,
