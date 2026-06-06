@@ -15,6 +15,7 @@ const t = getTranslations(locale);
 
 // Parse Query Params
 const urlTimeRange = Astro.url.searchParams.get('timeRange') || '';
+const collectedWithin = Astro.url.searchParams.get('collectedWithin') || '';
 const keyword = Astro.url.searchParams.get('keyword') || '';
 const category = Astro.url.searchParams.get('category') || '';
 const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
@@ -22,6 +23,7 @@ const pageSize = 20;
 
 const params: TrendsQueryParams = {
     timeRange: urlTimeRange || undefined,
+    collectedWithin: collectedWithin || undefined,
     keyword: keyword || undefined,
     category: category || undefined,
     page,
@@ -63,7 +65,7 @@ const error = !trendsResult.success ? trendsResult.error : null;
 
         <TrendsFilters
             client:load
-            initialFilters={{ timeRange, keyword, category }}
+            initialFilters={{ timeRange, collectedWithin, keyword, category }}
             categories={categories}
             locale={locale}
             translations={{ trends: t.trends }}

@@ -25,6 +25,15 @@ export const en = {
       '24h': 'Past 24 Hours',
       '48h': 'Past 48 Hours'
     },
+    trendingWindow: 'Trending window',
+    collectedWithin: {
+      label: 'Collected within',
+      all: 'Any time',
+      '6h': 'Last 6 hours',
+      '12h': 'Last 12 hours',
+      '24h': 'Last 24 hours',
+      '48h': 'Last 48 hours'
+    },
     filters: {
         searchPlaceholder: 'Search keywords...',
         categoryAll: 'All Categories',

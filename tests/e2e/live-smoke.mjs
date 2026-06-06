@@ -171,6 +171,35 @@ async function run() {
     const cat = await http('/api/trends/list?category=technology');
     const catJson = jsonOf(cat.body);
     expect(cat.status === 200 && catJson?.success === true, 'R3', 'category filter query works', `count=${catJson?.data?.trends?.length}`, `status=${cat.status}`);
+
+    // ---- Req 3: data-collection-time range filter (collectedWithin) ----
+    // Each window filters on the collection timestamp column. Counts must be
+    // monotonically non-decreasing (6h <= 12h <= 24h <= 48h <= total) and the
+    // queries must all succeed. (6h/12h may be 0 depending on data freshness.)
+    const windows = ['6h', '12h', '24h', '48h'];
+    const counts = {};
+    let allSucceeded = true;
+    for (const w of windows) {
+      const r = await http(`/api/trends/list?collectedWithin=${w}&pageSize=100`);
+      const j = jsonOf(r.body);
+      if (!(r.status === 200 && j?.success === true && Array.isArray(j?.data?.trends))) {
+        allSucceeded = false;
+        counts[w] = `ERR(status=${r.status})`;
+      } else {
+        counts[w] = j.data.pagination?.totalItems ?? j.data.trends.length;
+      }
+    }
+    const countsLabel = windows.map((w) => `${w}=${counts[w]}`).join(' ');
+    expect(allSucceeded, 'R3', 'collectedWithin queries all succeed', countsLabel, countsLabel);
+
+    const monotonic = allSucceeded
+      && counts['6h'] <= counts['12h']
+      && counts['12h'] <= counts['24h']
+      && counts['24h'] <= counts['48h'];
+    expect(monotonic, 'R3', 'collectedWithin counts are monotonic (6h<=12h<=24h<=48h)', countsLabel, countsLabel);
+
+    // 48h is the widest collection window; against the current dataset it should return rows.
+    expect(allSucceeded && counts['48h'] > 0, 'R3', 'collectedWithin=48h returns rows', `48h=${counts['48h']}`, `48h=${counts['48h']}`);
   } else {
     record('R2', 'trends list API returns data', 'BLOCKED', 'DB down (Neon quota)');
     record('R2', 'trends list has rows', 'BLOCKED', 'DB down (Neon quota)');

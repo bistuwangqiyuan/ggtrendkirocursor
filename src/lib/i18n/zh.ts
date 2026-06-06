@@ -25,6 +25,15 @@ export const zh = {
       '24h': '过去 24 小时',
       '48h': '过去 48 小时'
     },
+    trendingWindow: '趋势窗口',
+    collectedWithin: {
+      label: '数据采集时间',
+      all: '不限',
+      '6h': '6 小时内',
+      '12h': '12 小时内',
+      '24h': '24 小时内',
+      '48h': '48 小时内'
+    },
     filters: {
       searchPlaceholder: '搜索关键词...',
       categoryAll: '所有分类',

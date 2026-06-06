@@ -19,6 +19,18 @@ function timeRangeVariants(tr: string): string[] {
   return TIME_RANGE_VARIANTS[tr] ?? [tr];
 }
 
+/**
+ * Data collection-time windows: filter rows whose collection timestamp falls
+ * within the last N hours of NOW(). This is distinct from `time_range` (the
+ * keyword trending window) — it operates on the real timestamp column.
+ */
+const COLLECTED_WITHIN_HOURS: Record<string, number> = {
+  '6h': 6,
+  '12h': 12,
+  '24h': 24,
+  '48h': 48,
+};
+
 const SORT_COLUMN_MAP: Record<string, string> = {
   search_volume: 'search_volume',
   growth_rate: 'growth_rate',
@@ -29,8 +41,10 @@ export class TrendsService {
   async getTrends(params: TrendsQueryParams): Promise<Result<PaginatedTrends, DatabaseError>> {
     try {
       const tableName = await getTrendsTableName();
+      const timestampCol = await getTimestampColumnName(tableName);
       const {
         timeRange,
+        collectedWithin,
         keyword,
         category,
         excludeCategories,
@@ -47,6 +61,12 @@ export class TrendsService {
       if (timeRange) {
         whereClauses.push(`time_range = ANY($${paramIndex++})`);
         values.push(timeRangeVariants(timeRange));
+      }
+
+      if (collectedWithin && COLLECTED_WITHIN_HOURS[collectedWithin]) {
+        const tsRef = timestampCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
+        whereClauses.push(`${tsRef} >= NOW() - make_interval(hours => $${paramIndex++})`);
+        values.push(COLLECTED_WITHIN_HOURS[collectedWithin]);
       }
 
       if (keyword) {
@@ -71,7 +91,6 @@ export class TrendsService {
 
       const safeSortBy = SORT_COLUMN_MAP[sortBy] || 'search_volume';
       const safeSortOrder = sortOrder === 'asc' ? 'ASC' : 'DESC';
-      const timestampCol = await getTimestampColumnName(tableName);
       const orderByCol = safeSortBy === 'timestamp' ? (timestampCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp') : safeSortBy;
       const offset = (page - 1) * pageSize;
       const tsSelect = timestampCol === 'timestamp' ? '"timestamp" as "timestamp"' : 'trend_timestamp as "timestamp"';

@@ -60,6 +60,8 @@ export interface TrendsStats {
 
 export type TimeRange = '4h' | '24h' | '48h';
 
+export type CollectedWithin = '6h' | '12h' | '24h' | '48h';
+
 export type Result<T, E = Error> = { success: true; data: T } | { success: false; error: E };
 
 export interface AuthError {
@@ -80,6 +82,7 @@ export interface ValidationError {
 
 export interface TrendsQueryParams {
   timeRange?: '4h' | '24h' | '48h' | string;
+  collectedWithin?: CollectedWithin | string;
   keyword?: string;
   category?: string;
   excludeCategories?: string[];

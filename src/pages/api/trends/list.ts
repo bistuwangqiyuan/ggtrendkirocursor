@@ -8,6 +8,7 @@ export const GET: APIRoute = async ({ request }) => {
 
   const params: TrendsQueryParams = {
     timeRange: timeRange || undefined,
+    collectedWithin: url.searchParams.get('collectedWithin') || undefined,
     keyword: url.searchParams.get('keyword') || undefined,
     category: url.searchParams.get('category') || undefined,
     sortBy: (url.searchParams.get('sortBy') as any) || 'search_volume',
