@@ -13,7 +13,7 @@
 | 测试层 | 结果 |
 | --- | --- |
 | 本地单元测试 (vitest) | 8 / 8 通过 |
-| 线上端到端 HTTP 探测 (42 项) | **42 PASS / 0 FAIL / 0 BLOCKED** |
+| 线上端到端 HTTP 探测 (45 项) | **45 PASS / 0 FAIL / 0 BLOCKED** |
 | 浏览器交互测试 (9 项) | 9 / 9 通过 |
 
 结论：**全部功能 100% 通过，0 失败、0 阻塞**。线上版本 `2026.06.06-2`。
@@ -46,7 +46,8 @@
 | Iter 2 (2026-05-31 SEO 补强) | 修复 robots.txt/sitemap.xml/og-image 三处 404，扩充 e2e 检查，push 触发部署，poll 确认 `2026.05.31-2` 上线 | `2026.05.31-2` | 复测 **31 PASS / 0 FAIL / 8 BLOCKED**（39 项） |
 | DB 重试（每轮） | 多日多次探测 `/api/health`，并尝试 `/api/db-init`、`/api/seed` | 无代码变更 | 数据库持续 “quota exceeded”，DB 项保持 BLOCKED |
 | Iter 3 (2026-06-06 趋势 500 修复) | DB 恢复后趋势接口全量 500；修复表选择 + 时间范围匹配，push 部署 `2026.06.06-1` | `2026.06.06-1` | 38 PASS / 4 FAIL（趋势恢复，剩注册/登录/反馈写入失败） |
-| Iter 4 (2026-06-06 鉴权 schema 迁移) | 经 `/api/db-init` 诊断确认三表为遗留不兼容结构；强化迁移端点 (`migrate=auth`) 重建三表对齐应用 schema | `2026.06.06-2` | **42 PASS / 0 FAIL / 0 BLOCKED** |
+| Iter 4 (2026-06-06 鉴权 schema 迁移) | 经 `/api/db-init` 诊断确认三表为遗留不兼容结构；强化迁移端点 (`migrate=auth`) 重建三表对齐应用 schema | `2026.06.06-2` | 42 PASS / 0 FAIL / 0 BLOCKED |
+| Iter 5 (2026-06-06 新增数据采集时间筛选) | 新增独立的“数据采集时间范围”筛选（6/12/24/48 小时内），含服务层、API、首页、筛选器 UI、i18n、e2e 探测，push 部署 `2026.06.06-3` | `2026.06.06-3` | **45 PASS / 0 FAIL / 0 BLOCKED** |
 
 为支撑循环，新增了可复用的部署校验机制：在 `/api/health` 暴露 `APP_VERSION`（来自 [src/version.ts](../src/version.ts)），每次部署后轮询该字段即可确认新构建已生效。
 
@@ -82,6 +83,20 @@
    - 验证：注册 201、登录 200（`Set-Cookie` 含 `HttpOnly`）、错误口令 401、反馈持久化 201，全部 PASS。
    - 提交：`0f1f596`
 
+### 新增功能 (Feature)
+
+7. **数据采集时间范围筛选（数据采集时间 6/12/24/48 小时内）** — 对应需求 3（数据筛选）。
+   - 背景：原有“时间范围”按钮（4h/24h/48h）筛选的是 `time_range` 字段，即**关键词的趋势窗口**（分类字符串），并非按数据采集的真实时间筛选。本次按要求新增一个**独立维度**：按数据采集时间（`timestamp`/`trend_timestamp` 列）筛选“最近 6/12/24/48 小时内采集”的记录。两者可叠加（AND）。
+   - 实现：
+     - 类型：[src/types/index.ts](../src/types/index.ts) 新增 `CollectedWithin` 与 `TrendsQueryParams.collectedWithin`。
+     - 服务层：[src/lib/services/trends.ts](../src/lib/services/trends.ts) `getTrends` 在解析出采集时间列后，按 `<ts_col> >= NOW() - make_interval(hours => $n)` 过滤（小时数以整型参数传入，防注入），COUNT 与数据查询共用同一 WHERE。
+     - 透传：[src/pages/api/trends/list.ts](../src/pages/api/trends/list.ts)、[src/pages/index.astro](../src/pages/index.astro) 解析并传递 `collectedWithin`。
+     - UI：[src/components/trends/TrendsFilters.tsx](../src/components/trends/TrendsFilters.tsx) 新增带标签的下拉框（不限/6/12/24/48 小时内），并为两个时间控件加上区分标签（“趋势窗口” vs “数据采集时间”），消除歧义。
+     - i18n：[src/lib/i18n/zh.ts](../src/lib/i18n/zh.ts)、[src/lib/i18n/en.ts](../src/lib/i18n/en.ts) 补充对应中英文案。
+   - 验证（实测、有理有据）：线上 `collectedWithin` 探测返回 `6h=0 12h=0 24h=42 48h=90`，计数单调非减（6h≤12h≤24h≤48h≤总数 90），48h 返回数据；与趋势窗口叠加 `collectedWithin=24h&timeRange=4h` 返回 14 条（24h=42 的合理子集）。中英文首页均 SSR 渲染出新控件标签。
+   - 数据新鲜度说明（讲实话）：当前线上 `google_trends` 最新一条数据约 17 小时前采集，故 **6/12 小时内窗口当前正确地返回 0 条**——这是数据陈旧（一次性种子数据）所致，而非筛选逻辑缺陷；逻辑本身已通过单调性与子集关系验证。后续如接入实时采集或刷新种子数据（时间戳相对“当前时间”分布），6/12 小时窗口即会有数据。
+   - 提交：`82d2d91`
+
 ### 测试侧修正 (非产品代码缺陷)
 
 2. **登出接口在探测中返回 403** — 实为 Astro 的 CSRF Origin 校验。真实浏览器对同源 POST 会自动携带 `Origin` 头并通过校验（应用内登出按钮工作正常）；测试脚本最初未带 `Origin` 头。已修正 [tests/e2e/live-smoke.mjs](../tests/e2e/live-smoke.mjs)，对所有 POST 请求附加 `Origin`，复测 PASS。
@@ -95,7 +110,7 @@
 
 - 需求 1 用户认证系统：PASS — 登录/注册页可访问；注册缺字段/非法输入 400；登录缺字段 400；无会话登出 200；**真实注册 201、登录 200 建会话、错误口令 401 均实测通过**。
 - 需求 2 趋势数据展示：PASS — 首页 SSR 正常渲染；**趋势列表返回真实数据（count=4）、分页元数据正确**。
-- 需求 3 数据筛选和排序：PASS — 筛选器渲染可交互；**时间范围筛选实测 `4h/24h/48h` 分别返回 4/4/2 条**；分类筛选查询正常执行。
+- 需求 3 数据筛选和排序：PASS — 筛选器渲染可交互；趋势窗口筛选 `4h/24h/48h` 正常；**新增“数据采集时间范围”筛选（6/12/24/48 小时内）实测 `6h=0 12h=0 24h=42 48h=90`，计数单调非减且 48h 有数据；叠加 `24h+4h` 返回 14 条子集**；分类筛选查询正常执行。
 - 需求 4 多语言支持：PASS — 默认中文；点击 EN 切换为英文（导航/按钮/标题/筛选器文案），点击中切回中文；`locale` cookie 生效。
 - 需求 5 SEO 优化：PASS — SSR 完整 HTML；`title`/`description`/`keywords`/`canonical`/Open Graph/Twitter/JSON-LD 齐全。
 - 需求 6 响应式设计：PASS — 桌面多列、移动端 375px 单列布局且无横向溢出（浏览器截图验证）。
