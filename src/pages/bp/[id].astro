@@ -330,10 +330,12 @@ const selectedOpp = opportunities.find((o) => o.isSelected);
     .bp-body { padding: 28px 22px 40px; }
     .bp-grid-4, .bp-grid-3, .bp-highlight-grid { grid-template-columns: 1fr 1fr; }
   }
+</style>
 
-  /* ---- Print / Export PDF: pristine A4 document ---- */
+<!-- Print / Export PDF rules kept inline (is:inline) so they are guaranteed to
+     apply at print time and are not deferred into a bundled stylesheet. -->
+<style is:inline>
   @media print {
-    :root { background: #fff; }
     body { background: #fff !important; }
     header, footer, .no-print { display: none !important; }
     main { padding: 0 !important; }
