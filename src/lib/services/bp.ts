@@ -729,23 +729,48 @@ export class BpService {
       `SELECT * FROM bp_opportunities WHERE report_id = $1 ORDER BY rank ASC`,
       [contentSourceId]
     );
-    report.opportunities = oppRows.map((o) => ({
-      id: o.id,
-      reportId: o.report_id,
-      name: o.name,
-      description: o.description ?? '',
-      scores: {
-        market: Number(o.score_market) || 0,
-        roi: Number(o.score_roi) || 0,
-        onlineability: Number(o.score_onlineability) || 0,
-        feasibility: Number(o.score_feasibility) || 0,
-        speed: Number(o.score_speed) || 0,
-        moat: Number(o.score_moat) || 0,
-      },
-      weightedScore: Number(o.weighted_score) || 0,
-      isSelected: !!o.is_selected,
-      rank: Number(o.rank) || 0,
-    }));
+    if (oppRows.length > 0) {
+      report.opportunities = oppRows.map((o) => ({
+        id: o.id,
+        reportId: o.report_id,
+        name: o.name,
+        description: o.description ?? '',
+        scores: {
+          market: Number(o.score_market) || 0,
+          roi: Number(o.score_roi) || 0,
+          onlineability: Number(o.score_onlineability) || 0,
+          feasibility: Number(o.score_feasibility) || 0,
+          speed: Number(o.score_speed) || 0,
+          moat: Number(o.score_moat) || 0,
+        },
+        weightedScore: Number(o.weighted_score) || 0,
+        isSelected: !!o.is_selected,
+        rank: Number(o.rank) || 0,
+      }));
+    } else if (Array.isArray(report.contentJson?.opportunities) && report.contentJson!.opportunities.length > 0) {
+      // Fallback: opportunities are always embedded in content_json (the authoritative
+      // source). This keeps the score matrix rendering even if the bp_opportunities
+      // table insert was skipped (e.g. transient/legacy-schema write failure).
+      report.opportunities = report.contentJson!.opportunities.map((o: any, i: number) => ({
+        id: `${id}-opp-${i}`,
+        reportId: id,
+        name: o.name,
+        description: o.description ?? '',
+        scores: {
+          market: Number(o?.scores?.market) || 0,
+          roi: Number(o?.scores?.roi) || 0,
+          onlineability: Number(o?.scores?.onlineability) || 0,
+          feasibility: Number(o?.scores?.feasibility) || 0,
+          speed: Number(o?.scores?.speed) || 0,
+          moat: Number(o?.scores?.moat) || 0,
+        },
+        weightedScore: Number(o.weightedScore) || 0,
+        isSelected: !!o.isSelected,
+        rank: Number(o.rank) || i + 1,
+      }));
+    } else {
+      report.opportunities = [];
+    }
     return { success: true, data: report };
   }
 

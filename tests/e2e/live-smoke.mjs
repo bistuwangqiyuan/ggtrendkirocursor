@@ -321,6 +321,7 @@ async function run() {
       record('R-BP9', 'generated BP detail renders', 'BLOCKED', 'LLM not configured (503)');
       record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', 'LLM not configured (503)');
       record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', 'LLM not configured (503)');
+      record('R-BP13', 'score matrix has ranked opportunities', 'BLOCKED', 'LLM not configured (503)');
     } else {
       expect(cron.status === 200 && cronJson?.success === true && validAction,
         'R-BP7', 'authenticated cron triggers generation', `action=${cronJson?.action}`,
@@ -354,16 +355,25 @@ async function run() {
           expect(summary.length > 0 && hasPct,
             'R-BP11', 'summary states seed-round return figures', `len=${summary.length} hasPct=${hasPct}`,
             `len=${summary.length} hasPct=${hasPct}`);
+
+          // R-BP13: opportunity score matrix is populated (>= 5 ranked opportunities).
+          const opps = Array.isArray(detailJson?.data?.opportunities) ? detailJson.data.opportunities : [];
+          const hasSelected = opps.some((o) => o.isSelected);
+          expect(opps.length >= 5 && hasSelected,
+            'R-BP13', 'score matrix has ranked opportunities', `count=${opps.length} selected=${hasSelected}`,
+            `count=${opps.length} selected=${hasSelected}`);
         } else {
           record('R-BP9', 'generated BP detail renders', 'BLOCKED', `report status=${detailJson?.data?.status}`);
           record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', `report status=${detailJson?.data?.status}`);
           record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', `report status=${detailJson?.data?.status}`);
+          record('R-BP13', 'score matrix has ranked opportunities', 'BLOCKED', `report status=${detailJson?.data?.status}`);
         }
       } else {
         record('R-BP8', 'cron persists a BP report', 'BLOCKED', `action=${cronJson?.action} (no reportId)`);
         record('R-BP9', 'generated BP detail renders', 'BLOCKED', 'no report to render');
         record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', 'no report to render');
         record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', 'no report to render');
+        record('R-BP13', 'score matrix has ranked opportunities', 'BLOCKED', 'no report to render');
       }
     }
   } else {
@@ -373,6 +383,7 @@ async function run() {
     record('R-BP9', 'generated BP detail renders', 'BLOCKED', reason);
     record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', reason);
     record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', reason);
+    record('R-BP13', 'score matrix has ranked opportunities', 'BLOCKED', reason);
   }
 
   // ---- summary ----
