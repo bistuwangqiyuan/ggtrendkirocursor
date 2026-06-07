@@ -3,7 +3,7 @@ import { schedule } from '@netlify/functions';
 /**
  * Scheduled BP auto-generation. Runs every 6 hours (UTC) and calls the
  * in-app cron endpoint, which generates a Business Plan for the current
- * #1 trending keyword (with 24h dedupe so it never double-charges the LLM).
+ * next eligible ungenerated hotword (score > 60, skip duplicates).
  *
  * Requires the CRON_SECRET environment variable to authorize the call.
  */

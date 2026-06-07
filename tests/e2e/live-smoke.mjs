@@ -306,7 +306,7 @@ async function run() {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${E2E_CRON_SECRET}` },
     });
     const cronJson = jsonOf(cron.body);
-    const validAction = ['generated', 'reused', 'skipped'].includes(cronJson?.action);
+    const validAction = ['generated', 'skipped'].includes(cronJson?.action);
     // 200 = success; 503 = LLM not configured (acceptable infra gap, not a code fault).
     if (cron.status === 503) {
       record('R-BP7', 'authenticated cron triggers generation', 'BLOCKED', 'LLM not configured (503)');

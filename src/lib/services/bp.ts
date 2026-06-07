@@ -12,6 +12,7 @@ import type {
   PaginatedBpReports,
   Result,
   BpError,
+  Trend,
 } from '../../types';
 
 /** Fixed six-dimension weights (sum = 1). Server is the source of truth. */
@@ -169,8 +170,48 @@ function buildUserPrompt(trend: BpTrendSnapshot): string {
 }`;
 }
 
-/** Reuse window: a completed BP for the same keyword within this many hours is reused. */
+/** Reuse window: a completed BP for the same keyword within this many hours is reused (manual path). */
 const REUSE_WINDOW_HOURS = 24;
+
+/** Minimum composite hotword score (0-100) for scheduled BP generation. */
+export const MIN_TREND_SCORE = 60;
+
+const SCHEDULED_SCAN_PAGE_SIZE = 50;
+const SCHEDULED_SCAN_MAX_PAGES = 5;
+
+/** Composite 0-100 score: 50% growth_rate (%) + 50% log-normalized search volume. */
+export function computeTrendHotwordScore(t: { searchVolume: number; growthRate: number }): number {
+  const growthPart = Math.min(100, Math.max(0, t.growthRate));
+  const volumePart = Math.min(100, (Math.log10(Math.max(1, t.searchVolume)) / 6) * 100);
+  return Math.round(growthPart * 0.5 + volumePart * 0.5);
+}
+
+/**
+ * Pick the first trend (in search_volume order) that has no completed BP and
+ * meets the score threshold. Pure function for unit testing.
+ */
+export function pickFirstEligibleTrend(
+  trends: Trend[],
+  completedKeywordNorms: Set<string>,
+  minScore = MIN_TREND_SCORE,
+  startRank = 1
+): { trend: Trend; trendScore: number; rank: number } | null {
+  let rank = startRank;
+  for (const trend of trends) {
+    const norm = normalizeKeyword(trend.keyword);
+    if (completedKeywordNorms.has(norm)) {
+      rank++;
+      continue;
+    }
+    const trendScore = computeTrendHotwordScore(trend);
+    if (trendScore <= minScore) {
+      rank++;
+      continue;
+    }
+    return { trend, trendScore, rank };
+  }
+  return null;
+}
 
 function mapReportRow(row: any): BpReport {
   return {
@@ -240,6 +281,79 @@ export class BpService {
     };
   }
 
+  /** Whether any completed BP exists for this keyword (permanent dedupe for cron). */
+  async hasCompletedBp(keywordNorm: string): Promise<boolean> {
+    const row = await queryOne<{ exists: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM bp_reports WHERE keyword_norm = $1 AND status = 'completed'
+       ) AS exists`,
+      [keywordNorm]
+    );
+    return !!row?.exists;
+  }
+
+  /** All keyword_norm values that already have a completed BP. */
+  async getCompletedKeywordNorms(): Promise<Set<string>> {
+    const rows = await query<{ keyword_norm: string }>(
+      `SELECT DISTINCT keyword_norm FROM bp_reports
+       WHERE status = 'completed' AND keyword_norm IS NOT NULL`
+    );
+    return new Set(rows.map((r) => r.keyword_norm));
+  }
+
+  /**
+   * Walk trends by search_volume desc; return the first without a completed BP
+   * whose composite score exceeds MIN_TREND_SCORE.
+   */
+  async pickNextUngeneratedTrend(
+    timeRange = '4h'
+  ): Promise<{ snapshot: BpTrendSnapshot; trendScore: number } | null> {
+    const completed = await this.getCompletedKeywordNorms();
+    let globalRank = 0;
+    let effectiveTimeRange: string | undefined = timeRange;
+
+    for (let page = 1; page <= SCHEDULED_SCAN_MAX_PAGES; page++) {
+      const res = await trendsService.getTrends({
+        timeRange: effectiveTimeRange,
+        sortBy: 'search_volume',
+        sortOrder: 'desc',
+        page,
+        pageSize: SCHEDULED_SCAN_PAGE_SIZE,
+      });
+
+      if (page === 1 && (!res.success || res.data.trends.length === 0) && effectiveTimeRange) {
+        effectiveTimeRange = undefined;
+        page = 0;
+        continue;
+      }
+
+      if (!res.success || res.data.trends.length === 0) break;
+
+      const picked = pickFirstEligibleTrend(res.data.trends, completed, MIN_TREND_SCORE, globalRank + 1);
+      if (picked) {
+        const { trend, trendScore, rank } = picked;
+        return {
+          trendScore,
+          snapshot: {
+            sourceTrendId: trend.id,
+            keyword: trend.keyword,
+            searchVolume: trend.searchVolume,
+            growthRate: trend.growthRate,
+            category: trend.category,
+            timeRange: trend.timeRange || timeRange,
+            region: trend.region || '',
+            rank,
+          },
+        };
+      }
+
+      globalRank += res.data.trends.length;
+      if (res.data.pagination.currentPage >= res.data.pagination.totalPages) break;
+    }
+
+    return null;
+  }
+
   /** Return a recent completed report for this keyword, if any (dedupe). */
   async findReusable(keywordNorm: string): Promise<BpReport | null> {
     const row = await queryOne<any>(
@@ -272,11 +386,15 @@ export class BpService {
   }
 
   /**
-   * Scheduled entry point: clean up stale rows, then generate a BP for the
-   * current #1 trend. Reuses 24h dedupe so it never double-charges the LLM.
+   * Scheduled entry point: clean stale rows, pick the next ungenerated hotword
+   * (score > MIN_TREND_SCORE, no completed BP), then generate one new BP.
    */
   async runScheduledGeneration(): Promise<
-    Result<{ action: 'generated' | 'reused' | 'skipped'; report: BpReport }, BpError>
+    Result<
+      | { action: 'generated'; report: BpReport; trendScore: number; rank: number }
+      | { action: 'skipped'; reason: string },
+      BpError
+    >
   > {
     if (!isLlmConfigured()) {
       return { success: false, error: { code: 'LLM_NOT_CONFIGURED', message: 'AI 服务未配置（缺少 LLM_API_KEY）' } };
@@ -287,20 +405,22 @@ export class BpService {
       console.log(`[bp-cron] reset ${staleReset} stale generating report(s)`);
     }
 
-    const trend = await this.resolveSourceTrend({ timeRange: '4h' });
-    if (!trend) {
-      return { success: false, error: { code: 'NO_TREND', message: '没有可用于生成的趋势数据' } };
+    const picked = await this.pickNextUngeneratedTrend('4h');
+    if (!picked) {
+      return { success: true, data: { action: 'skipped', reason: 'no_eligible_trend' } };
     }
 
-    // Distinguish reuse vs fresh generation for observability.
-    const reusable = await this.findReusable(normalizeKeyword(trend.keyword));
-    if (reusable) {
-      return { success: true, data: { action: 'reused', report: reusable } };
-    }
-
-    const result = await this.generate({ keyword: trend.keyword, trendId: trend.sourceTrendId, timeRange: '4h' });
+    const { snapshot, trendScore } = picked;
+    const result = await this.generate({
+      keyword: snapshot.keyword,
+      trendId: snapshot.sourceTrendId,
+      timeRange: '4h',
+    });
     if (!result.success) return result;
-    return { success: true, data: { action: 'generated', report: result.data } };
+    return {
+      success: true,
+      data: { action: 'generated', report: result.data, trendScore, rank: snapshot.rank },
+    };
   }
 
   /**

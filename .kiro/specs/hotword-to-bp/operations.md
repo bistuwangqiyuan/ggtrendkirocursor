@@ -42,14 +42,16 @@
 - 实现：[netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts)，`schedule('0 */6 * * *', ...)`，UTC 每 6 小时整点。
 - 行为：调用 `POST /api/bp/cron`（带 `Authorization: Bearer ${CRON_SECRET}`）→ `bpService.runScheduledGeneration()`：
   1. `resetStaleGenerating()` 把超过 15 分钟仍 `generating/pending` 的记录置为 `failed`；
-  2. 取所选窗口（`4h`）下搜索量第 1 的趋势；
-  3. 24h 去重：同关键词已有 `completed` 则 `action=reused`，不调用 LLM；
-  4. 否则生成并落库，`action=generated`。
+  2. 按 `4h` 窗口、`search_volume` 降序扫描趋势（每页 50 条，最多 5 页）；
+  3. **永久去重**：跳过已有任意 `completed` BP 的热词（不再 24h 复用）；
+  4. **评分筛选**：综合百分制分 > 60 才合格（`50%×增长速度% + 50%×搜索量对数归一化`，见 `computeTrendHotwordScore`）；
+  5. 对首个合格且未生成 BP 的热词调用 LLM，`action=generated`；无合格热词则 `action=skipped`（200，非错误）。
 - 手动触发（验证用）：
   ```bash
   curl -X POST "https://<your-site>/api/bp/cron" \
     -H "Authorization: Bearer $CRON_SECRET" -H "Origin: https://<your-site>"
-  # -> { success:true, action:"generated"|"reused"|"skipped", reportId, keyword, status }
+  # generated -> { success:true, action:"generated", reportId, keyword, status, trendScore, rank }
+  # skipped   -> { success:true, action:"skipped", reason:"no_eligible_trend" }
   ```
 
 ### 鉴权与返回码
@@ -59,7 +61,7 @@
 | 未配置 `CRON_SECRET` | 503（定时禁用，fail-closed） |
 | 缺失/错误 `Authorization` | 401 |
 | 未配置 LLM 密钥 | 503 |
-| 无可用趋势 | 400 |
+| 无合格新热词（均已生成或评分≤60） | 200，`action=skipped` |
 | 全部 LLM 端点失败 | 503 |
 | 成功 | 200 |
 

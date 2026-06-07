@@ -12,7 +12,7 @@ Trend Now is a real-time Google Trends data visualization platform built with As
 - **SEO Optimized**: Server-Side Rendering (SSR), semantic HTML, and structured data.
 - **Feedback System**: Integrated user feedback submission.
 - **AI Business Plans**: Turn the #1 trending keyword into a structured, investor-grade business plan via an LLM (opportunity brainstorm -> six-dimension scoring -> selection -> BP), persisted to the database and viewable on-site at `/bp`.
-- **Scheduled Auto-Generation**: A Netlify Scheduled Function generates a BP for the current top trend every 6 hours (with 24h dedupe so it never double-charges the LLM).
+- **Scheduled Auto-Generation**: A Netlify Scheduled Function generates one new BP every 6 hours by scanning top trends, skipping keywords that already have a completed BP, and picking the next hotword with a composite score above 60.
 - **LLM Auto-Failover**: Configure multiple OpenAI-compatible endpoints; the service switches to the next one automatically on timeout / HTTP / auth errors.
 - **Performance**: Low latency, partial hydration with Astro Islands.
 
@@ -138,7 +138,7 @@ You can verify the schedule under Netlify -> Functions -> `bp-scheduled`, or tri
 ```bash
 curl -X POST "https://<your-site>/api/bp/cron" \
   -H "Authorization: Bearer $CRON_SECRET" -H "Origin: https://<your-site>"
-# -> { "success": true, "action": "generated" | "reused" | "skipped", "reportId": "...", "keyword": "..." }
+# -> { "success": true, "action": "generated" | "skipped", "reportId": "...", "keyword": "...", "trendScore": 72, "rank": 3 }
 ```
 
 ## Testing

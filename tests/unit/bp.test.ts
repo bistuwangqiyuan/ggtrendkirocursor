@@ -4,7 +4,11 @@ import {
   computeWeightedScore,
   validateAndNormalizeBpContent,
   BpValidationError,
+  computeTrendHotwordScore,
+  pickFirstEligibleTrend,
+  MIN_TREND_SCORE,
 } from '../../src/lib/services/bp';
+import type { Trend } from '../../src/types';
 import { extractJsonObject } from '../../src/lib/services/llm';
 
 const fullScores = (over: Partial<Record<string, number>> = {}) => ({
@@ -96,6 +100,70 @@ describe('validateAndNormalizeBpContent', () => {
     const raw = validRaw();
     raw.seedReturn.bookRoiByYear = [1, 2, 3];
     expect(() => validateAndNormalizeBpContent(raw)).toThrow(BpValidationError);
+  });
+});
+
+function makeTrend(keyword: string, searchVolume: number, growthRate: number, id = 't1'): Trend {
+  return {
+    id,
+    keyword,
+    searchVolume,
+    growthRate,
+    category: 'technology',
+    timeRange: '4h',
+    region: 'US',
+    timestamp: new Date(),
+    createdAt: new Date(),
+  };
+}
+
+describe('computeTrendHotwordScore', () => {
+  test('returns 0 for zero growth and minimal volume', () => {
+    expect(computeTrendHotwordScore({ searchVolume: 1, growthRate: 0 })).toBe(0);
+  });
+
+  test('clamps negative growth to 0 for growth component', () => {
+    expect(computeTrendHotwordScore({ searchVolume: 1_000_000, growthRate: -50 })).toBe(50);
+  });
+
+  test('high growth and volume yield score near 100', () => {
+    expect(computeTrendHotwordScore({ searchVolume: 1_000_000, growthRate: 100 })).toBe(100);
+  });
+
+  test('score exceeds MIN_TREND_SCORE when growth is strong', () => {
+    const score = computeTrendHotwordScore({ searchVolume: 10_000, growthRate: 80 });
+    expect(score).toBeGreaterThan(MIN_TREND_SCORE);
+  });
+});
+
+describe('pickFirstEligibleTrend', () => {
+  test('skips keywords with completed BP and picks next eligible', () => {
+    const trends = [
+      makeTrend('Alpha', 500_000, 90, '1'),
+      makeTrend('Beta', 400_000, 85, '2'),
+      makeTrend('Gamma', 300_000, 70, '3'),
+    ];
+    const completed = new Set(['alpha']); // #1 already has BP
+    const picked = pickFirstEligibleTrend(trends, completed);
+    expect(picked?.trend.keyword).toBe('Beta');
+    expect(picked?.rank).toBe(2);
+    expect(picked!.trendScore).toBeGreaterThan(MIN_TREND_SCORE);
+  });
+
+  test('skips trends below score threshold', () => {
+    const trends = [
+      makeTrend('Low', 10, 0, '1'),
+      makeTrend('High', 200_000, 80, '2'),
+    ];
+    const picked = pickFirstEligibleTrend(trends, new Set());
+    expect(picked?.trend.keyword).toBe('High');
+    expect(picked?.rank).toBe(2);
+  });
+
+  test('returns null when no eligible trend exists', () => {
+    const trends = [makeTrend('Done', 500_000, 90)];
+    const picked = pickFirstEligibleTrend(trends, new Set(['done']));
+    expect(picked).toBeNull();
   });
 });
 

@@ -39,12 +39,22 @@ export const POST: APIRoute = async ({ request }) => {
       return json({ success: false, action: 'failed', error: result.error.message, code, reportId: result.error.reportId }, status);
     }
 
+    if (result.data.action === 'skipped') {
+      return json({
+        success: true,
+        action: 'skipped',
+        reason: result.data.reason,
+      }, 200);
+    }
+
     return json({
       success: true,
-      action: result.data.action,
+      action: 'generated',
       reportId: result.data.report.id,
       keyword: result.data.report.keyword,
       status: result.data.report.status,
+      trendScore: result.data.trendScore,
+      rank: result.data.rank,
     }, 200);
   } catch (error) {
     console.error('BP cron API error:', error);
