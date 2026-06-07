@@ -6,5 +6,10 @@
   node_bundler = "esbuild"
   included_files = ["node_modules/pg/**"]
 
+# Give SSR/API functions the maximum synchronous timeout so LLM-backed BP
+# generation has the best chance to finish before Netlify cuts the request.
+[functions."*"]
+  timeout = 26
+
 [build.environment]
   NODE_VERSION = "20"

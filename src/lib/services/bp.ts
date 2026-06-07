@@ -253,6 +253,57 @@ export class BpService {
   }
 
   /**
+   * Mark long-running `generating`/`pending` rows as `failed` so a later run can
+   * retry them. Serverless timeouts can otherwise leave reports stuck forever.
+   * Returns the number of rows reset.
+   */
+  async resetStaleGenerating(maxAgeMinutes = 15): Promise<number> {
+    const rows = await query<{ id: string }>(
+      `UPDATE bp_reports
+         SET status = 'failed',
+             error = COALESCE(error, '') || ' [auto-reset: stale generating]',
+             updated_at = CURRENT_TIMESTAMP
+       WHERE status IN ('generating', 'pending')
+         AND updated_at < NOW() - make_interval(mins => $1)
+       RETURNING id`,
+      [maxAgeMinutes]
+    );
+    return rows.length;
+  }
+
+  /**
+   * Scheduled entry point: clean up stale rows, then generate a BP for the
+   * current #1 trend. Reuses 24h dedupe so it never double-charges the LLM.
+   */
+  async runScheduledGeneration(): Promise<
+    Result<{ action: 'generated' | 'reused' | 'skipped'; report: BpReport }, BpError>
+  > {
+    if (!isLlmConfigured()) {
+      return { success: false, error: { code: 'LLM_NOT_CONFIGURED', message: 'AI 服务未配置（缺少 LLM_API_KEY）' } };
+    }
+
+    const staleReset = await this.resetStaleGenerating();
+    if (staleReset > 0) {
+      console.log(`[bp-cron] reset ${staleReset} stale generating report(s)`);
+    }
+
+    const trend = await this.resolveSourceTrend({ timeRange: '4h' });
+    if (!trend) {
+      return { success: false, error: { code: 'NO_TREND', message: '没有可用于生成的趋势数据' } };
+    }
+
+    // Distinguish reuse vs fresh generation for observability.
+    const reusable = await this.findReusable(normalizeKeyword(trend.keyword));
+    if (reusable) {
+      return { success: true, data: { action: 'reused', report: reusable } };
+    }
+
+    const result = await this.generate({ keyword: trend.keyword, trendId: trend.sourceTrendId, timeRange: '4h' });
+    if (!result.success) return result;
+    return { success: true, data: { action: 'generated', report: result.data } };
+  }
+
+  /**
    * Full orchestration: resolve trend -> dedupe -> placeholder -> LLM -> validate
    * -> persist report + opportunities. Returns the final (completed/failed) report.
    */
@@ -328,7 +379,7 @@ export class BpService {
           content.summary,
           content.selectedOpportunity,
           JSON.stringify(content),
-          llm.model,
+          llm.provider ? `${llm.provider}/${llm.model}` : llm.model,
           llm.tokensUsed ?? null,
         ]
       );

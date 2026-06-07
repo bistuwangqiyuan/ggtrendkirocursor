@@ -1,15 +1,24 @@
 /**
- * Minimal OpenAI-compatible Chat Completions client (no SDK dependency).
+ * OpenAI-compatible Chat Completions client with multi-endpoint auto-failover.
  *
- * Configured purely via environment variables so the provider can be swapped:
- *   LLM_API_KEY   (required) - bearer token; absence is a hard error (no fallback)
- *   LLM_API_BASE  (optional) - default: Aliyun DashScope OpenAI-compatible endpoint
- *   LLM_MODEL     (optional) - default: qwen-plus
- *   LLM_TIMEOUT_MS(optional) - default: 45000
+ * Single endpoint (legacy):
+ *   LLM_API_KEY, LLM_API_BASE, LLM_MODEL
+ *
+ * Multiple endpoints (auto-switch on failure):
+ *   LLM_API_ENDPOINTS='[{"name":"dashscope","base":"https://...","key":"sk-...","model":"qwen-plus"},...]'
+ *
+ * Shared:
+ *   LLM_TIMEOUT_MS (default 45000)
  */
 
+const DEFAULT_BASE = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+const DEFAULT_MODEL = 'qwen-plus';
+const DEFAULT_TIMEOUT_MS = 45000;
+/** Skip endpoints that failed recently (ms). */
+const ENDPOINT_COOLDOWN_MS = 120_000;
+
 export class LlmError extends Error {
-  code: 'LLM_NOT_CONFIGURED' | 'LLM_TIMEOUT' | 'LLM_BAD_RESPONSE' | 'LLM_HTTP_ERROR';
+  code: 'LLM_NOT_CONFIGURED' | 'LLM_TIMEOUT' | 'LLM_BAD_RESPONSE' | 'LLM_HTTP_ERROR' | 'LLM_ALL_ENDPOINTS_FAILED';
   constructor(code: LlmError['code'], message: string) {
     super(message);
     this.code = code;
@@ -17,23 +26,104 @@ export class LlmError extends Error {
   }
 }
 
+export interface LlmEndpoint {
+  name: string;
+  base: string;
+  apiKey: string;
+  model: string;
+}
+
 export interface LlmJsonResult<T> {
   data: T;
   model: string;
+  provider?: string;
   tokensUsed?: number;
   raw: string;
 }
 
-function getConfig() {
+interface ChatOptions {
+  systemPrompt: string;
+  userPrompt: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+/** Last successful endpoint index (in-memory; warm serverless instances reuse it). */
+let preferredEndpointIndex = 0;
+/** endpoint index -> epoch ms until which the endpoint is skipped */
+const endpointCooldownUntil = new Map<number, number>();
+
+function getTimeoutMs(): number {
+  const n = Number(process.env.LLM_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
+}
+
+/** Parse configured LLM endpoints. Exported for unit tests. */
+export function parseLlmEndpoints(): LlmEndpoint[] {
+  const raw = process.env.LLM_API_ENDPOINTS?.trim();
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        const endpoints = arr
+          .map((e: any, i: number) => {
+            const apiKey = String(e?.key ?? e?.apiKey ?? '').trim();
+            if (!apiKey) return null;
+            const base = String(e?.base ?? e?.apiBase ?? DEFAULT_BASE).trim().replace(/\/$/, '');
+            return {
+              name: String(e?.name ?? `endpoint-${i + 1}`).trim() || `endpoint-${i + 1}`,
+              base: base || DEFAULT_BASE,
+              apiKey,
+              model: String(e?.model ?? process.env.LLM_MODEL ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL,
+            } satisfies LlmEndpoint;
+          })
+          .filter((e): e is LlmEndpoint => e !== null);
+        if (endpoints.length > 0) return endpoints;
+      }
+    } catch {
+      // fall through to legacy single-endpoint vars
+    }
+  }
+
   const apiKey = process.env.LLM_API_KEY?.trim();
-  const base = (process.env.LLM_API_BASE?.trim() || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/$/, '');
-  const model = process.env.LLM_MODEL?.trim() || 'qwen-plus';
-  const timeoutMs = Number(process.env.LLM_TIMEOUT_MS || 45000);
-  return { apiKey, base, model, timeoutMs };
+  if (!apiKey) return [];
+
+  return [{
+    name: 'primary',
+    base: (process.env.LLM_API_BASE?.trim() || DEFAULT_BASE).replace(/\/$/, ''),
+    apiKey,
+    model: process.env.LLM_MODEL?.trim() || DEFAULT_MODEL,
+  }];
+}
+
+/** Order endpoints: preferred first, then others; skip cooled-down entries. */
+export function orderEndpointsForAttempt(
+  endpoints: LlmEndpoint[],
+  preferred: number,
+  cooldown: Map<number, number>,
+  now = Date.now()
+): { endpoint: LlmEndpoint; index: number }[] {
+  if (endpoints.length === 0) return [];
+  const safePreferred = ((preferred % endpoints.length) + endpoints.length) % endpoints.length;
+  const order: number[] = [];
+  for (let i = 0; i < endpoints.length; i++) {
+    order.push((safePreferred + i) % endpoints.length);
+  }
+  return order
+    .filter((idx) => (cooldown.get(idx) ?? 0) <= now)
+    .map((idx) => ({ endpoint: endpoints[idx], index: idx }));
+}
+
+/** Whether failure should trigger switching to the next endpoint. */
+export function isSwitchableLlmError(err: unknown): boolean {
+  if (!(err instanceof LlmError)) return true;
+  if (err.code === 'LLM_NOT_CONFIGURED') return false;
+  if (err.code === 'LLM_BAD_RESPONSE') return false; // retry same endpoint once, then switch
+  return true; // HTTP, timeout, all-endpoints
 }
 
 export function isLlmConfigured(): boolean {
-  return !!process.env.LLM_API_KEY?.trim();
+  return parseLlmEndpoints().length > 0;
 }
 
 /** Extract the first balanced JSON object from a string (handles ```json fences / prose). */
@@ -64,31 +154,32 @@ export function extractJsonObject(text: string): string | null {
   return null;
 }
 
-interface ChatOptions {
-  systemPrompt: string;
-  userPrompt: string;
-  temperature?: number;
-  maxTokens?: number;
+function markEndpointFailure(index: number): void {
+  endpointCooldownUntil.set(index, Date.now() + ENDPOINT_COOLDOWN_MS);
 }
 
-async function chatOnce(opts: ChatOptions): Promise<{ content: string; model: string; tokensUsed?: number }> {
-  const { apiKey, base, model, timeoutMs } = getConfig();
-  if (!apiKey) {
-    throw new LlmError('LLM_NOT_CONFIGURED', 'LLM_API_KEY is not configured');
-  }
+function markEndpointSuccess(index: number): void {
+  preferredEndpointIndex = index;
+  endpointCooldownUntil.delete(index);
+}
 
+async function chatOnce(
+  endpoint: LlmEndpoint,
+  opts: ChatOptions,
+  timeoutMs: number
+): Promise<{ content: string; model: string; tokensUsed?: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${base}/chat/completions`, {
+    const res = await fetch(`${endpoint.base}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${endpoint.apiKey}`,
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model,
+        model: endpoint.model,
         temperature: opts.temperature ?? 0.7,
         max_tokens: opts.maxTokens ?? 4000,
         response_format: { type: 'json_object' },
@@ -101,47 +192,91 @@ async function chatOnce(opts: ChatOptions): Promise<{ content: string; model: st
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new LlmError('LLM_HTTP_ERROR', `LLM HTTP ${res.status}: ${body.slice(0, 300)}`);
+      throw new LlmError('LLM_HTTP_ERROR', `LLM HTTP ${res.status} [${endpoint.name}]: ${body.slice(0, 300)}`);
     }
 
     const json: any = await res.json();
     const content: string = json?.choices?.[0]?.message?.content ?? '';
     const tokensUsed: number | undefined = json?.usage?.total_tokens;
-    const usedModel: string = json?.model || model;
-    if (!content) throw new LlmError('LLM_BAD_RESPONSE', 'Empty completion content');
+    const usedModel: string = json?.model || endpoint.model;
+    if (!content) throw new LlmError('LLM_BAD_RESPONSE', `Empty completion [${endpoint.name}]`);
     return { content, model: usedModel, tokensUsed };
   } catch (err) {
     if (err instanceof LlmError) throw err;
     if ((err as Error).name === 'AbortError') {
-      throw new LlmError('LLM_TIMEOUT', `LLM request timed out after ${timeoutMs}ms`);
+      throw new LlmError('LLM_TIMEOUT', `Timed out after ${timeoutMs}ms [${endpoint.name}]`);
     }
-    throw new LlmError('LLM_HTTP_ERROR', (err as Error).message);
+    throw new LlmError('LLM_HTTP_ERROR', `[${endpoint.name}] ${(err as Error).message}`);
   } finally {
     clearTimeout(timer);
   }
 }
 
+async function tryEndpointOnce<T>(
+  endpoint: LlmEndpoint,
+  index: number,
+  opts: ChatOptions,
+  timeoutMs: number
+): Promise<LlmJsonResult<T>> {
+  const { content, model, tokensUsed } = await chatOnce(endpoint, opts, timeoutMs);
+  const jsonStr = extractJsonObject(content) ?? content;
+  try {
+    const data = JSON.parse(jsonStr) as T;
+    markEndpointSuccess(index);
+    return { data, model, provider: endpoint.name, tokensUsed, raw: content };
+  } catch {
+    throw new LlmError('LLM_BAD_RESPONSE', `Could not parse JSON [${endpoint.name}]`);
+  }
+}
+
 /**
- * Request a JSON object from the LLM. Retries once on timeout / unparseable output.
- * Throws LlmError on missing key (no template fallback, per spec).
+ * Request JSON from the LLM, auto-switching across configured endpoints on failure.
+ * Each endpoint gets up to 2 attempts (for transient parse errors). No template fallback.
  */
 export async function generateJson<T = any>(opts: ChatOptions): Promise<LlmJsonResult<T>> {
-  let lastErr: Error | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const { content, model, tokensUsed } = await chatOnce(opts);
-      const jsonStr = extractJsonObject(content) ?? content;
+  const endpoints = parseLlmEndpoints();
+  if (endpoints.length === 0) {
+    throw new LlmError('LLM_NOT_CONFIGURED', 'No LLM API configured (set LLM_API_KEY or LLM_API_ENDPOINTS)');
+  }
+
+  const timeoutMs = getTimeoutMs();
+  const ordered = orderEndpointsForAttempt(endpoints, preferredEndpointIndex, endpointCooldownUntil);
+  if (ordered.length === 0) {
+    // All cooled down — try full list anyway
+    ordered.push(...endpoints.map((endpoint, index) => ({ endpoint, index })));
+  }
+
+  const errors: string[] = [];
+
+  for (const { endpoint, index } of ordered) {
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const data = JSON.parse(jsonStr) as T;
-        return { data, model, tokensUsed, raw: content };
-      } catch {
-        lastErr = new LlmError('LLM_BAD_RESPONSE', 'Could not parse JSON from LLM response');
+        return await tryEndpointOnce<T>(endpoint, index, opts, timeoutMs);
+      } catch (err) {
+        const msg = (err as Error).message || 'unknown';
+        errors.push(msg);
+
+        if (err instanceof LlmError && err.code === 'LLM_BAD_RESPONSE' && attempt === 0) {
+          continue; // one retry on same endpoint for parse errors
+        }
+
+        if (isSwitchableLlmError(err)) {
+          markEndpointFailure(index);
+          break; // try next endpoint
+        }
+        throw err;
       }
-    } catch (err) {
-      lastErr = err as Error;
-      // Do not retry a configuration error — it will never succeed.
-      if (err instanceof LlmError && err.code === 'LLM_NOT_CONFIGURED') throw err;
     }
   }
-  throw lastErr ?? new LlmError('LLM_BAD_RESPONSE', 'Unknown LLM failure');
+
+  throw new LlmError(
+    'LLM_ALL_ENDPOINTS_FAILED',
+    `All ${endpoints.length} LLM endpoint(s) failed: ${errors.slice(-3).join(' | ')}`
+  );
+}
+
+/** Reset in-memory failover state (for tests). */
+export function resetLlmFailoverState(): void {
+  preferredEndpointIndex = 0;
+  endpointCooldownUntil.clear();
 }

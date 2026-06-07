@@ -251,6 +251,101 @@ async function run() {
   const bpGenGuest = await http('/api/bp/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
   expect(bpGenGuest.status === 401, 'R1', 'bp generate rejects guests (401)', `status=${bpGenGuest.status}`, `status=${bpGenGuest.status}`);
 
+  // ---- BP scheduled auto-generation (cron) ----
+  // R-BP1: /bp list page renders via SSR (DB-independent shell).
+  const bpPage = await http('/bp', { headers: { Cookie: 'locale=zh' } });
+  expect(bpPage.status === 200 && (bpPage.body.includes('历史商业计划书') || bpPage.body.includes('商业计划书')),
+    'R-BP1', '/bp list page renders (SSR)', `status=${bpPage.status}`,
+    `status=${bpPage.status}`);
+
+  // R-BP2: header exposes the BP nav link.
+  expect(home.body.includes('/bp') && (home.body.includes('商业计划书') || home.body.includes('Business Plans')),
+    'R-BP2', 'header exposes BP nav link', 'nav present', 'nav missing');
+
+  // R-BP3: homepage shows the "generate BP" CTA when trend data is present.
+  if (DB_UP) {
+    expect(home.body.includes('generate-bp-btn') || home.body.includes('一键生成商业计划书'),
+      'R-BP3', 'homepage shows generate-BP CTA', 'cta present',
+      'cta missing (no top trend?)');
+  } else {
+    record('R-BP3', 'homepage shows generate-BP CTA', 'BLOCKED', 'DB down (Neon quota)');
+  }
+
+  // R-BP4: cron without secret must be rejected (401 when secret configured, 503 when not).
+  const cronNoAuth = await http('/api/bp/cron', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  expect(cronNoAuth.status === 401 || cronNoAuth.status === 503,
+    'R-BP4', 'cron rejects unauthenticated call', `status=${cronNoAuth.status}`,
+    `status=${cronNoAuth.status} (expected 401/503)`);
+
+  // R-BP5: cron with a wrong secret must never be accepted.
+  const cronBadAuth = await http('/api/bp/cron', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer wrong-secret-xyz' } });
+  expect(cronBadAuth.status === 401 || cronBadAuth.status === 503,
+    'R-BP5', 'cron rejects wrong secret', `status=${cronBadAuth.status}`,
+    `status=${cronBadAuth.status} (expected 401/503)`);
+
+  // R-BP6: bp tables exist (via health table list, if exposed).
+  if (DB_UP) {
+    const hasBpTables = Array.isArray(healthJson?.database?.tables)
+      ? healthJson.database.tables.includes('bp_reports')
+      : null;
+    if (hasBpTables === null) {
+      record('R-BP6', 'bp_reports table provisioned', 'BLOCKED', 'health does not list tables');
+    } else {
+      expect(hasBpTables, 'R-BP6', 'bp_reports table provisioned', 'table present',
+        'bp_reports missing — run /api/db-init');
+    }
+  } else {
+    record('R-BP6', 'bp_reports table provisioned', 'BLOCKED', 'DB down (Neon quota)');
+  }
+
+  // R-BP7/8/9: authenticated cron run (only when E2E_CRON_SECRET is provided).
+  const E2E_CRON_SECRET = process.env.E2E_CRON_SECRET;
+  if (E2E_CRON_SECRET && DB_UP) {
+    const cron = await http('/api/bp/cron', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${E2E_CRON_SECRET}` },
+    });
+    const cronJson = jsonOf(cron.body);
+    const validAction = ['generated', 'reused', 'skipped'].includes(cronJson?.action);
+    // 200 = success; 503 = LLM not configured (acceptable infra gap, not a code fault).
+    if (cron.status === 503) {
+      record('R-BP7', 'authenticated cron triggers generation', 'BLOCKED', 'LLM not configured (503)');
+      record('R-BP8', 'cron persists a BP report', 'BLOCKED', 'LLM not configured (503)');
+      record('R-BP9', 'generated BP detail renders', 'BLOCKED', 'LLM not configured (503)');
+    } else {
+      expect(cron.status === 200 && cronJson?.success === true && validAction,
+        'R-BP7', 'authenticated cron triggers generation', `action=${cronJson?.action}`,
+        `status=${cron.status} action=${cronJson?.action}`);
+
+      // R-BP8: the report id from cron should be retrievable.
+      if (cron.status === 200 && cronJson?.reportId) {
+        const detail = await http(`/api/bp/${cronJson.reportId}`);
+        const detailJson = jsonOf(detail.body);
+        expect(detail.status === 200 && detailJson?.success === true && detailJson?.data?.id === cronJson.reportId,
+          'R-BP8', 'cron persists a BP report', `id=${cronJson.reportId} status=${detailJson?.data?.status}`,
+          `status=${detail.status}`);
+
+        // R-BP9: detail page SSR renders for a completed report.
+        if (detailJson?.data?.status === 'completed') {
+          const detailPage = await http(`/bp/${cronJson.reportId}`, { headers: { Cookie: 'locale=zh' } });
+          expect(detailPage.status === 200 && detailPage.body.includes('执行摘要'),
+            'R-BP9', 'generated BP detail renders', `status=${detailPage.status}`,
+            `status=${detailPage.status}`);
+        } else {
+          record('R-BP9', 'generated BP detail renders', 'BLOCKED', `report status=${detailJson?.data?.status}`);
+        }
+      } else {
+        record('R-BP8', 'cron persists a BP report', 'BLOCKED', `action=${cronJson?.action} (no reportId)`);
+        record('R-BP9', 'generated BP detail renders', 'BLOCKED', 'no report to render');
+      }
+    }
+  } else {
+    const reason = !E2E_CRON_SECRET ? 'E2E_CRON_SECRET not set' : 'DB down (Neon quota)';
+    record('R-BP7', 'authenticated cron triggers generation', 'BLOCKED', reason);
+    record('R-BP8', 'cron persists a BP report', 'BLOCKED', reason);
+    record('R-BP9', 'generated BP detail renders', 'BLOCKED', reason);
+  }
+
   // ---- summary ----
   const counts = results.reduce((a, r) => (a[r.status] = (a[r.status] || 0) + 1, a), {});
   const pass = counts.PASS || 0, fail = counts.FAIL || 0, blocked = counts.BLOCKED || 0;
@@ -264,8 +359,24 @@ async function run() {
   try {
     mkdirSync(__dirname, { recursive: true });
     writeFileSync(join(__dirname, 'last-run.json'), JSON.stringify(out, null, 2));
+
+    // Human-readable markdown report.
+    const md = [
+      `# Live smoke test report`,
+      ``,
+      `- Target: ${BASE_URL}`,
+      `- Time: ${out.timestamp}`,
+      `- Version: ${out.version ?? 'n/a'}`,
+      `- DB: ${DB_UP ? 'up' : 'down (Neon quota)'}`,
+      `- Result: ${pass} PASS / ${fail} FAIL / ${blocked} BLOCKED (total ${results.length})`,
+      ``,
+      `| Req | Check | Status | Detail |`,
+      `| --- | --- | --- | --- |`,
+      ...results.map((r) => `| ${r.req} | ${r.name} | ${r.status} | ${(r.detail ?? '').replace(/\|/g, '\\|')} |`),
+    ].join('\n');
+    writeFileSync(join(__dirname, 'last-run.md'), md);
   } catch (e) {
-    console.error('Could not write last-run.json:', e.message);
+    console.error('Could not write report files:', e.message);
   }
 
   process.exit(fail > 0 ? 1 : 0);

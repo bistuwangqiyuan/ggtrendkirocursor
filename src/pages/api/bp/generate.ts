@@ -37,7 +37,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     if (!result.success) {
       const code = result.error.code;
-      const status = code === 'NO_TREND' ? 400 : code === 'LLM_NOT_CONFIGURED' ? 503 : 500;
+      const status = code === 'NO_TREND' ? 400 : code === 'LLM_NOT_CONFIGURED' || code === 'LLM_ALL_ENDPOINTS_FAILED' ? 503 : 500;
       return new Response(
         JSON.stringify({ success: false, error: result.error.message, code, reportId: result.error.reportId }),
         { status, headers: { 'Content-Type': 'application/json' } }
