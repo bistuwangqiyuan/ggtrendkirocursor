@@ -1,0 +1,79 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { bpService } from '../../lib/services/bp';
+import { getTranslations } from '../../lib/i18n';
+import { formatDateTime } from '../../lib/utils/format';
+
+export const prerender = false;
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+
+const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
+const result = await bpService.list(page, 20);
+const data = result.success ? result.data : { reports: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
+
+const statusLabel = (s: string) => (t.bp.status as Record<string, string>)[s] || s;
+const statusClass = (s: string) =>
+  s === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20'
+  : s === 'generating' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+  : s === 'failed' ? 'bg-red-500/10 text-red-400 border-red-500/20'
+  : 'bg-gray-700/30 text-gray-300 border-gray-600/30';
+---
+
+<Layout title={t.bp.listTitle}>
+  <div class="space-y-6">
+    <div class="flex items-center justify-between">
+      <h1 class="text-3xl font-bold tracking-tight text-white">{t.bp.listTitle}</h1>
+      <a href="/" class="text-sm font-medium text-blue-400 hover:text-blue-300">{t.bp.generateForTop} →</a>
+    </div>
+
+    {data.reports.length === 0 ? (
+      <div class="rounded-lg border border-gray-800 bg-gray-900/50 px-6 py-16 text-center text-gray-400">
+        {t.bp.empty}
+      </div>
+    ) : (
+      <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/50 shadow-xl">
+        <table class="w-full text-left text-sm text-gray-400">
+          <thead class="bg-gray-800 text-gray-200 uppercase text-xs font-medium">
+            <tr>
+              <th class="px-6 py-4 tracking-wider">{t.bp.columns.keyword}</th>
+              <th class="px-6 py-4 tracking-wider">{t.bp.columns.title}</th>
+              <th class="px-6 py-4 tracking-wider">{t.bp.columns.selected}</th>
+              <th class="px-6 py-4 tracking-wider">{t.bp.columns.status}</th>
+              <th class="px-6 py-4 tracking-wider text-right">{t.bp.columns.time}</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {data.reports.map((r) => (
+              <tr class="hover:bg-gray-800/50 transition-colors group">
+                <td class="px-6 py-4 font-medium text-white">
+                  <a href={`/bp/${r.id}`} class="group-hover:text-blue-400 transition-colors">{r.keyword}</a>
+                </td>
+                <td class="px-6 py-4 max-w-xs truncate">{r.title || '—'}</td>
+                <td class="px-6 py-4 max-w-xs truncate">{r.selectedOpportunity || '—'}</td>
+                <td class="px-6 py-4">
+                  <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusClass(r.status)}`}>
+                    {statusLabel(r.status)}
+                  </span>
+                </td>
+                <td class="px-6 py-4 text-right text-gray-500">{formatDateTime(new Date(r.createdAt), locale)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    {data.pagination.totalPages > 1 && (
+      <div class="flex items-center justify-center gap-2">
+        {Array.from({ length: data.pagination.totalPages }, (_, i) => i + 1).map((p) => (
+          <a
+            href={`/bp?page=${p}`}
+            class={`rounded-md px-3 py-1.5 text-sm ${p === data.pagination.currentPage ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+          >{p}</a>
+        ))}
+      </div>
+    )}
+  </div>
+</Layout>

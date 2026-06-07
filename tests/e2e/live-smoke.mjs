@@ -227,6 +227,30 @@ async function run() {
     record('R8', 'feedback persistence', 'BLOCKED', 'DB down (Neon quota)');
   }
 
+  // ---- Hot word -> BP feature ----
+  // List is public: must return 200 with paginated shape regardless of DB rows.
+  const bpList = await http('/api/bp/list?page=1&pageSize=5');
+  const bpListJson = jsonOf(bpList.body);
+  if (DB_UP) {
+    expect(bpList.status === 200 && bpListJson?.success === true && Array.isArray(bpListJson?.data?.reports),
+      'R7', 'bp list API returns paginated reports', `count=${bpListJson?.data?.reports?.length}`,
+      `status=${bpList.status} success=${bpListJson?.success}`);
+  } else {
+    record('R7', 'bp list API returns paginated reports', 'BLOCKED', 'DB down (Neon quota)');
+  }
+
+  // Unknown (well-formed) id returns 404, not 500.
+  const bpMissing = await http('/api/bp/00000000-0000-0000-0000-000000000000');
+  if (DB_UP) {
+    expect(bpMissing.status === 404, 'R7', 'bp detail API returns 404 for unknown id', `status=${bpMissing.status}`, `status=${bpMissing.status}`);
+  } else {
+    record('R7', 'bp detail API returns 404 for unknown id', 'BLOCKED', 'DB down (Neon quota)');
+  }
+
+  // Generation requires auth: guest POST must be rejected with 401.
+  const bpGenGuest = await http('/api/bp/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+  expect(bpGenGuest.status === 401, 'R1', 'bp generate rejects guests (401)', `status=${bpGenGuest.status}`, `status=${bpGenGuest.status}`);
+
   // ---- summary ----
   const counts = results.reduce((a, r) => (a[r.status] = (a[r.status] || 0) + 1, a), {});
   const pass = counts.PASS || 0, fail = counts.FAIL || 0, blocked = counts.BLOCKED || 0;

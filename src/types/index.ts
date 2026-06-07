@@ -100,3 +100,116 @@ export interface FeedbackInput {
   userId?: string;
 }
 
+// ----- Hot word -> Business Plan (BP) -----
+
+export type BpStatus = 'pending' | 'generating' | 'completed' | 'failed';
+
+export interface BpScores {
+  market: number;
+  roi: number;
+  onlineability: number;
+  feasibility: number;
+  speed: number;
+  moat: number;
+}
+
+export interface BpOpportunity {
+  id?: string;
+  reportId?: string;
+  name: string;
+  description: string;
+  scores: BpScores;
+  weightedScore: number;
+  isSelected: boolean;
+  rank: number;
+}
+
+export interface BpSeedReturn {
+  /** Book ROI per year [Y1..Y5] in percent, e.g. [50,140,380,495,665]. */
+  bookRoiByYear: number[];
+  annualizedBook: string;
+  /** Win rate = probability of a profitable cash exit. */
+  winRate: string;
+  profitLossRatio: string;
+  expectedValueMOIC: string;
+  riskAdjustedAnnualized: string;
+  notes?: string;
+}
+
+export interface BpFinancialYear {
+  year: number;
+  revenue: string;
+  ebitda: string;
+}
+
+export interface BpContent {
+  title: string;
+  summary: string;
+  selectedOpportunity: string;
+  opportunities: BpOpportunity[];
+  market: { tam: string; sam: string; som: string; notes?: string };
+  businessModel: string;
+  financials: { years: BpFinancialYear[] };
+  seedReturn: BpSeedReturn;
+}
+
+export interface BpTrendSnapshot {
+  sourceTrendId?: string;
+  keyword: string;
+  searchVolume: number;
+  growthRate: number;
+  category: string;
+  timeRange: string;
+  region: string;
+  rank: number;
+}
+
+export interface BpReport extends BpTrendSnapshot {
+  id: string;
+  keywordNorm: string;
+  status: BpStatus;
+  title?: string;
+  summary?: string;
+  selectedOpportunity?: string;
+  contentJson?: BpContent | null;
+  model?: string;
+  tokensUsed?: number;
+  error?: string | null;
+  userId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  opportunities?: BpOpportunity[];
+}
+
+export interface BpReportListItem {
+  id: string;
+  keyword: string;
+  title?: string;
+  status: BpStatus;
+  selectedOpportunity?: string;
+  createdAt: Date;
+}
+
+export interface GenerateBpInput {
+  keyword?: string;
+  trendId?: string;
+  timeRange?: string;
+  userId?: string;
+}
+
+export interface BpError {
+  code: string;
+  message: string;
+  reportId?: string;
+}
+
+export interface PaginatedBpReports {
+  reports: BpReportListItem[];
+  pagination: {
+    currentPage: number;
+    totalPages: number;
+    totalItems: number;
+    pageSize: number;
+  };
+}
+

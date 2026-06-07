@@ -48,6 +48,9 @@ const timeRange = urlTimeRange || '4h';
 const trendsData = trendsResult.success ? trendsResult.data : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
 const categories = categoriesResult.success ? categoriesResult.data : [];
 const error = !trendsResult.success ? trendsResult.error : null;
+
+const isLoggedIn = !!Astro.locals.user;
+const topTrend = trendsData.trends[0];
 ---
 
 <Layout title={t.trends.title}>
@@ -62,6 +65,29 @@ const error = !trendsResult.success ? trendsResult.error : null;
         </div>
 
         {error && <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-md">{t.auth.errors.generic}</div>}
+
+        {topTrend && (
+          <div class="flex flex-col gap-3 rounded-xl border border-blue-500/30 bg-gradient-to-r from-blue-600/15 to-purple-600/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <p class="text-xs font-medium uppercase tracking-wider text-blue-300">{t.bp.subtitle}</p>
+              <p class="mt-1 truncate text-lg font-semibold text-white">
+                #1 · {topTrend.keyword}
+              </p>
+            </div>
+            <button
+              id="generate-bp-btn"
+              data-keyword={topTrend.keyword}
+              data-trend-id={topTrend.id}
+              data-time-range={timeRange}
+              data-logged-in={isLoggedIn ? '1' : '0'}
+              class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span class="btn-label">{t.bp.generateCta}</span>
+            </button>
+          </div>
+        )}
+
+        <div id="bp-gen-message" class="hidden rounded-md border px-4 py-3 text-sm"></div>
 
         <TrendsFilters
             client:load
@@ -84,3 +110,63 @@ const error = !trendsResult.success ? trendsResult.error : null;
         />
     </div>
 </Layout>
+
+<script>
+  const btn = document.getElementById('generate-bp-btn') as HTMLButtonElement | null;
+  const msg = document.getElementById('bp-gen-message');
+
+  function showMessage(text: string, kind: 'info' | 'error') {
+    if (!msg) return;
+    msg.textContent = text;
+    msg.classList.remove('hidden');
+    msg.classList.toggle('border-red-500/30', kind === 'error');
+    msg.classList.toggle('bg-red-500/10', kind === 'error');
+    msg.classList.toggle('text-red-400', kind === 'error');
+    msg.classList.toggle('border-blue-500/30', kind === 'info');
+    msg.classList.toggle('bg-blue-500/10', kind === 'info');
+    msg.classList.toggle('text-blue-300', kind === 'info');
+  }
+
+  btn?.addEventListener('click', async () => {
+    if (btn.dataset.loggedIn !== '1') {
+      window.location.href = '/login';
+      return;
+    }
+
+    const label = btn.querySelector('.btn-label');
+    const original = label?.textContent || '';
+    btn.disabled = true;
+    if (label) label.textContent = '生成中… / Generating…';
+    showMessage('正在生成商业计划书，请稍候（约 20–60 秒）… / Generating, please wait…', 'info');
+
+    try {
+      const res = await fetch('/api/bp/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword: btn.dataset.keyword,
+          trendId: btn.dataset.trendId,
+          timeRange: btn.dataset.timeRange,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data?.success && data?.data?.id) {
+        window.location.href = `/bp/${data.data.id}`;
+        return;
+      }
+
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return;
+      }
+
+      showMessage(data?.error || '生成失败，请稍后重试 / Generation failed', 'error');
+    } catch {
+      showMessage('生成失败，请稍后重试 / Generation failed', 'error');
+    } finally {
+      btn.disabled = false;
+      if (label) label.textContent = original;
+    }
+  });
+</script>

@@ -1,0 +1,228 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { bpService } from '../../lib/services/bp';
+import { getTranslations } from '../../lib/i18n';
+import { formatNumber, formatDateTime } from '../../lib/utils/format';
+
+export const prerender = false;
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+
+const { id } = Astro.params;
+const result = await bpService.getById(id || '');
+
+if (!result.success && result.error.code === 'NOT_FOUND') {
+  return new Response(null, { status: 404 });
+}
+
+const report = result.success ? result.data : null;
+const content = report?.contentJson || null;
+const opportunities = report?.opportunities || [];
+const isGenerating = report?.status === 'generating' || report?.status === 'pending';
+const isFailed = report?.status === 'failed';
+
+const scoreVal = (scores: Record<string, number>, key: string): number => scores?.[key] ?? 0;
+
+const scoreRows: { key: string; label: string }[] = [
+  { key: 'market', label: t.bp.scores.market },
+  { key: 'roi', label: t.bp.scores.roi },
+  { key: 'onlineability', label: t.bp.scores.onlineability },
+  { key: 'feasibility', label: t.bp.scores.feasibility },
+  { key: 'speed', label: t.bp.scores.speed },
+  { key: 'moat', label: t.bp.scores.moat },
+];
+
+const pageTitle = content?.title || report?.keyword || t.bp.title;
+---
+
+<Layout title={pageTitle}>
+  <div class="space-y-8" data-report-id={report?.id} data-status={report?.status}>
+    <div class="flex items-center justify-between">
+      <a href="/bp" class="text-sm font-medium text-blue-400 hover:text-blue-300">← {t.bp.backToList}</a>
+      {report && (
+        <span class="text-xs text-gray-500">{formatDateTime(new Date(report.createdAt), locale)}</span>
+      )}
+    </div>
+
+    {!report && (
+      <div class="rounded-lg border border-red-500/20 bg-red-500/10 px-6 py-12 text-center text-red-400">
+        {t.bp.failed}
+      </div>
+    )}
+
+    {isGenerating && (
+      <div id="bp-generating" class="rounded-xl border border-blue-500/30 bg-blue-600/10 px-6 py-16 text-center">
+        <div class="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-500/30 border-t-blue-400"></div>
+        <p class="text-lg font-semibold text-white">{t.bp.generating}</p>
+        <p class="mt-2 text-sm text-gray-400">{t.bp.generatingHint}</p>
+      </div>
+    )}
+
+    {isFailed && (
+      <div class="rounded-lg border border-red-500/20 bg-red-500/10 px-6 py-12 text-center">
+        <p class="text-lg font-semibold text-red-400">{t.bp.failed}</p>
+        {report?.error && <p class="mt-2 text-xs text-gray-500">{report.error}</p>}
+      </div>
+    )}
+
+    {report && content && report.status === 'completed' && (
+      <article class="space-y-8">
+        <header class="space-y-2">
+          <p class="text-xs font-medium uppercase tracking-wider text-blue-300">
+            #{report.rank} · {report.keyword}
+          </p>
+          <h1 class="text-3xl font-bold tracking-tight text-white">{content.title}</h1>
+        </header>
+
+        <!-- Source trend snapshot -->
+        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-5">
+          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">{t.bp.sections.sourceTrend}</h2>
+          <div class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+            <div><div class="text-gray-500">{t.trends.keyword}</div><div class="font-medium text-white">{report.keyword}</div></div>
+            <div><div class="text-gray-500">{t.trends.searchVolume}</div><div class="font-mono text-white">{formatNumber(report.searchVolume)}</div></div>
+            <div><div class="text-gray-500">{t.trends.category}</div><div class="text-white">{report.category || '—'}</div></div>
+            <div><div class="text-gray-500">{t.trends.trendingWindow}</div><div class="text-white">{report.timeRange || '—'}</div></div>
+          </div>
+        </section>
+
+        <!-- Executive summary -->
+        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+          <h2 class="mb-3 text-xl font-semibold text-white">{t.bp.sections.summary}</h2>
+          <p class="whitespace-pre-line leading-relaxed text-gray-300">{content.summary}</p>
+        </section>
+
+        <!-- Score matrix -->
+        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+          <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.scoreMatrix}</h2>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-gray-400">
+              <thead class="text-xs uppercase text-gray-500">
+                <tr>
+                  <th class="py-2 pr-4">{t.trends.keyword}</th>
+                  {scoreRows.map((s) => <th class="px-2 py-2 text-right">{s.label}</th>)}
+                  <th class="px-2 py-2 text-right text-blue-300">{t.bp.scores.weighted}</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-800">
+                {opportunities.map((o) => (
+                  <tr class={o.isSelected ? 'bg-blue-500/10' : ''}>
+                    <td class="py-2 pr-4 font-medium text-white">
+                      {o.isSelected && <span class="mr-1 text-blue-400">★</span>}{o.name}
+                    </td>
+                    {scoreRows.map((s) => (
+                      <td class="px-2 py-2 text-right font-mono">{scoreVal(o.scores, s.key)}</td>
+                    ))}
+                    <td class="px-2 py-2 text-right font-mono font-semibold text-blue-300">{o.weightedScore}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Selected opportunity -->
+        <section class="rounded-xl border border-blue-500/30 bg-blue-600/5 p-6">
+          <h2 class="mb-2 text-xl font-semibold text-white">{t.bp.sections.selectedOpportunity}</h2>
+          <p class="text-lg font-medium text-blue-300">{content.selectedOpportunity}</p>
+          {opportunities.find((o) => o.isSelected)?.description && (
+            <p class="mt-3 whitespace-pre-line leading-relaxed text-gray-300">{opportunities.find((o) => o.isSelected)?.description}</p>
+          )}
+        </section>
+
+        <!-- Market -->
+        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+          <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.market}</h2>
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.market.tam}</div><div class="mt-1 font-semibold text-white">{content.market.tam || '—'}</div></div>
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.market.sam}</div><div class="mt-1 font-semibold text-white">{content.market.sam || '—'}</div></div>
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.market.som}</div><div class="mt-1 font-semibold text-white">{content.market.som || '—'}</div></div>
+          </div>
+          {content.market.notes && <p class="mt-4 whitespace-pre-line leading-relaxed text-gray-300">{content.market.notes}</p>}
+        </section>
+
+        <!-- Business model -->
+        {content.businessModel && (
+          <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <h2 class="mb-3 text-xl font-semibold text-white">{t.bp.sections.businessModel}</h2>
+            <p class="whitespace-pre-line leading-relaxed text-gray-300">{content.businessModel}</p>
+          </section>
+        )}
+
+        <!-- Financials -->
+        {content.financials.years.length > 0 && (
+          <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+            <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.financials}</h2>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-gray-400">
+                <thead class="text-xs uppercase text-gray-500">
+                  <tr>
+                    <th class="py-2 pr-4">{t.bp.financials.year}</th>
+                    <th class="px-2 py-2">{t.bp.financials.revenue}</th>
+                    <th class="px-2 py-2">{t.bp.financials.ebitda}</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800">
+                  {content.financials.years.map((y) => (
+                    <tr>
+                      <td class="py-2 pr-4 font-medium text-white">{y.year}</td>
+                      <td class="px-2 py-2">{y.revenue || '—'}</td>
+                      <td class="px-2 py-2">{y.ebitda || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        <!-- Seed-round return metrics -->
+        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+          <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.seedReturn}</h2>
+          <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.annualizedBook}</div><div class="mt-1 font-semibold text-white">{content.seedReturn.annualizedBook}</div></div>
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.winRate}</div><div class="mt-1 font-semibold text-green-400">{content.seedReturn.winRate}</div></div>
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.profitLossRatio}</div><div class="mt-1 font-semibold text-white">{content.seedReturn.profitLossRatio}</div></div>
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.ev}</div><div class="mt-1 font-semibold text-white">{content.seedReturn.expectedValueMOIC}</div></div>
+            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.riskAdjusted}</div><div class="mt-1 font-semibold text-amber-400">{content.seedReturn.riskAdjustedAnnualized}</div></div>
+          </div>
+          <div class="mt-4">
+            <div class="mb-2 text-xs text-gray-500">{t.bp.seed.roiByYear}</div>
+            <div class="flex flex-wrap gap-2">
+              {content.seedReturn.bookRoiByYear.map((roi, i) => (
+                <span class="rounded-md border border-gray-700 bg-gray-950/40 px-3 py-1.5 text-sm">
+                  <span class="text-gray-500">Y{i + 1}</span> <span class="font-mono font-semibold text-white">{roi}%</span>
+                </span>
+              ))}
+            </div>
+          </div>
+          {content.seedReturn.notes && <p class="mt-4 text-xs leading-relaxed text-gray-500">{content.seedReturn.notes}</p>}
+        </section>
+      </article>
+    )}
+  </div>
+</Layout>
+
+<script>
+  // Poll while the report is still generating; reload when it settles.
+  const root = document.querySelector('[data-report-id]') as HTMLElement | null;
+  const status = root?.dataset.status;
+  const id = root?.dataset.reportId;
+  if (id && (status === 'generating' || status === 'pending')) {
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/bp/${id}`, { headers: { Accept: 'application/json' } });
+        const data = await res.json().catch(() => ({}));
+        const s = data?.data?.status;
+        if (s === 'completed' || s === 'failed') {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // transient error; keep polling
+      }
+      setTimeout(poll, 3000);
+    };
+    setTimeout(poll, 3000);
+  }
+</script>

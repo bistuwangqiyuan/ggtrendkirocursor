@@ -41,6 +41,51 @@ const BASE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)`,
+  // Hot word -> BP feature tables (additive; do not modify existing tables).
+  `CREATE TABLE IF NOT EXISTS bp_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    keyword VARCHAR(200) NOT NULL,
+    keyword_norm VARCHAR(200),
+    source_trend_id VARCHAR(100),
+    search_volume BIGINT,
+    growth_rate NUMERIC,
+    category VARCHAR(100),
+    time_range VARCHAR(20),
+    region VARCHAR(50),
+    rank INT,
+    status VARCHAR(20) DEFAULT 'pending',
+    title TEXT,
+    summary TEXT,
+    selected_opportunity TEXT,
+    content_json JSONB,
+    model VARCHAR(100),
+    tokens_used INT,
+    error TEXT,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS bp_opportunities (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    report_id UUID NOT NULL REFERENCES bp_reports(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    score_market NUMERIC,
+    score_roi NUMERIC,
+    score_onlineability NUMERIC,
+    score_feasibility NUMERIC,
+    score_speed NUMERIC,
+    score_moat NUMERIC,
+    weighted_score NUMERIC,
+    is_selected BOOLEAN DEFAULT false,
+    rank INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_keyword_norm ON bp_reports(keyword_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_status ON bp_reports(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_opportunities_report_id ON bp_opportunities(report_id)`,
 ];
 
 // Columns the application code requires on each table.
@@ -48,6 +93,8 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   users: ['id', 'username', 'email', 'password_hash', 'locale', 'created_at', 'updated_at', 'last_login_at'],
   sessions: ['id', 'user_id', 'token', 'expires_at', 'created_at', 'ip_address', 'user_agent'],
   feedback: ['id', 'user_id', 'name', 'email', 'subject', 'message', 'status', 'created_at'],
+  bp_reports: ['id', 'keyword', 'keyword_norm', 'source_trend_id', 'search_volume', 'growth_rate', 'category', 'time_range', 'region', 'rank', 'status', 'title', 'summary', 'selected_opportunity', 'content_json', 'model', 'tokens_used', 'error', 'user_id', 'created_at', 'updated_at'],
+  bp_opportunities: ['id', 'report_id', 'name', 'description', 'score_market', 'score_roi', 'score_onlineability', 'score_feasibility', 'score_speed', 'score_moat', 'weighted_score', 'is_selected', 'rank', 'created_at'],
 };
 
 // Destructive recreate of the auth/feedback tables (drops mismatched legacy schema).
@@ -96,9 +143,60 @@ const RECREATE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)`,
 ];
 
+// Destructive recreate of the BP feature tables (drops child before parent).
+const RECREATE_BP_STATEMENTS = [
+  `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+  `DROP TABLE IF EXISTS bp_opportunities CASCADE`,
+  `DROP TABLE IF EXISTS bp_reports CASCADE`,
+  `CREATE TABLE bp_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    keyword VARCHAR(200) NOT NULL,
+    keyword_norm VARCHAR(200),
+    source_trend_id VARCHAR(100),
+    search_volume BIGINT,
+    growth_rate NUMERIC,
+    category VARCHAR(100),
+    time_range VARCHAR(20),
+    region VARCHAR(50),
+    rank INT,
+    status VARCHAR(20) DEFAULT 'pending',
+    title TEXT,
+    summary TEXT,
+    selected_opportunity TEXT,
+    content_json JSONB,
+    model VARCHAR(100),
+    tokens_used INT,
+    error TEXT,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE bp_opportunities (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    report_id UUID NOT NULL REFERENCES bp_reports(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    score_market NUMERIC,
+    score_roi NUMERIC,
+    score_onlineability NUMERIC,
+    score_feasibility NUMERIC,
+    score_speed NUMERIC,
+    score_moat NUMERIC,
+    weighted_score NUMERIC,
+    is_selected BOOLEAN DEFAULT false,
+    rank INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_keyword_norm ON bp_reports(keyword_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_status ON bp_reports(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_opportunities_report_id ON bp_opportunities(report_id)`,
+];
+
 async function inspectColumns(client: any): Promise<Record<string, string[]>> {
   const out: Record<string, string[]> = {};
-  for (const table of ['users', 'sessions', 'feedback']) {
+  for (const table of Object.keys(REQUIRED_COLUMNS)) {
     try {
       const cols = await client.query(
         `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`,
@@ -128,7 +226,7 @@ export const POST: APIRoute = async ({ request }) => {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const migrate = url.searchParams.get('migrate') === 'auth';
+  const migrateParam = url.searchParams.get('migrate'); // 'auth' | 'bp' | null
 
   let client: any;
   try {
@@ -137,7 +235,11 @@ export const POST: APIRoute = async ({ request }) => {
     const before = await inspectColumns(client);
     const mismatches = detectMismatches(before);
 
-    const statements = migrate ? RECREATE_STATEMENTS : BASE_STATEMENTS;
+    const statements = migrateParam === 'auth'
+      ? RECREATE_STATEMENTS
+      : migrateParam === 'bp'
+        ? RECREATE_BP_STATEMENTS
+        : BASE_STATEMENTS;
     const results: string[] = [];
     for (const stmt of statements) {
       const label = stmt.split('\n').find((l) => l.trim())?.trim().substring(0, 60) ?? '';
@@ -153,7 +255,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     return new Response(JSON.stringify({
       success: true,
-      mode: migrate ? 'recreate-auth' : 'idempotent',
+      mode: migrateParam === 'auth' ? 'recreate-auth' : migrateParam === 'bp' ? 'recreate-bp' : 'idempotent',
       detectedMismatches: mismatches,
       before,
       after,

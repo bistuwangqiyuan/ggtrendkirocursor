@@ -18,6 +18,9 @@ const { currentPath } = Astro.props;
     <a href="/" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/' ? 'text-blue-400' : 'text-gray-300'}`}>
       {t.nav.home}
     </a>
+    <a href="/bp" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath?.startsWith('/bp') ? 'text-blue-400' : 'text-gray-300'}`}>
+      {t.nav.bp}
+    </a>
     <a href="/about" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/about' ? 'text-blue-400' : 'text-gray-300'}`}>
       {t.nav.about}
     </a>
