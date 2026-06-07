@@ -298,6 +298,13 @@ async function run() {
     record('R-BP6', 'bp_reports table provisioned', 'BLOCKED', 'DB down (Neon quota)');
   }
 
+  // R-BP12: LLM rotation health endpoint is reachable and reports endpoints.
+  const llmHealth = await http('/api/llm/health');
+  const llmHealthJson = jsonOf(llmHealth.body);
+  expect(llmHealth.status === 200 && llmHealthJson?.success === true && typeof llmHealthJson?.count === 'number',
+    'R-BP12', 'LLM health endpoint reports rotation', `configured=${llmHealthJson?.configured} count=${llmHealthJson?.count}`,
+    `status=${llmHealth.status}`);
+
   // R-BP7/8/9: authenticated cron run (only when E2E_CRON_SECRET is provided).
   const E2E_CRON_SECRET = process.env.E2E_CRON_SECRET;
   if (E2E_CRON_SECRET && DB_UP) {
@@ -312,6 +319,8 @@ async function run() {
       record('R-BP7', 'authenticated cron triggers generation', 'BLOCKED', 'LLM not configured (503)');
       record('R-BP8', 'cron persists a BP report', 'BLOCKED', 'LLM not configured (503)');
       record('R-BP9', 'generated BP detail renders', 'BLOCKED', 'LLM not configured (503)');
+      record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', 'LLM not configured (503)');
+      record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', 'LLM not configured (503)');
     } else {
       expect(cron.status === 200 && cronJson?.success === true && validAction,
         'R-BP7', 'authenticated cron triggers generation', `action=${cronJson?.action}`,
@@ -331,12 +340,30 @@ async function run() {
           expect(detailPage.status === 200 && detailPage.body.includes('执行摘要'),
             'R-BP9', 'generated BP detail renders', `status=${detailPage.status}`,
             `status=${detailPage.status}`);
+
+          // R-BP10: report exposes an Export-PDF control + print styles (Apple report shell).
+          const hasExport = detailPage.body.includes('bp-export-pdf');
+          const hasPrintCss = detailPage.body.includes('@media print') && detailPage.body.includes('bp-report');
+          expect(detailPage.status === 200 && hasExport && hasPrintCss,
+            'R-BP10', 'report has Export-PDF + print styles', 'export+print present',
+            `export=${hasExport} print=${hasPrintCss}`);
+
+          // R-BP11: executive summary states seed-round returns (contains percentage figures).
+          const summary = String(detailJson?.data?.contentJson?.summary || '');
+          const hasPct = /\d+(?:\.\d+)?\s*%/.test(summary);
+          expect(summary.length > 0 && hasPct,
+            'R-BP11', 'summary states seed-round return figures', `len=${summary.length} hasPct=${hasPct}`,
+            `len=${summary.length} hasPct=${hasPct}`);
         } else {
           record('R-BP9', 'generated BP detail renders', 'BLOCKED', `report status=${detailJson?.data?.status}`);
+          record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', `report status=${detailJson?.data?.status}`);
+          record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', `report status=${detailJson?.data?.status}`);
         }
       } else {
         record('R-BP8', 'cron persists a BP report', 'BLOCKED', `action=${cronJson?.action} (no reportId)`);
         record('R-BP9', 'generated BP detail renders', 'BLOCKED', 'no report to render');
+        record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', 'no report to render');
+        record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', 'no report to render');
       }
     }
   } else {
@@ -344,6 +371,8 @@ async function run() {
     record('R-BP7', 'authenticated cron triggers generation', 'BLOCKED', reason);
     record('R-BP8', 'cron persists a BP report', 'BLOCKED', reason);
     record('R-BP9', 'generated BP detail renders', 'BLOCKED', reason);
+    record('R-BP10', 'report has Export-PDF + print styles', 'BLOCKED', reason);
+    record('R-BP11', 'summary states seed-round return figures', 'BLOCKED', reason);
   }
 
   // ---- summary ----

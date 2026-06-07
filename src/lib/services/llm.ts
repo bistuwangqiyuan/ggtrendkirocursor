@@ -16,14 +16,24 @@ const DEFAULT_MODEL = 'qwen-plus';
 const DEFAULT_TIMEOUT_MS = 45000;
 /** Skip endpoints that failed recently (ms). */
 const ENDPOINT_COOLDOWN_MS = 120_000;
+/** Longer skip for auth/quota failures (dead/exhausted keys) so valid APIs are preferred. */
+const AUTH_QUOTA_COOLDOWN_MS = 900_000;
 
 export class LlmError extends Error {
   code: 'LLM_NOT_CONFIGURED' | 'LLM_TIMEOUT' | 'LLM_BAD_RESPONSE' | 'LLM_HTTP_ERROR' | 'LLM_ALL_ENDPOINTS_FAILED';
-  constructor(code: LlmError['code'], message: string) {
+  /** HTTP status when code is LLM_HTTP_ERROR (used to distinguish auth/quota faults). */
+  httpStatus?: number;
+  constructor(code: LlmError['code'], message: string, httpStatus?: number) {
     super(message);
     this.code = code;
+    this.httpStatus = httpStatus;
     this.name = 'LlmError';
   }
+}
+
+/** Auth/quota HTTP statuses indicate a dead or exhausted key; skip it for longer. */
+export function isAuthOrQuotaStatus(status: number | undefined): boolean {
+  return status === 401 || status === 402 || status === 403 || status === 429;
 }
 
 export interface LlmEndpoint {
@@ -154,8 +164,8 @@ export function extractJsonObject(text: string): string | null {
   return null;
 }
 
-function markEndpointFailure(index: number): void {
-  endpointCooldownUntil.set(index, Date.now() + ENDPOINT_COOLDOWN_MS);
+function markEndpointFailure(index: number, cooldownMs: number = ENDPOINT_COOLDOWN_MS): void {
+  endpointCooldownUntil.set(index, Date.now() + cooldownMs);
 }
 
 function markEndpointSuccess(index: number): void {
@@ -192,7 +202,7 @@ async function chatOnce(
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new LlmError('LLM_HTTP_ERROR', `LLM HTTP ${res.status} [${endpoint.name}]: ${body.slice(0, 300)}`);
+      throw new LlmError('LLM_HTTP_ERROR', `LLM HTTP ${res.status} [${endpoint.name}]: ${body.slice(0, 300)}`, res.status);
     }
 
     const json: any = await res.json();
@@ -261,7 +271,10 @@ export async function generateJson<T = any>(opts: ChatOptions): Promise<LlmJsonR
         }
 
         if (isSwitchableLlmError(err)) {
-          markEndpointFailure(index);
+          // Auth/quota faults (dead or exhausted keys) get a longer cooldown so the
+          // rotation automatically prefers endpoints that actually work.
+          const httpStatus = err instanceof LlmError ? err.httpStatus : undefined;
+          markEndpointFailure(index, isAuthOrQuotaStatus(httpStatus) ? AUTH_QUOTA_COOLDOWN_MS : ENDPOINT_COOLDOWN_MS);
           break; // try next endpoint
         }
         throw err;
@@ -279,4 +292,43 @@ export async function generateJson<T = any>(opts: ChatOptions): Promise<LlmJsonR
 export function resetLlmFailoverState(): void {
   preferredEndpointIndex = 0;
   endpointCooldownUntil.clear();
+}
+
+export interface LlmEndpointStatus {
+  name: string;
+  model: string;
+  base: string;
+  preferred: boolean;
+  cooledDown: boolean;
+  cooldownUntil: string | null;
+}
+
+/**
+ * Read-only diagnostics snapshot of the configured endpoints and their failover
+ * state. Never exposes API keys.
+ */
+export function getLlmEndpointStatus(now = Date.now()): {
+  configured: boolean;
+  count: number;
+  endpoints: LlmEndpointStatus[];
+} {
+  const endpoints = parseLlmEndpoints();
+  const safePreferred = endpoints.length > 0
+    ? ((preferredEndpointIndex % endpoints.length) + endpoints.length) % endpoints.length
+    : 0;
+  return {
+    configured: endpoints.length > 0,
+    count: endpoints.length,
+    endpoints: endpoints.map((e, i) => {
+      const until = endpointCooldownUntil.get(i) ?? 0;
+      return {
+        name: e.name,
+        model: e.model,
+        base: e.base,
+        preferred: i === safePreferred,
+        cooledDown: until > now,
+        cooldownUntil: until > now ? new Date(until).toISOString() : null,
+      };
+    }),
+  };
 }

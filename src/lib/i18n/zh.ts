@@ -28,7 +28,7 @@ export const zh = {
     },
     trendingWindow: '趋势窗口',
     collectedWithin: {
-      label: '数据采集时间',
+      label: '数据采集时间范围',
       all: '不限',
       '6h': '6 小时内',
       '12h': '12 小时内',
@@ -81,6 +81,9 @@ export const zh = {
     empty: '暂无商业计划书，去首页为榜首热词生成一份吧。',
     backToList: '返回列表',
     viewDetail: '查看详情',
+    exportPdf: '导出 PDF',
+    exportHint: '在打印对话框中选择"另存为 PDF"，即可获得排版精美的报告。',
+    coverEyebrow: '谷歌热词 · 全自动 AI 商业计划书',
     status: { pending: '待生成', generating: '生成中', completed: '已完成', failed: '失败' },
     columns: { keyword: '关键词', title: '标题', status: '状态', selected: '选定机会', time: '时间' },
     sections: {

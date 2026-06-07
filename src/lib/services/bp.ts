@@ -17,10 +17,10 @@ import type {
 
 /** Fixed six-dimension weights (sum = 1). Server is the source of truth. */
 export const SCORE_WEIGHTS: Record<keyof BpScores, number> = {
-  market: 0.20,
+  market: 0.18,
   roi: 0.25,
-  onlineability: 0.15,
-  feasibility: 0.15,
+  onlineability: 0.20,
+  feasibility: 0.12,
   speed: 0.10,
   moat: 0.15,
 };
@@ -49,6 +49,22 @@ export class BpValidationError extends Error {
     this.name = 'BpValidationError';
   }
 }
+
+/**
+ * Parse the largest percentage value found in a win-rate string (e.g. "约8%-12%"
+ * -> 12). Returns null when no percentage is present. Pure, for unit testing.
+ */
+export function parseWinRatePercent(s: unknown): number | null {
+  if (typeof s !== 'string') return null;
+  const matches = s.match(/\d+(?:\.\d+)?/g);
+  if (!matches) return null;
+  const nums = matches.map(Number).filter((n) => Number.isFinite(n));
+  if (nums.length === 0) return null;
+  return Math.max(...nums);
+}
+
+/** Win rates above this (% profitable cash exit) are flagged as optimistic. */
+export const WIN_RATE_OPTIMISM_THRESHOLD = 40;
 
 /**
  * Validate the raw LLM JSON against the BP contract and normalize it:
@@ -106,6 +122,17 @@ export function validateAndNormalizeBpContent(raw: any): BpContent {
 
   if (!raw.title || !raw.summary) throw new BpValidationError('Missing title/summary');
 
+  // Anti-optimism guardrail: a seed-stage profitable cash-exit win rate above the
+  // threshold is implausible for China early-stage; append a calibration note
+  // rather than hard-failing generation.
+  const winRateStr = String(seed.winRate).trim();
+  const winRatePct = parseWinRatePercent(winRateStr);
+  let seedNotes = seed.notes ? String(seed.notes).trim() : undefined;
+  if (winRatePct !== null && winRatePct > WIN_RATE_OPTIMISM_THRESHOLD) {
+    const flag = `【风险校准提示】所填胜率（${winRateStr}）按"盈利现金退出"口径偏高，国内种子阶段单笔投资 5 年内实现盈利现金退出的概率通常仅为个位数到约 10-15%，请按现金退出口径审慎解读，勿以账面存活冒充现金退出。`;
+    seedNotes = seedNotes ? `${seedNotes} ${flag}` : flag;
+  }
+
   const market = raw.market ?? {};
   const financials = raw.financials ?? {};
 
@@ -137,7 +164,7 @@ export function validateAndNormalizeBpContent(raw: any): BpContent {
       profitLossRatio: String(seed.profitLossRatio).trim(),
       expectedValueMOIC: String(seed.expectedValueMOIC).trim(),
       riskAdjustedAnnualized: String(seed.riskAdjustedAnnualized).trim(),
-      notes: seed.notes ? String(seed.notes).trim() : undefined,
+      notes: seedNotes,
     },
   };
 }
@@ -177,21 +204,43 @@ export function pickCanonicalByBusinessModel(
   return matches.length > 0 ? matches[0].id : null;
 }
 
-const SYSTEM_PROMPT = `你是一位资深的早期风险投资分析师与连续创业者。基于给定的"谷歌热搜关键词"，头脑风暴可线上化（网站/SaaS）的商业机会，进行严谨评分与遴选，并产出一份投资人级别、数据公允、可溯源的结构化商业计划书。
-要求：
-1. 必须只输出一个 JSON 对象，不要任何额外文字或 Markdown。
-2. opportunities 至少 5 个，每个含 name、description 及 scores（market/roi/onlineability/feasibility/speed/moat，取值 1-10 整数或一位小数）。
-3. 所有财务与回报数据必须公允、符合国内同阶段同类创业的真实概率，区分"账面口径"与"风险调整/现金退出口径"，不得以账面存活冒充现金退出。
-4. seedReturn 必须给出：bookRoiByYear（第1-5年账面ROI，百分比数字数组）、annualizedBook（年化）、winRate（盈利现金退出的概率）、profitLossRatio（盈亏比）、expectedValueMOIC（期望收益倍数EV）、riskAdjustedAnnualized（风险调整年化）、notes（口径说明）。`;
+const SYSTEM_PROMPT = `你是一位资深的早期风险投资分析师与连续创业者。基于给定的"谷歌热搜关键词"，头脑风暴**可完全线上化（纯网站/SaaS，无需线下重资产）**的商业机会，进行严谨评分与遴选，遴选其中**投入产出比（ROI）最高且可完全线上化**的机会，并产出一份投资人级别、数据公允、可溯源、可执行的结构化商业计划书。
+
+【输出格式】
+1. 必须只输出一个 JSON 对象，不要任何额外文字或 Markdown 代码块。
+2. 字段名保持英文，文本内容用中文。
+
+【机会与评分】
+3. opportunities 至少 5 个，每个含 name、description 及 scores（market/roi/onlineability/feasibility/speed/moat，取值 1-10 整数或一位小数）。description 需具体到产品形态、目标用户、获客方式、变现方式，避免空话。
+4. 优先遴选可完全线上化、且 ROI 高的机会；最终 selectedOpportunity 必须是综合最优者（服务器会按固定权重重新计算并校正，请如实评分）。
+
+【公允数据 · 反乐观谬误（极重要）】
+5. 所有财务与回报数据必须**实事求是、公允**，符合**国内（中国）同阶段同类创业**的真实基准概率，严禁乐观谬误。校准锚点（用于推理，不要照抄，须结合本机会具体调整并给出依据）：
+   - 早期/种子阶段创业**绝大多数最终回报为 0 或亏损**；能走到下一轮（A 轮）的比例通常约 10-20%。
+   - **以"真实现金退出"（被并购/老股转让/IPO 且形成真实流动性）口径衡量，种子轮单笔投资 5 年内实现盈利现金退出的概率通常仅为个位数到约 10-15%**，绝不能用"账面存活/纸面估值上涨"冒充现金退出。
+   - 早期 VC 回报呈幂律分布：胜率低、但盈亏比高（极少数赢家可达数十倍）。单一项目种子轮的期望收益倍数（EV/MOIC）通常约 1.0-2.5x（已计入大概率归零），并非每个项目都能赚钱。
+6. 必须严格区分两套口径：
+   - 账面口径（book）：基于业务存活/账面估值，偏乐观，仅供参考。
+   - 风险调整/现金退出口径（cash-exit / risk-adjusted）：已乘以"真实拿到钱的概率"，是决策依据。
+   两者不得混用，winRate 必须是"盈利现金退出"的概率，不得用存活率冒充。
+
+【种子轮回报指标】
+7. seedReturn 必须给出：bookRoiByYear（第1-5年账面ROI，百分比数字数组，5个）、annualizedBook（账面年化）、winRate（盈利现金退出的概率，如"约8%-12%"）、profitLossRatio（盈亏比，如"约6:1"）、expectedValueMOIC（已计入归零概率的期望收益倍数EV，如"约1.4x"）、riskAdjustedAnnualized（风险调整年化，通常远低于账面年化）、notes（口径与计算依据说明）。
+
+【执行摘要必须包含回报数字】
+8. summary（执行摘要）正文中必须用文字明确写出：种子轮资金第1/2/3/4/5年的投资收益率（ROI）、年化收益、胜率（盈利现金退出的概率）、盈亏比，并强调这些是"成功拿到钱（现金退出）口径"而非账面存活口径。摘要还需点明选定机会、市场空间与可执行的关键路径。`;
 
 function buildUserPrompt(trend: BpTrendSnapshot): string {
   return `谷歌热搜第一名关键词："${trend.keyword}"
 分类：${trend.category || '未知'} | 搜索量：${trend.searchVolume} | 增长速度：${trend.growthRate} | 趋势窗口：${trend.timeRange} | 地区：${trend.region || '全球'}
 
+请基于该关键词，头脑风暴可完全线上化（纯网站/SaaS）的商业机会，遴选 ROI 最高者，产出公允、可执行的商业计划书。
+特别要求：summary 正文必须用文字写明"种子轮资金第1/2/3/4/5年投资收益率、年化收益、胜率（盈利现金退出概率）、盈亏比"，且明确这是"成功现金退出"口径而非账面存活口径；所有概率与收益必须符合国内同阶段真实基准，避免乐观谬误。
+
 请严格按以下 JSON 结构输出（字段名保持英文，文本内容用中文）：
 {
   "title": "",
-  "summary": "",
+  "summary": "（执行摘要：含选定机会、市场空间、关键可执行路径；并明确写出种子轮第1-5年ROI、年化、胜率(现金退出)、盈亏比）",
   "selectedOpportunity": "",
   "opportunities": [ { "name": "", "description": "", "scores": { "market": 0, "roi": 0, "onlineability": 0, "feasibility": 0, "speed": 0, "moat": 0 } } ],
   "market": { "tam": "", "sam": "", "som": "", "notes": "" },

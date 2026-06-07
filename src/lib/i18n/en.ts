@@ -28,7 +28,7 @@ export const en = {
     },
     trendingWindow: 'Trending window',
     collectedWithin: {
-      label: 'Collected within',
+      label: 'Data collected within',
       all: 'Any time',
       '6h': 'Last 6 hours',
       '12h': 'Last 12 hours',
@@ -81,6 +81,9 @@ export const en = {
     empty: 'No business plans yet. Generate one for the top trend from the home page.',
     backToList: 'Back to list',
     viewDetail: 'View detail',
+    exportPdf: 'Export PDF',
+    exportHint: 'Choose "Save as PDF" in the print dialog to get a beautifully typeset report.',
+    coverEyebrow: 'Google Trends · Fully-automated AI Business Plan',
     status: { pending: 'Pending', generating: 'Generating', completed: 'Completed', failed: 'Failed' },
     columns: { keyword: 'Keyword', title: 'Title', status: 'Status', selected: 'Selected opportunity', time: 'Time' },
     sections: {

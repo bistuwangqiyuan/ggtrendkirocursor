@@ -34,14 +34,23 @@ const scoreRows: { key: string; label: string }[] = [
 ];
 
 const pageTitle = content?.title || report?.keyword || t.bp.title;
+const selectedOpp = opportunities.find((o) => o.isSelected);
 ---
 
 <Layout title={pageTitle}>
-  <div class="space-y-8" data-report-id={report?.id} data-status={report?.status}>
-    <div class="flex items-center justify-between">
+  <div class="bp-page" data-report-id={report?.id} data-status={report?.status}>
+    <!-- Toolbar (hidden when printing) -->
+    <div class="no-print mb-6 flex items-center justify-between">
       <a href="/bp" class="text-sm font-medium text-blue-400 hover:text-blue-300">← {t.bp.backToList}</a>
-      {report && (
-        <span class="text-xs text-gray-500">{formatDateTime(new Date(report.createdAt), locale)}</span>
+      {report && report.status === 'completed' && (
+        <button
+          id="bp-export-pdf"
+          type="button"
+          class="inline-flex items-center gap-2 rounded-full bg-white/95 px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-black/5 transition hover:bg-white"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16"/></svg>
+          {t.bp.exportPdf}
+        </button>
       )}
     </div>
 
@@ -67,143 +76,287 @@ const pageTitle = content?.title || report?.keyword || t.bp.title;
     )}
 
     {report && content && report.status === 'completed' && (
-      <article class="space-y-8">
-        <header class="space-y-2">
-          <p class="text-xs font-medium uppercase tracking-wider text-blue-300">
-            #{report.rank} · {report.keyword}
-          </p>
-          <h1 class="text-3xl font-bold tracking-tight text-white">{content.title}</h1>
+      <article class="bp-report">
+        <!-- Cover -->
+        <header class="bp-cover">
+          <div class="bp-cover-overlay">
+            <p class="bp-eyebrow">{t.bp.coverEyebrow}</p>
+            <p class="bp-rank">#{report.rank} · {report.keyword}</p>
+            <h1 class="bp-title">{content.title}</h1>
+            <p class="bp-date">{formatDateTime(new Date(report.createdAt), locale)}</p>
+          </div>
         </header>
 
-        <!-- Source trend snapshot -->
-        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-5">
-          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">{t.bp.sections.sourceTrend}</h2>
-          <div class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-            <div><div class="text-gray-500">{t.trends.keyword}</div><div class="font-medium text-white">{report.keyword}</div></div>
-            <div><div class="text-gray-500">{t.trends.searchVolume}</div><div class="font-mono text-white">{formatNumber(report.searchVolume)}</div></div>
-            <div><div class="text-gray-500">{t.trends.category}</div><div class="text-white">{report.category || '—'}</div></div>
-            <div><div class="text-gray-500">{t.trends.trendingWindow}</div><div class="text-white">{report.timeRange || '—'}</div></div>
-          </div>
-        </section>
-
-        <!-- Executive summary -->
-        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
-          <h2 class="mb-3 text-xl font-semibold text-white">{t.bp.sections.summary}</h2>
-          <p class="whitespace-pre-line leading-relaxed text-gray-300">{content.summary}</p>
-        </section>
-
-        <!-- Score matrix -->
-        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
-          <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.scoreMatrix}</h2>
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm text-gray-400">
-              <thead class="text-xs uppercase text-gray-500">
-                <tr>
-                  <th class="py-2 pr-4">{t.trends.keyword}</th>
-                  {scoreRows.map((s) => <th class="px-2 py-2 text-right">{s.label}</th>)}
-                  <th class="px-2 py-2 text-right text-blue-300">{t.bp.scores.weighted}</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-800">
-                {opportunities.map((o) => (
-                  <tr class={o.isSelected ? 'bg-blue-500/10' : ''}>
-                    <td class="py-2 pr-4 font-medium text-white">
-                      {o.isSelected && <span class="mr-1 text-blue-400">★</span>}{o.name}
-                    </td>
-                    {scoreRows.map((s) => (
-                      <td class="px-2 py-2 text-right font-mono">{scoreVal(o.scores, s.key)}</td>
-                    ))}
-                    <td class="px-2 py-2 text-right font-mono font-semibold text-blue-300">{o.weightedScore}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <!-- Selected opportunity -->
-        <section class="rounded-xl border border-blue-500/30 bg-blue-600/5 p-6">
-          <h2 class="mb-2 text-xl font-semibold text-white">{t.bp.sections.selectedOpportunity}</h2>
-          <p class="text-lg font-medium text-blue-300">{content.selectedOpportunity}</p>
-          {opportunities.find((o) => o.isSelected)?.description && (
-            <p class="mt-3 whitespace-pre-line leading-relaxed text-gray-300">{opportunities.find((o) => o.isSelected)?.description}</p>
-          )}
-        </section>
-
-        <!-- Market -->
-        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
-          <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.market}</h2>
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.market.tam}</div><div class="mt-1 font-semibold text-white">{content.market.tam || '—'}</div></div>
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.market.sam}</div><div class="mt-1 font-semibold text-white">{content.market.sam || '—'}</div></div>
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.market.som}</div><div class="mt-1 font-semibold text-white">{content.market.som || '—'}</div></div>
-          </div>
-          {content.market.notes && <p class="mt-4 whitespace-pre-line leading-relaxed text-gray-300">{content.market.notes}</p>}
-        </section>
-
-        <!-- Business model -->
-        {content.businessModel && (
-          <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
-            <h2 class="mb-3 text-xl font-semibold text-white">{t.bp.sections.businessModel}</h2>
-            <p class="whitespace-pre-line leading-relaxed text-gray-300">{content.businessModel}</p>
+        <div class="bp-body">
+          <!-- Seed-return highlight band -->
+          <section class="bp-section bp-highlight">
+            <div class="bp-highlight-grid">
+              <div class="bp-stat">
+                <span class="bp-stat-label">{t.bp.seed.winRate}</span>
+                <span class="bp-stat-value bp-accent-green">{content.seedReturn.winRate}</span>
+              </div>
+              <div class="bp-stat">
+                <span class="bp-stat-label">{t.bp.seed.annualizedBook}</span>
+                <span class="bp-stat-value">{content.seedReturn.annualizedBook}</span>
+              </div>
+              <div class="bp-stat">
+                <span class="bp-stat-label">{t.bp.seed.profitLossRatio}</span>
+                <span class="bp-stat-value">{content.seedReturn.profitLossRatio}</span>
+              </div>
+              <div class="bp-stat">
+                <span class="bp-stat-label">{t.bp.seed.riskAdjusted}</span>
+                <span class="bp-stat-value bp-accent-amber">{content.seedReturn.riskAdjustedAnnualized}</span>
+              </div>
+            </div>
           </section>
-        )}
 
-        <!-- Financials -->
-        {content.financials.years.length > 0 && (
-          <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
-            <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.financials}</h2>
-            <div class="overflow-x-auto">
-              <table class="w-full text-left text-sm text-gray-400">
-                <thead class="text-xs uppercase text-gray-500">
+          <!-- Source trend snapshot -->
+          <section class="bp-section">
+            <h2 class="bp-h2">{t.bp.sections.sourceTrend}</h2>
+            <div class="bp-grid-4">
+              <div><div class="bp-muted">{t.trends.keyword}</div><div class="bp-strong">{report.keyword}</div></div>
+              <div><div class="bp-muted">{t.trends.searchVolume}</div><div class="bp-mono">{formatNumber(report.searchVolume)}</div></div>
+              <div><div class="bp-muted">{t.trends.category}</div><div class="bp-strong">{report.category || '—'}</div></div>
+              <div><div class="bp-muted">{t.trends.trendingWindow}</div><div class="bp-strong">{report.timeRange || '—'}</div></div>
+            </div>
+          </section>
+
+          <!-- Executive summary -->
+          <section class="bp-section">
+            <h2 class="bp-h2">{t.bp.sections.summary}</h2>
+            <p class="bp-prose">{content.summary}</p>
+          </section>
+
+          <!-- Score matrix -->
+          <section class="bp-section">
+            <h2 class="bp-h2">{t.bp.sections.scoreMatrix}</h2>
+            <div class="bp-table-wrap">
+              <table class="bp-table">
+                <thead>
                   <tr>
-                    <th class="py-2 pr-4">{t.bp.financials.year}</th>
-                    <th class="px-2 py-2">{t.bp.financials.revenue}</th>
-                    <th class="px-2 py-2">{t.bp.financials.ebitda}</th>
+                    <th>{t.trends.keyword}</th>
+                    {scoreRows.map((s) => <th class="bp-num">{s.label}</th>)}
+                    <th class="bp-num bp-weighted">{t.bp.scores.weighted}</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-800">
-                  {content.financials.years.map((y) => (
-                    <tr>
-                      <td class="py-2 pr-4 font-medium text-white">{y.year}</td>
-                      <td class="px-2 py-2">{y.revenue || '—'}</td>
-                      <td class="px-2 py-2">{y.ebitda || '—'}</td>
+                <tbody>
+                  {opportunities.map((o) => (
+                    <tr class={o.isSelected ? 'bp-row-selected' : ''}>
+                      <td class="bp-strong">{o.isSelected && <span class="bp-star">★</span>}{o.name}</td>
+                      {scoreRows.map((s) => <td class="bp-num bp-mono">{scoreVal(o.scores, s.key)}</td>)}
+                      <td class="bp-num bp-mono bp-weighted">{o.weightedScore}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           </section>
-        )}
 
-        <!-- Seed-round return metrics -->
-        <section class="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
-          <h2 class="mb-4 text-xl font-semibold text-white">{t.bp.sections.seedReturn}</h2>
-          <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.annualizedBook}</div><div class="mt-1 font-semibold text-white">{content.seedReturn.annualizedBook}</div></div>
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.winRate}</div><div class="mt-1 font-semibold text-green-400">{content.seedReturn.winRate}</div></div>
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.profitLossRatio}</div><div class="mt-1 font-semibold text-white">{content.seedReturn.profitLossRatio}</div></div>
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.ev}</div><div class="mt-1 font-semibold text-white">{content.seedReturn.expectedValueMOIC}</div></div>
-            <div class="rounded-lg border border-gray-800 bg-gray-950/40 p-4"><div class="text-xs text-gray-500">{t.bp.seed.riskAdjusted}</div><div class="mt-1 font-semibold text-amber-400">{content.seedReturn.riskAdjustedAnnualized}</div></div>
-          </div>
-          <div class="mt-4">
-            <div class="mb-2 text-xs text-gray-500">{t.bp.seed.roiByYear}</div>
-            <div class="flex flex-wrap gap-2">
-              {content.seedReturn.bookRoiByYear.map((roi, i) => (
-                <span class="rounded-md border border-gray-700 bg-gray-950/40 px-3 py-1.5 text-sm">
-                  <span class="text-gray-500">Y{i + 1}</span> <span class="font-mono font-semibold text-white">{roi}%</span>
-                </span>
-              ))}
+          <!-- Selected opportunity -->
+          <section class="bp-section bp-selected">
+            <h2 class="bp-h2">{t.bp.sections.selectedOpportunity}</h2>
+            <p class="bp-selected-name">{content.selectedOpportunity}</p>
+            {selectedOpp?.description && <p class="bp-prose">{selectedOpp.description}</p>}
+          </section>
+
+          <!-- Market -->
+          <section class="bp-section">
+            <h2 class="bp-h2">{t.bp.sections.market}</h2>
+            <div class="bp-grid-3">
+              <div class="bp-mini"><div class="bp-muted">{t.bp.market.tam}</div><div class="bp-mini-value">{content.market.tam || '—'}</div></div>
+              <div class="bp-mini"><div class="bp-muted">{t.bp.market.sam}</div><div class="bp-mini-value">{content.market.sam || '—'}</div></div>
+              <div class="bp-mini"><div class="bp-muted">{t.bp.market.som}</div><div class="bp-mini-value">{content.market.som || '—'}</div></div>
             </div>
-          </div>
-          {content.seedReturn.notes && <p class="mt-4 text-xs leading-relaxed text-gray-500">{content.seedReturn.notes}</p>}
-        </section>
+            {content.market.notes && <p class="bp-prose bp-mt">{content.market.notes}</p>}
+          </section>
+
+          <!-- Business model -->
+          {content.businessModel && (
+            <section class="bp-section">
+              <h2 class="bp-h2">{t.bp.sections.businessModel}</h2>
+              <p class="bp-prose">{content.businessModel}</p>
+            </section>
+          )}
+
+          <!-- Financials -->
+          {content.financials.years.length > 0 && (
+            <section class="bp-section">
+              <h2 class="bp-h2">{t.bp.sections.financials}</h2>
+              <div class="bp-table-wrap">
+                <table class="bp-table">
+                  <thead>
+                    <tr>
+                      <th>{t.bp.financials.year}</th>
+                      <th>{t.bp.financials.revenue}</th>
+                      <th>{t.bp.financials.ebitda}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {content.financials.years.map((y) => (
+                      <tr>
+                        <td class="bp-strong">{y.year}</td>
+                        <td>{y.revenue || '—'}</td>
+                        <td>{y.ebitda || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          <!-- Seed-round return metrics -->
+          <section class="bp-section">
+            <h2 class="bp-h2">{t.bp.sections.seedReturn}</h2>
+            <div class="bp-grid-3">
+              <div class="bp-mini"><div class="bp-muted">{t.bp.seed.annualizedBook}</div><div class="bp-mini-value">{content.seedReturn.annualizedBook}</div></div>
+              <div class="bp-mini"><div class="bp-muted">{t.bp.seed.winRate}</div><div class="bp-mini-value bp-accent-green">{content.seedReturn.winRate}</div></div>
+              <div class="bp-mini"><div class="bp-muted">{t.bp.seed.profitLossRatio}</div><div class="bp-mini-value">{content.seedReturn.profitLossRatio}</div></div>
+              <div class="bp-mini"><div class="bp-muted">{t.bp.seed.ev}</div><div class="bp-mini-value">{content.seedReturn.expectedValueMOIC}</div></div>
+              <div class="bp-mini"><div class="bp-muted">{t.bp.seed.riskAdjusted}</div><div class="bp-mini-value bp-accent-amber">{content.seedReturn.riskAdjustedAnnualized}</div></div>
+            </div>
+            <div class="bp-mt">
+              <div class="bp-muted bp-mb">{t.bp.seed.roiByYear}</div>
+              <div class="bp-chips">
+                {content.seedReturn.bookRoiByYear.map((roi, i) => (
+                  <span class="bp-chip"><span class="bp-muted">Y{i + 1}</span> <span class="bp-mono bp-strong">{roi}%</span></span>
+                ))}
+              </div>
+            </div>
+            {content.seedReturn.notes && <p class="bp-note">{content.seedReturn.notes}</p>}
+          </section>
+        </div>
       </article>
     )}
   </div>
 </Layout>
 
+<style is:global>
+  /* Apple-style light "document" report, premium typography. */
+  .bp-report {
+    --bp-ink: #1d1d1f;
+    --bp-sub: #6e6e73;
+    --bp-line: #e8e8ed;
+    --bp-card: #fbfbfd;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    color: var(--bp-ink);
+    background: #ffffff;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px -20px rgba(0, 0, 0, 0.55);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    margin: 0 auto;
+    max-width: 980px;
+  }
+
+  .bp-cover {
+    position: relative;
+    background-image: linear-gradient(180deg, rgba(15, 17, 33, 0.10), rgba(15, 17, 33, 0.62)), url('/images/bp-cover.png');
+    background-size: cover;
+    background-position: center;
+    padding: 64px 48px 40px;
+    color: #fff;
+    min-height: 280px;
+    display: flex;
+    align-items: flex-end;
+  }
+  .bp-cover-overlay { width: 100%; }
+  .bp-eyebrow {
+    font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase;
+    font-weight: 600; color: rgba(255, 255, 255, 0.82); margin: 0 0 14px;
+  }
+  .bp-rank { font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, 0.9); margin: 0 0 8px; }
+  .bp-title {
+    font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -0.02em;
+    margin: 0; text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35); max-width: 22ch;
+  }
+  .bp-date { margin: 16px 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.75); }
+
+  .bp-body { padding: 40px 48px 56px; }
+  .bp-section + .bp-section { margin-top: 36px; }
+  .bp-h2 {
+    font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 18px;
+    color: var(--bp-ink); position: relative; padding-bottom: 10px;
+  }
+  .bp-h2::after { content: ''; position: absolute; left: 0; bottom: 0; width: 36px; height: 3px; border-radius: 3px; background: #2563eb; }
+
+  .bp-prose { font-size: 15.5px; line-height: 1.75; color: #3a3a3e; white-space: pre-line; margin: 0; }
+  .bp-muted { font-size: 12px; color: var(--bp-sub); }
+  .bp-strong { font-weight: 600; color: var(--bp-ink); }
+  .bp-mono { font-variant-numeric: tabular-nums; font-family: 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, monospace; }
+  .bp-mt { margin-top: 18px; }
+  .bp-mb { margin-bottom: 10px; }
+  .bp-note { margin-top: 16px; font-size: 12.5px; line-height: 1.7; color: var(--bp-sub); }
+
+  .bp-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .bp-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .bp-mini { border: 1px solid var(--bp-line); border-radius: 14px; padding: 16px 18px; background: var(--bp-card); }
+  .bp-mini-value { margin-top: 6px; font-size: 17px; font-weight: 600; color: var(--bp-ink); }
+
+  /* Seed-return highlight band */
+  .bp-highlight {
+    border: 1px solid var(--bp-line); border-radius: 18px; padding: 22px 24px;
+    background: linear-gradient(135deg, #f5f8ff, #fbfbfd);
+  }
+  .bp-highlight-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .bp-stat { display: flex; flex-direction: column; gap: 6px; }
+  .bp-stat-label { font-size: 12px; color: var(--bp-sub); }
+  .bp-stat-value { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--bp-ink); }
+  .bp-accent-green { color: #15803d; }
+  .bp-accent-amber { color: #b45309; }
+
+  .bp-table-wrap { overflow-x: auto; }
+  .bp-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .bp-table thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--bp-sub); font-weight: 600; padding: 0 12px 10px; border-bottom: 1px solid var(--bp-line);
+  }
+  .bp-table td { padding: 11px 12px; border-bottom: 1px solid var(--bp-line); color: #3a3a3e; }
+  .bp-num { text-align: right; }
+  .bp-weighted { color: #2563eb; font-weight: 600; }
+  .bp-row-selected { background: #eef4ff; }
+  .bp-star { color: #2563eb; margin-right: 4px; }
+
+  .bp-selected { border: 1px solid #cdddff; border-radius: 18px; padding: 24px; background: #f5f8ff; }
+  .bp-selected-name { font-size: 18px; font-weight: 700; color: #1d4ed8; margin: 0 0 10px; }
+
+  .bp-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .bp-chip { border: 1px solid var(--bp-line); border-radius: 10px; padding: 6px 12px; font-size: 13px; background: var(--bp-card); }
+
+  @media (max-width: 640px) {
+    .bp-cover { padding: 40px 24px 28px; }
+    .bp-title { font-size: 28px; }
+    .bp-body { padding: 28px 22px 40px; }
+    .bp-grid-4, .bp-grid-3, .bp-highlight-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  /* ---- Print / Export PDF: pristine A4 document ---- */
+  @media print {
+    :root { background: #fff; }
+    body { background: #fff !important; }
+    header, footer, .no-print { display: none !important; }
+    main { padding: 0 !important; }
+    .bp-page { margin: 0 !important; }
+    .bp-report {
+      box-shadow: none !important; border-radius: 0 !important; max-width: none !important;
+      width: 100% !important; margin: 0 !important;
+    }
+    .bp-cover { min-height: 220px; padding: 48px 36px 30px; }
+    .bp-section { break-inside: avoid; }
+    .bp-table tr, .bp-mini, .bp-chip, .bp-highlight { break-inside: avoid; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    @page { size: A4; margin: 14mm 12mm; }
+  }
+</style>
+
 <script>
+  // Export PDF: open the browser print dialog (user chooses "Save as PDF").
+  const exportBtn = document.getElementById('bp-export-pdf');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => window.print());
+  }
+
   // Poll while the report is still generating; reload when it settles.
   const root = document.querySelector('[data-report-id]') as HTMLElement | null;
   const status = root?.dataset.status;

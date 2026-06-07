@@ -9,6 +9,8 @@ import {
   MIN_TREND_SCORE,
   normalizeBusinessModel,
   pickCanonicalByBusinessModel,
+  parseWinRatePercent,
+  WIN_RATE_OPTIMISM_THRESHOLD,
 } from '../../src/lib/services/bp';
 import type { Trend } from '../../src/types';
 import { extractJsonObject } from '../../src/lib/services/llm';
@@ -102,6 +104,41 @@ describe('validateAndNormalizeBpContent', () => {
     const raw = validRaw();
     raw.seedReturn.bookRoiByYear = [1, 2, 3];
     expect(() => validateAndNormalizeBpContent(raw)).toThrow(BpValidationError);
+  });
+
+  test('appends a calibration note for an optimistic win rate', () => {
+    const raw = validRaw();
+    (raw.seedReturn as any).winRate = '约 60%';
+    const content = validateAndNormalizeBpContent(raw);
+    expect(content.seedReturn.notes).toContain('风险校准');
+  });
+
+  test('does not flag a plausible cash-exit win rate', () => {
+    const raw = validRaw();
+    (raw.seedReturn as any).winRate = '约8%-12%';
+    (raw.seedReturn as any).notes = 'cash-exit basis';
+    const content = validateAndNormalizeBpContent(raw);
+    expect(content.seedReturn.notes).toBe('cash-exit basis');
+  });
+});
+
+describe('parseWinRatePercent', () => {
+  test('returns the largest percentage in a range', () => {
+    expect(parseWinRatePercent('约8%-12%')).toBe(12);
+  });
+
+  test('handles a single value and decimals', () => {
+    expect(parseWinRatePercent('9.5%')).toBe(9.5);
+  });
+
+  test('returns null when no number present', () => {
+    expect(parseWinRatePercent('未知')).toBeNull();
+    expect(parseWinRatePercent(undefined)).toBeNull();
+  });
+
+  test('threshold is a sane percentage', () => {
+    expect(WIN_RATE_OPTIMISM_THRESHOLD).toBeGreaterThan(0);
+    expect(WIN_RATE_OPTIMISM_THRESHOLD).toBeLessThan(100);
   });
 });
 
