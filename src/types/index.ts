@@ -172,6 +172,8 @@ export interface BpReport extends BpTrendSnapshot {
   summary?: string;
   selectedOpportunity?: string;
   contentJson?: BpContent | null;
+  businessModelNorm?: string;
+  canonicalReportId?: string | null;
   model?: string;
   tokensUsed?: number;
   error?: string | null;

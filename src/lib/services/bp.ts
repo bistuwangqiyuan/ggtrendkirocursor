@@ -146,6 +146,37 @@ function normalizeKeyword(k: string): string {
   return k.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+/**
+ * Normalize a free-text business model for dedup comparison: lowercase, collapse
+ * whitespace, and strip leading/trailing punctuation. Two plans whose normalized
+ * business models are equal are treated as the same model.
+ */
+export function normalizeBusinessModel(s: unknown): string {
+  if (typeof s !== 'string') return '';
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\p{P}\p{S}]+|[\s\p{P}\p{S}]+$/gu, '')
+    .trim();
+}
+
+/**
+ * Pure helper: given a normalized business model and a list of existing completed
+ * reports, return the id of the earliest one sharing that model (excluding the
+ * report being generated). Returns null when there is no match.
+ */
+export function pickCanonicalByBusinessModel(
+  bmNorm: string,
+  candidates: { id: string; businessModelNorm: string; createdAt: Date }[],
+  excludeId?: string
+): string | null {
+  if (!bmNorm) return null;
+  const matches = candidates
+    .filter((c) => c.id !== excludeId && c.businessModelNorm === bmNorm)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  return matches.length > 0 ? matches[0].id : null;
+}
+
 const SYSTEM_PROMPT = `你是一位资深的早期风险投资分析师与连续创业者。基于给定的"谷歌热搜关键词"，头脑风暴可线上化（网站/SaaS）的商业机会，进行严谨评分与遴选，并产出一份投资人级别、数据公允、可溯源的结构化商业计划书。
 要求：
 1. 必须只输出一个 JSON 对象，不要任何额外文字或 Markdown。
@@ -230,6 +261,8 @@ function mapReportRow(row: any): BpReport {
     summary: row.summary ?? undefined,
     selectedOpportunity: row.selected_opportunity ?? undefined,
     contentJson: row.content_json ?? null,
+    businessModelNorm: row.business_model_norm ?? undefined,
+    canonicalReportId: row.canonical_report_id ?? null,
     model: row.model ?? undefined,
     tokensUsed: row.tokens_used ?? undefined,
     error: row.error ?? null,
@@ -352,6 +385,25 @@ export class BpService {
     }
 
     return null;
+  }
+
+  /**
+   * Find the earliest completed report whose business model matches `bmNorm`
+   * (excluding `excludeId`). Used to dedupe plans that describe the same model.
+   * Only considers canonical reports (those that are not themselves duplicates).
+   */
+  async findCompletedByBusinessModel(bmNorm: string, excludeId?: string): Promise<BpReport | null> {
+    if (!bmNorm) return null;
+    const row = await queryOne<any>(
+      `SELECT * FROM bp_reports
+       WHERE status = 'completed'
+         AND business_model_norm = $1
+         AND canonical_report_id IS NULL
+         AND ($2::uuid IS NULL OR id <> $2::uuid)
+       ORDER BY created_at ASC LIMIT 1`,
+      [bmNorm, excludeId ?? null]
+    );
+    return row ? mapReportRow(row) : null;
   }
 
   /** Return a recent completed report for this keyword, if any (dedupe). */
@@ -479,6 +531,45 @@ export class BpService {
       });
 
       const content = validateAndNormalizeBpContent(llm.data);
+      const bmNorm = normalizeBusinessModel(content.businessModel);
+      const model = llm.provider ? `${llm.provider}/${llm.model}` : llm.model;
+
+      // Business-model dedupe: if an existing completed plan already describes the
+      // same business model, reuse it instead of storing duplicate content. The
+      // placeholder row is marked completed and points at the canonical report so
+      // the trigger keyword counts as "done" (cron won't regenerate it).
+      const canonical = await this.findCompletedByBusinessModel(bmNorm, reportId);
+      if (canonical) {
+        await query(
+          `UPDATE bp_reports SET
+            status = 'completed',
+            title = $2,
+            summary = $3,
+            selected_opportunity = $4,
+            content_json = NULL,
+            business_model_norm = $5,
+            canonical_report_id = $6,
+            model = $7,
+            tokens_used = $8,
+            error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [
+            reportId,
+            canonical.title ?? null,
+            canonical.summary ?? null,
+            canonical.selectedOpportunity ?? null,
+            bmNorm,
+            canonical.id,
+            model,
+            llm.tokensUsed ?? null,
+          ]
+        );
+        // Return the canonical plan with its content resolved (via getById).
+        const resolved = await this.getById(reportId);
+        if (resolved.success) return resolved;
+        return { success: true, data: canonical };
+      }
 
       const updated = await queryOne<any>(
         `UPDATE bp_reports SET
@@ -487,6 +578,7 @@ export class BpService {
           summary = $3,
           selected_opportunity = $4,
           content_json = $5,
+          business_model_norm = $8,
           model = $6,
           tokens_used = $7,
           error = NULL,
@@ -499,8 +591,9 @@ export class BpService {
           content.summary,
           content.selectedOpportunity,
           JSON.stringify(content),
-          llm.provider ? `${llm.provider}/${llm.model}` : llm.model,
+          model,
           llm.tokensUsed ?? null,
+          bmNorm,
         ]
       );
 
@@ -567,9 +660,25 @@ export class BpService {
     if (!row) return { success: false, error: { code: 'NOT_FOUND', message: 'BP 不存在' } };
 
     const report = mapReportRow(row);
+
+    // Duplicate (business-model) rows store no content of their own; resolve the
+    // plan content and opportunities from the canonical report they point at.
+    const contentSourceId =
+      !report.contentJson && report.canonicalReportId ? report.canonicalReportId : id;
+
+    if (contentSourceId !== id) {
+      const canonRow = await queryOne<any>(`SELECT * FROM bp_reports WHERE id = $1`, [contentSourceId]);
+      if (canonRow) {
+        report.contentJson = canonRow.content_json ?? null;
+        report.title = report.title ?? canonRow.title ?? undefined;
+        report.summary = report.summary ?? canonRow.summary ?? undefined;
+        report.selectedOpportunity = report.selectedOpportunity ?? canonRow.selected_opportunity ?? undefined;
+      }
+    }
+
     const oppRows = await query<any>(
       `SELECT * FROM bp_opportunities WHERE report_id = $1 ORDER BY rank ASC`,
-      [id]
+      [contentSourceId]
     );
     report.opportunities = oppRows.map((o) => ({
       id: o.id,

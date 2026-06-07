@@ -58,6 +58,8 @@ const BASE_STATEMENTS = [
     summary TEXT,
     selected_opportunity TEXT,
     content_json JSONB,
+    business_model_norm VARCHAR(300),
+    canonical_report_id UUID,
     model VARCHAR(100),
     tokens_used INT,
     error TEXT,
@@ -65,6 +67,8 @@ const BASE_STATEMENTS = [
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
   )`,
+  `ALTER TABLE bp_reports ADD COLUMN IF NOT EXISTS business_model_norm VARCHAR(300)`,
+  `ALTER TABLE bp_reports ADD COLUMN IF NOT EXISTS canonical_report_id UUID`,
   `CREATE TABLE IF NOT EXISTS bp_opportunities (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     report_id UUID NOT NULL REFERENCES bp_reports(id) ON DELETE CASCADE,
@@ -85,6 +89,7 @@ const BASE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_status ON bp_reports(status)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_business_model_norm ON bp_reports(business_model_norm)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_opportunities_report_id ON bp_opportunities(report_id)`,
 ];
 
@@ -93,7 +98,7 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   users: ['id', 'username', 'email', 'password_hash', 'locale', 'created_at', 'updated_at', 'last_login_at'],
   sessions: ['id', 'user_id', 'token', 'expires_at', 'created_at', 'ip_address', 'user_agent'],
   feedback: ['id', 'user_id', 'name', 'email', 'subject', 'message', 'status', 'created_at'],
-  bp_reports: ['id', 'keyword', 'keyword_norm', 'source_trend_id', 'search_volume', 'growth_rate', 'category', 'time_range', 'region', 'rank', 'status', 'title', 'summary', 'selected_opportunity', 'content_json', 'model', 'tokens_used', 'error', 'user_id', 'created_at', 'updated_at'],
+  bp_reports: ['id', 'keyword', 'keyword_norm', 'source_trend_id', 'search_volume', 'growth_rate', 'category', 'time_range', 'region', 'rank', 'status', 'title', 'summary', 'selected_opportunity', 'content_json', 'business_model_norm', 'canonical_report_id', 'model', 'tokens_used', 'error', 'user_id', 'created_at', 'updated_at'],
   bp_opportunities: ['id', 'report_id', 'name', 'description', 'score_market', 'score_roi', 'score_onlineability', 'score_feasibility', 'score_speed', 'score_moat', 'weighted_score', 'is_selected', 'rank', 'created_at'],
 };
 
@@ -164,6 +169,8 @@ const RECREATE_BP_STATEMENTS = [
     summary TEXT,
     selected_opportunity TEXT,
     content_json JSONB,
+    business_model_norm VARCHAR(300),
+    canonical_report_id UUID,
     model VARCHAR(100),
     tokens_used INT,
     error TEXT,
@@ -191,6 +198,7 @@ const RECREATE_BP_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_status ON bp_reports(status)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_business_model_norm ON bp_reports(business_model_norm)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_opportunities_report_id ON bp_opportunities(report_id)`,
 ];
 

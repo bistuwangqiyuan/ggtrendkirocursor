@@ -43,9 +43,10 @@
 - 行为：调用 `POST /api/bp/cron`（带 `Authorization: Bearer ${CRON_SECRET}`）→ `bpService.runScheduledGeneration()`：
   1. `resetStaleGenerating()` 把超过 15 分钟仍 `generating/pending` 的记录置为 `failed`；
   2. 按 `4h` 窗口、`search_volume` 降序扫描趋势（每页 50 条，最多 5 页）；
-  3. **永久去重**：跳过已有任意 `completed` BP 的热词（不再 24h 复用）；
+  3. **热词永久去重**：跳过已有任意 `completed` BP 的热词（不再 24h 复用），自动顺延下一个不重复的热词；
   4. **评分筛选**：综合百分制分 > 60 才合格（`50%×增长速度% + 50%×搜索量对数归一化`，见 `computeTrendHotwordScore`）；
   5. 对首个合格且未生成 BP 的热词调用 LLM，`action=generated`；无合格热词则 `action=skipped`（200，非错误）。
+  6. **商业模式去重**：生成并校验后，按归一化 `businessModel`（`normalizeBusinessModel`：小写、压缩空白、去首尾标点）比对历史 `completed` 报告。若已存在相同商业模式的报告，则**不重复存储内容**，将本次记录标记为 `completed` 并通过 `canonical_report_id` 指向原报告，直接复用其商业计划书（详情/列表读取时自动解析指向）。
 - 手动触发（验证用）：
   ```bash
   curl -X POST "https://<your-site>/api/bp/cron" \
@@ -105,6 +106,7 @@ BP 相关探针：
   curl -X POST "https://<your-site>/api/db-init?secret=trendnow-seed&migrate=bp" -H "Origin: https://<your-site>"
   ```
   重建后 `bp_opportunities` 列应为：`id, report_id, name, description, score_market, score_roi, score_onlineability, score_feasibility, score_speed, score_moat, weighted_score, is_selected, rank, created_at`。
+- `bp_reports` 新增列 `business_model_norm`、`canonical_report_id`（商业模式去重用）为**附加式**变更：普通 `POST /api/db-init?secret=trendnow-seed` 即通过 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 自动补齐，无需破坏性重建。
 
 ### C. 报告长期卡在 `generating`
 - 原因：Netlify 函数 26s 超时中断了同步生成。

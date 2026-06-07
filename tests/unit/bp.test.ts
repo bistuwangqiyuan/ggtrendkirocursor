@@ -7,6 +7,8 @@ import {
   computeTrendHotwordScore,
   pickFirstEligibleTrend,
   MIN_TREND_SCORE,
+  normalizeBusinessModel,
+  pickCanonicalByBusinessModel,
 } from '../../src/lib/services/bp';
 import type { Trend } from '../../src/types';
 import { extractJsonObject } from '../../src/lib/services/llm';
@@ -164,6 +166,52 @@ describe('pickFirstEligibleTrend', () => {
     const trends = [makeTrend('Done', 500_000, 90)];
     const picked = pickFirstEligibleTrend(trends, new Set(['done']));
     expect(picked).toBeNull();
+  });
+});
+
+describe('normalizeBusinessModel', () => {
+  test('lowercases, trims and collapses whitespace', () => {
+    expect(normalizeBusinessModel('  SaaS   Subscription  ')).toBe('saas subscription');
+  });
+
+  test('strips surrounding punctuation but keeps inner characters', () => {
+    expect(normalizeBusinessModel('“SaaS 订阅制”。')).toBe('saas 订阅制');
+    expect(normalizeBusinessModel('B2B SaaS, freemium')).toBe('b2b saas, freemium');
+  });
+
+  test('treats equivalent models as equal after normalization', () => {
+    expect(normalizeBusinessModel('SaaS 订阅')).toBe(normalizeBusinessModel('  saas   订阅 '));
+  });
+
+  test('returns empty string for non-strings or blank input', () => {
+    expect(normalizeBusinessModel(undefined)).toBe('');
+    expect(normalizeBusinessModel(null)).toBe('');
+    expect(normalizeBusinessModel('   ')).toBe('');
+  });
+});
+
+describe('pickCanonicalByBusinessModel', () => {
+  const d = (ms: number) => new Date(2026, 0, 1, 0, 0, 0, ms);
+  const candidates = [
+    { id: 'b', businessModelNorm: 'saas subscription', createdAt: d(200) },
+    { id: 'a', businessModelNorm: 'saas subscription', createdAt: d(100) },
+    { id: 'c', businessModelNorm: 'marketplace', createdAt: d(50) },
+  ];
+
+  test('returns the earliest matching report id', () => {
+    expect(pickCanonicalByBusinessModel('saas subscription', candidates)).toBe('a');
+  });
+
+  test('returns null when no business model matches', () => {
+    expect(pickCanonicalByBusinessModel('ad network', candidates)).toBeNull();
+  });
+
+  test('returns null for an empty normalized model', () => {
+    expect(pickCanonicalByBusinessModel('', candidates)).toBeNull();
+  });
+
+  test('excludes the report being generated', () => {
+    expect(pickCanonicalByBusinessModel('marketplace', candidates, 'c')).toBeNull();
   });
 });
 
