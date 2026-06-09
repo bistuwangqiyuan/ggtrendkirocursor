@@ -175,10 +175,11 @@
 <section class="page">
   <div class="sec-head"><span class="sec-no">03</span><h2 class="sec">执行摘要</h2><span class="sec-sub">Executive Summary</span></div>
   <p class="lead">
-    <strong>谷歌热词全自动 AI BP 生成网站</strong> 是一款以实时谷歌趋势为输入、用 AI 完成
-    “<strong>机会发现 → 多维评分 → ROI 排序 → 商业计划自动生成（HTML/PDF 导出）</strong>” 的一站式 SaaS。
+    <strong>谷歌热词全自动 AI BP 生成网站</strong> 是一条以实时谷歌趋势为起点的<strong>全自动商业闭环</strong>：
+    “<strong>热词挖掘 → AI 商业分析（机会脑暴 / 多维评分 / ROI 排序 / BP 自动生成）→ AI 编程（Claude）自动生成并部署服务网站</strong>”。
     它在团队已上线的趋势产品 <strong>Trend Now</strong>（趋势采集与展示 MVP）之上演进，把“先有点子才写 BP”的传统工具，
-    升级为“<strong>先帮你发现并排序值得做的机会，再自动写出可执行的 BP</strong>”。
+    升级为“<strong>先帮你发现并排序值得做的机会，自动写出可执行的 BP，再用 AI 编程把选定机会直接变成一个上线运营的网站产品</strong>”——
+    让“发现机会”与“做出产品”之间的距离趋近于零。
   </p>
 
   <div class="grid g4" style="margin:16px 0;">
@@ -190,8 +191,9 @@
 
   <h3>立项逻辑（本 BP 即产品方法论的演示）</h3>
   <p>本文件本身就是产品的“样品”：我们用同一套方法，从谷歌热词出发，头脑风暴出 10 个可线上化的商业机会，
-  以六维评分矩阵排序投入产出比，<strong>遴选出得分最高、全线上化的机会——即本产品自身</strong>。差异化护城河在于把
-  “<strong>机会发现</strong>”前置到“BP 撰写”之前，并天然复用 Trend Now 的实时趋势数据（详见第 6、10 节）。</p>
+  以六维评分矩阵排序投入产出比，<strong>遴选出得分最高、全线上化的机会——即“从热词到上线产品的全自动闭环平台”自身</strong>。
+  差异化护城河在于把 “<strong>机会发现 + 自动建站交付</strong>” 串成一条闭环：机会发现前置到 BP 撰写之前，再由 AI 编程把 BP 直接落地为可运营的网站，
+  并天然复用 Trend Now 的实时趋势数据；上线产品的真实数据再回流优化前端信号（详见第 6、7、10 节）。</p>
 
   <h3 style="margin-top:14px;">种子轮投资回报速览（账面 + 风险调整）</h3>
   <p class="note" style="margin-top:0;">种子轮：融资 <strong>¥800 万</strong>、投后估值 <strong>¥4,000 万</strong>、出让 <strong>20%</strong>；经 A/B 轮稀释后退出时净持股约 <strong>13.6%</strong>。
@@ -236,11 +238,11 @@
       </ul>
     </div>
     <div class="card tint">
-      <h4>我们的解法</h4>
+      <h4>我们的解法（三段式闭环）</h4>
       <ul>
-        <li><strong>机会发现前置</strong>：实时谷歌趋势 → AI 头脑风暴可线上化机会 → 六维评分排序 ROI。</li>
-        <li><strong>自动成稿</strong>：一键生成投资人级 BP，内含市场测算、财务三情景、风险与回报模型，导出 HTML/PDF。</li>
-        <li><strong>数据资产复用</strong>：直接接入 Trend Now 已上线的趋势采集与展示能力，冷启动成本极低。</li>
+        <li><strong>① 热词挖掘</strong>：实时谷歌趋势 → AI 去噪归类，沉淀“可线上化机会”的信号底座（复用 Trend Now）。</li>
+        <li><strong>② AI 商业分析</strong>：头脑风暴机会 → 六维评分排序 ROI → 一键生成投资人级 BP（市场/财务/风险，导出 HTML/PDF）。</li>
+        <li><strong>③ AI 自动建站</strong>：把选定机会交给 AI 编程（Claude）<strong>自动生成代码并部署上线</strong>为可运营网站，人审把关质量；上线数据回流优化前端。</li>
       </ul>
     </div>
   </div>
@@ -249,7 +251,7 @@
   <div class="grid g3">
     <div class="card"><span class="pill g">已验证</span><h4 style="margin:8px 0 4px;">MVP 已上线</h4><p class="note" style="margin:0;">Trend Now 已部署于 Netlify（Astro + React + Neon），趋势采集/检索/多语言/SEO 均跑通，为本产品提供现成数据与流量入口。</p></div>
     <div class="card"><span class="pill">大势</span><h4 style="margin:8px 0 4px;">AI 红利</h4><p class="note" style="margin:0;">生成式 AI 2026 年市场约 US$28–55B，CAGR ~30–37%<sup>[3]</sup>；BP/规划软件约 US$2.6B<sup>[7]</sup>，AI 重塑该品类。</p></div>
-    <div class="card"><span class="pill o">护城河</span><h4 style="margin:8px 0 4px;">数据 + 工作流</h4><p class="note" style="margin:0;">“热词→机会→排序→BP”的专有数据闭环与工作流，随使用量增强，竞品难以快速复制。</p></div>
+    <div class="card"><span class="pill o">护城河</span><h4 style="margin:8px 0 4px;">数据 + 闭环</h4><p class="note" style="margin:0;">“热词→机会→BP→自动建站→上线数据”的专有闭环，越用越准、越用越快，竞品难以快速复制。</p></div>
   </div>
 
   <h3>融资与用途</h3>
@@ -257,7 +259,7 @@
   支撑约 <strong>18 个月</strong>跑到产品市场契合（PMF）与早期规模化收入，并为 A 轮做好指标准备（详见第 17 节）。</p>
 
   <div class="callout">
-    <strong>一句话总结。</strong>这是一个把“AI + 实时趋势数据 + 自动化交付”三者合一、且<strong>已有上线 MVP 托底</strong>的早期机会：
+    <strong>一句话总结。</strong>这是一个把“<strong>实时趋势数据 + AI 商业分析 + AI 编程自动交付</strong>”三段合一、形成<strong>从热词到上线产品的完整闭环</strong>、且<strong>已有上线 MVP 托底</strong>的早期机会：
     账面上行空间大（命中即数倍回报），下行有清晰的止损与现金退出路径；我们用<strong>公允、可溯源、相互勾稽</strong>的数字把风险与收益都摊开给你看。
   </div>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>03 / 执行摘要</span></div>
@@ -268,12 +270,12 @@
   <div class="sec-head"><span class="sec-no">04</span><h2 class="sec">愿景与使命</h2><span class="sec-sub">Vision &amp; Mission</span></div>
   <div class="grid g2">
     <div class="card tint"><h3 style="margin-top:0;">愿景 Vision</h3>
-      <p style="font-size:16px; color:var(--ink);">让<strong>“发现一个值得做的生意”</strong>这件事，像今天搜索一个词一样简单、可靠、人人可及。</p>
-      <p class="note">把全球实时需求信号（谷歌趋势）转化为结构化、可执行、可融资的商业机会，降低创业的认知门槛与试错成本。</p>
+      <p style="font-size:16px; color:var(--ink);">让<strong>“发现一个值得做的生意，并把它做出来上线”</strong>这件事，像今天搜索一个词一样简单、可靠、人人可及。</p>
+      <p class="note">把全球实时需求信号（谷歌趋势）转化为结构化、可执行、可融资的商业机会，并由 AI 编程直接落地为上线产品，降低创业的认知门槛、试错成本与交付门槛。</p>
     </div>
     <div class="card tint"><h3 style="margin-top:0;">使命 Mission</h3>
-      <p style="font-size:16px; color:var(--ink);">用 AI 把<strong>“趋势 → 机会 → 计划 → 行动”</strong>的链路自动化，为创业者和中小企业创造真实价值。</p>
-      <p class="note">为用户与社会做实事：讲实话、办实事、求实效——只交付经得起检验的机会与计划，而非堆砌辞藻。</p>
+      <p style="font-size:16px; color:var(--ink);">用 AI 把<strong>“趋势 → 机会 → 计划 → 产品（自动上线）”</strong>的链路全自动化，为创业者和中小企业创造真实价值。</p>
+      <p class="note">为用户与社会做实事：讲实话、办实事、求实效——只交付经得起检验的机会、计划与可运营的产品，而非堆砌辞藻。</p>
     </div>
   </div>
 
@@ -281,9 +283,9 @@
   <table>
     <thead><tr><th>用户</th><th style="text-align:left;">核心痛点</th><th style="text-align:left;">我们的价值</th><th>愿付费点</th></tr></thead>
     <tbody>
-      <tr><td>独立创业者 / 副业者</td><td style="text-align:left;">不知做什么、缺乏验证</td><td style="text-align:left;">机会清单 + ROI 排序 + 可执行 BP</td><td>订阅 / 单份</td></tr>
-      <tr><td>中小企业 / 工作室</td><td style="text-align:left;">新业务立项与融资材料</td><td style="text-align:left;">市场测算 + 财务模型 + 投资人级 PDF</td><td>团队订阅</td></tr>
-      <tr><td>孵化器 / 投资机构 / 高校</td><td style="text-align:left;">批量筛选与尽调初稿</td><td style="text-align:left;">趋势看板 + 批量 BP + API</td><td>企业版 / API</td></tr>
+      <tr><td>独立创业者 / 副业者</td><td style="text-align:left;">不知做什么、不会做、缺乏验证</td><td style="text-align:left;">机会清单 + ROI 排序 + 可执行 BP + 一键生成上线网站</td><td>订阅 / 单份 / 建站</td></tr>
+      <tr><td>中小企业 / 工作室</td><td style="text-align:left;">新业务立项、融资材料与快速上线</td><td style="text-align:left;">市场测算 + 财务模型 + 投资人级 PDF + 可运营站点</td><td>团队订阅 / 托管</td></tr>
+      <tr><td>孵化器 / 投资机构 / 高校</td><td style="text-align:left;">批量筛选、尽调初稿与原型验证</td><td style="text-align:left;">趋势看板 + 批量 BP + 批量原型站 + API</td><td>企业版 / API</td></tr>
     </tbody>
   </table>
 
@@ -308,10 +310,12 @@
     <div class="kpi"><div class="num">~5,000万</div><div class="lab">全球每年新创企业数<sup>[4]</sup></div></div>
   </div>
 
-  <h3>趋势一：生成式 AI 进入“生产力工具”阶段</h3>
+  <h3>趋势一：生成式 AI 从“写文字”跨越到“写代码、建产品”</h3>
   <p>多家机构对生成式 AI 2026 年市场规模的测算区间为 US$28.45B（Mordor）至 US$47–55B（Research&nbsp;and&nbsp;Markets / Precedence），
   长期 CAGR 约 28.7%–37%<sup>[3]</sup>；更广义的 AI 市场 2026 年约 US$539B、到 2033 年达 US$3.5T（CAGR 30.6%）<sup>[3a]</sup>。
-  随着基础模型 API 价格持续下探、推理成本下降，<strong>“AI 写作 + 结构化生成”的单位成本快速降低</strong>，使按量定价的 SaaS 在毛利上日益健康。</p>
+  更关键的是，<strong>AI 编程（AI coding）已从“补全代码”跃迁到“从自然语言直接生成并部署可运行应用”</strong>——
+  Anthropic Claude（Claude Code）、Cursor 与 Lovable / Vercel v0 / Bolt / Replit 等已证明“描述即产品”的可行性<sup>[8]</sup>。
+  随着模型 API 价格持续下探，<strong>“AI 写作 + 结构化生成 + 自动建站”的单位成本快速降低</strong>，使“从机会直接生成上线产品”在工程与毛利上同时变得可行。</p>
 
   <h3>趋势二：趋势数据的实时化与普惠</h3>
   <p>谷歌趋势（Google Trends）等公开信号让“<strong>市场在搜什么</strong>”近实时可得。把这些弱信号结构化、去噪、归类为“可线上化的商业机会”，
@@ -322,8 +326,9 @@
   与此同时，商业计划/规划软件市场约 US$2.6B（2026）、并向 ~US$5B（2035）增长<sup>[7]</sup>。庞大且持续新增的“要立项、要融资、要规划”的人群，构成稳定需求底盘。</p>
 
   <div class="callout">
-    <strong>窗口判断。</strong>AI 能力足够强（能写出可用初稿）、数据足够易得（趋势实时公开）、成本足够低（token 价格下行），
-    而“机会发现 + 自动 BP”的整合品类<strong>尚无强势主导者</strong>——这是一个“天时 + 地利”的进入窗口。
+    <strong>窗口判断。</strong>AI 能力足够强（既能写 BP、也能写出可部署的应用）、数据足够易得（趋势实时公开）、成本足够低（token 价格下行）。
+    现有 AI 建站工具解决“会做”，却默认“你已知道要做什么”；趋势/选品工具解决“发现”，却不交付产品。
+    把“<strong>需求验证（热词）+ 商业分析 + 自动建站</strong>”串成一条闭环的整合品类<strong>尚无强势主导者</strong>——这是一个“天时 + 地利”的进入窗口。
   </div>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>05 / 行业背景</span></div>
 </section>
@@ -348,7 +353,7 @@
       <th>加权总分</th><th style="text-align:left; width:90px;">排名</th>
     </tr></thead>
     <tbody>
-      <tr class="total"><td style="text-align:left;">① 谷歌热词全自动 AI BP 生成网站</td><td>8</td><td>9</td><td>10</td><td>9</td><td>9</td><td>8</td><td><strong>8.80</strong></td>
+      <tr class="total"><td style="text-align:left;">① 谷歌热词→AI 分析→自动建站 闭环平台</td><td>8</td><td>9</td><td>10</td><td>9</td><td>9</td><td>8</td><td><strong>8.80</strong></td>
         <td style="text-align:left;"><div class="scorebar"><span style="width:88%"></span></div></td></tr>
       <tr><td style="text-align:left;">② AI 趋势选品 / 跨境电商选品</td><td>8</td><td>8</td><td>9</td><td>8</td><td>8</td><td>7</td><td>7.85</td>
         <td style="text-align:left;"><div class="scorebar"><span style="width:78%"></span></div></td></tr>
@@ -373,10 +378,10 @@
 
   <h3>选定理由（为何是 ①）</h3>
   <div class="grid g2">
-    <div class="card"><h4>最高 ROI（25% 权重项满分区）</h4><p class="note" style="margin:0;">直接复用 Trend Now 已上线的数据与流量，冷启动成本极低；用户愿付费点清晰（立项/融资刚需），单份与订阅双重变现。</p></div>
-    <div class="card"><h4>全线上化（10 分）</h4><p class="note" style="margin:0;">从输入热词到产出 PDF 全程线上、零人工交付，边际成本仅为 token 与算力，规模化效率高。</p></div>
-    <div class="card"><h4>护城河更强（领先 ②③）</h4><p class="note" style="margin:0;">“机会发现”前置 + 专有“热词→机会→排序”数据闭环，随使用量自增强；纯内容/选品工具同质化、壁垒低。</p></div>
-    <div class="card"><h4>叙事自洽</h4><p class="note" style="margin:0;">产品能为自己生成一份高质量 BP（即本文件），是最有说服力的能力证明与营销素材。</p></div>
+    <div class="card"><h4>最高 ROI（25% 权重项满分区）</h4><p class="note" style="margin:0;">直接复用 Trend Now 已上线的数据与流量，冷启动成本极低；用户愿付费点清晰（立项/融资/上线刚需），订阅 + 单份 + 建站/托管多重变现。</p></div>
+    <div class="card"><h4>全线上化（10 分）</h4><p class="note" style="margin:0;">从输入热词到产出 BP 与<strong>上线网站</strong>全程线上、近零人工交付，边际成本主要为 token、算力与托管，规模化效率高。</p></div>
+    <div class="card"><h4>护城河更强（领先 ②③）</h4><p class="note" style="margin:0;">“需求验证 + 机会发现 + 自动建站”三段闭环 + 专有“热词→机会→上线数据”飞轮，随使用量自增强；纯内容/选品或纯建站工具同质化、壁垒低。</p></div>
+    <div class="card"><h4>叙事自洽</h4><p class="note" style="margin:0;">产品能为自己生成一份高质量 BP（即本文件）、并能把选定机会自动建成上线网站，是最有说服力的能力证明与营销素材。</p></div>
   </div>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>06 / 机会遴选</span></div>
 </section>
@@ -384,21 +389,44 @@
 <!-- ============ 7. PRODUCT ============ -->
 <section class="page">
   <div class="sec-head"><span class="sec-no">07</span><h2 class="sec">产品与解决方案</h2><span class="sec-sub">Product</span></div>
-  <p class="lead">一条端到端的自动化流水线：<strong>趋势采集 → AI 分析 → 机会脑暴 → ROI 排序 → BP 生成 → HTML/PDF 导出</strong>。</p>
+  <p class="lead">一条从需求到产品的<strong>三段式商业闭环</strong>：<strong>① 热词挖掘 → ② AI 商业分析（脑暴 / 评分 / BP）→ ③ AI 编程自动生成并部署服务网站</strong>；上线产品的真实数据回流，持续优化前端信号。</p>
 
-  <!-- pipeline SVG -->
-  <svg viewBox="0 0 980 150" width="100%" height="135" style="margin:6px 0 10px;">
-    <defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a84ff"/><stop offset="0.5" stop-color="#5e5ce6"/><stop offset="1" stop-color="#00a6a6"/></linearGradient></defs>
-    <line x1="70" y1="62" x2="910" y2="62" stroke="url(#pg)" stroke-width="3"/>
-    <g font-family="Inter,Noto Sans SC" text-anchor="middle">
-      <!-- nodes -->
-      <g><circle cx="80" cy="62" r="16" fill="#0a84ff"/><text x="80" y="67" fill="#fff" font-size="13" font-weight="700">1</text><text x="80" y="100" font-size="11.5" fill="#1d1d1f" font-weight="600">趋势采集</text><text x="80" y="116" font-size="9.5" fill="#86868b">Google Trends</text></g>
-      <g><circle cx="245" cy="62" r="16" fill="#3b7bf0"/><text x="245" y="67" fill="#fff" font-size="13" font-weight="700">2</text><text x="245" y="100" font-size="11.5" fill="#1d1d1f" font-weight="600">AI 分析去噪</text><text x="245" y="116" font-size="9.5" fill="#86868b">归类 / 打标</text></g>
-      <g><circle cx="410" cy="62" r="16" fill="#5e5ce6"/><text x="410" y="67" fill="#fff" font-size="13" font-weight="700">3</text><text x="410" y="100" font-size="11.5" fill="#1d1d1f" font-weight="600">机会脑暴</text><text x="410" y="116" font-size="9.5" fill="#86868b">可线上化机会</text></g>
-      <g><circle cx="575" cy="62" r="16" fill="#4aa0c9"/><text x="575" y="67" fill="#fff" font-size="13" font-weight="700">4</text><text x="575" y="100" font-size="11.5" fill="#1d1d1f" font-weight="600">ROI 排序</text><text x="575" y="116" font-size="9.5" fill="#86868b">六维评分</text></g>
-      <g><circle cx="740" cy="62" r="16" fill="#1aa3a3"/><text x="740" y="67" fill="#fff" font-size="13" font-weight="700">5</text><text x="740" y="100" font-size="11.5" fill="#1d1d1f" font-weight="600">BP 生成</text><text x="740" y="116" font-size="9.5" fill="#86868b">市场/财务/风险</text></g>
-      <g><circle cx="905" cy="62" r="16" fill="#00a6a6"/><text x="905" y="67" fill="#fff" font-size="13" font-weight="700">6</text><text x="905" y="100" font-size="11.5" fill="#1d1d1f" font-weight="600">导出</text><text x="905" y="116" font-size="9.5" fill="#86868b">HTML / PDF</text></g>
+  <!-- closed-loop SVG: 3 stages + feedback -->
+  <svg viewBox="0 0 980 230" width="100%" height="208" style="margin:6px 0 8px;" font-family="Inter,Noto Sans SC">
+    <defs>
+      <linearGradient id="pg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a84ff"/><stop offset="0.5" stop-color="#5e5ce6"/><stop offset="1" stop-color="#00a6a6"/></linearGradient>
+      <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9aa3b2"/></marker>
+    </defs>
+    <!-- three stage cards -->
+    <g>
+      <rect x="30" y="70" width="270" height="92" rx="16" fill="#eef4ff" stroke="#d3e3ff"/>
+      <circle cx="64" cy="100" r="15" fill="#0a84ff"/><text x="64" y="105" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">1</text>
+      <text x="92" y="100" font-size="15" font-weight="800" fill="#1d1d1f">热词挖掘</text>
+      <text x="50" y="128" font-size="11" fill="#5b6473">Google Trends 实时采集</text>
+      <text x="50" y="146" font-size="11" fill="#5b6473">AI 去噪 / 归类 / 打标</text>
     </g>
+    <g>
+      <rect x="355" y="70" width="270" height="92" rx="16" fill="#f1ecff" stroke="#ddd2ff"/>
+      <circle cx="389" cy="100" r="15" fill="#5e5ce6"/><text x="389" y="105" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">2</text>
+      <text x="417" y="100" font-size="15" font-weight="800" fill="#1d1d1f">AI 商业分析</text>
+      <text x="375" y="128" font-size="11" fill="#5b6473">机会脑暴 · 六维评分 · ROI 排序</text>
+      <text x="375" y="146" font-size="11" fill="#5b6473">自动 BP（市场/财务/风险）</text>
+    </g>
+    <g>
+      <rect x="680" y="70" width="270" height="92" rx="16" fill="#e8f7f7" stroke="#cdeeee"/>
+      <circle cx="714" cy="100" r="15" fill="#00a6a6"/><text x="714" y="105" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">3</text>
+      <text x="742" y="100" font-size="15" font-weight="800" fill="#1d1d1f">AI 自动建站</text>
+      <text x="700" y="128" font-size="11" fill="#5b6473">Claude 生成代码 · 人审把关</text>
+      <text x="700" y="146" font-size="11" fill="#5b6473">一键部署 / 托管上线运营</text>
+    </g>
+    <!-- forward arrows -->
+    <line x1="300" y1="116" x2="353" y2="116" stroke="#9aa3b2" stroke-width="2.5" marker-end="url(#ar)"/>
+    <line x1="625" y1="116" x2="678" y2="116" stroke="#9aa3b2" stroke-width="2.5" marker-end="url(#ar)"/>
+    <!-- feedback loop arrow (stage3 -> stage1) -->
+    <path d="M815 70 C 815 26, 165 26, 165 68" fill="none" stroke="url(#pg)" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#ar)"/>
+    <text x="490" y="20" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0a7d8c">数据飞轮：上线产品的使用与收入数据回流，优化热词与机会信号</text>
+    <!-- output line -->
+    <text x="490" y="196" text-anchor="middle" font-size="11" fill="#86868b">交付物：投资人级 BP（HTML/PDF）＋ 可运营的上线网站（域名 / 托管 / 后台）</text>
   </svg>
 
   <div class="grid g2" style="align-items:center;">
@@ -406,30 +434,51 @@
       <h3>核心功能</h3>
       <ul>
         <li><strong>实时趋势看板</strong>：复用 Trend Now，按地区/时间窗/采集时间筛选热词。</li>
-        <li><strong>机会引擎</strong>：将热词聚类为“可线上化商业机会”，给出市场/竞争/可行性初判。</li>
-        <li><strong>ROI 排序</strong>：六维加权评分（同第 6 节），输出排序后的机会清单。</li>
-        <li><strong>BP 自动撰写</strong>：生成执行摘要、市场测算、商业模式、财务三情景与风险。</li>
-        <li><strong>一键导出</strong>：Apple 风格 HTML → 高保真 A4 PDF（即本文件的渲染流水线）。</li>
-        <li><strong>协作与版本</strong>：团队共享、修订留痕、模板与品牌定制（企业版）。</li>
+        <li><strong>机会引擎</strong>：将热词聚类为“可线上化商业机会”，给出市场/竞争/可行性初判与六维 ROI 排序。</li>
+        <li><strong>BP 自动撰写</strong>：生成执行摘要、市场测算、商业模式、财务三情景与风险，导出 Apple 风格 HTML → 高保真 PDF。</li>
+        <li><strong>AI 自动建站（Claude）</strong>：把选定机会的 BP 转为产品需求，<strong>由 AI 编程自动生成前后端代码并部署上线</strong>，配域名、托管与运营后台。</li>
+        <li><strong>人审与质量门</strong>：自动化测试 + 安全/合规扫描 + 人工抽审，先预览后发布，确保站点可用、可信、合规。</li>
+        <li><strong>协作与托管</strong>：团队共享、版本留痕、模板与品牌定制；生成站点按月托管、可持续迭代（企业版）。</li>
       </ul>
     </div>
     <div>
       <img src="assets/product-ui.png" alt="产品界面示意" style="width:100%; border-radius:14px; box-shadow:var(--shadow-lg); border:1px solid var(--line2);" />
-      <p class="note" style="text-align:center;">产品界面示意（趋势看板 + 机会排序 + BP 预览/导出）</p>
+      <p class="note" style="text-align:center;">产品界面示意（趋势看板 → 机会排序与 BP → AI 自动建站/部署）</p>
     </div>
   </div>
+  <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>07 / 产品</span></div>
+</section>
+
+<!-- ============ 7a2. STAGE 3 DEEP DIVE ============ -->
+<section class="page">
+  <div class="sec-head"><span class="sec-no">07</span><h2 class="sec">Stage 3：AI 编程自动建站</h2><span class="sec-sub">Auto-Build</span></div>
+  <p class="lead">把“计划”变成“产品”的关键一跃，也是本平台区别于<strong>一切纯 BP 工具与纯建站工具</strong>之处：从已验证的机会出发，让 AI 编程把 BP 直接落地为一个可运营、可收款的上线网站。</p>
+
+  <h3>从机会到上线网站（三步）</h3>
+  <div class="grid g3">
+    <div class="card tint"><span class="pill">①</span><h4 style="margin:8px 0 4px;">需求 → 代码</h4><p class="note" style="margin:0;">BP 的机会、功能与商业模式被结构化为产品需求规格，交由 AI 编程（Claude Code 等）生成可运行的前后端代码与数据模型。</p></div>
+    <div class="card tint"><span class="pill o">②</span><h4 style="margin:8px 0 4px;">代码 → 上线</h4><p class="note" style="margin:0;">自动构建、配置域名与托管、一键部署（复用 Netlify 等），交付一个真实可访问、可收款的网站，而非静态原型。</p></div>
+    <div class="card tint"><span class="pill g">③</span><h4 style="margin:8px 0 4px;">质量与人审</h4><p class="note" style="margin:0;">自动化测试 + 安全/合规扫描 + 人工抽审“先预览后发布”；AI 负责大部分体力活，人把关方向与底线。</p></div>
+  </div>
+
+  <h3>诚实的能力边界（不夸大）</h3>
+  <div class="grid g2">
+    <div class="card"><h4>当前最适合</h4><p class="note" style="margin:0;">中小型、标准化的线上服务站、营销/落地页、内容站、轻 SaaS 与工具站——这些正是热词机会最密集的区间。</p></div>
+    <div class="card"><h4>仍需人工的</h4><p class="note" style="margin:0;">高复杂度系统、强合规/支付清算、深度集成场景仍需工程师深度参与；我们以“模板化场景优先 + 人审兜底”控制质量与责任风险（详见第 18 节）。</p></div>
+  </div>
+  <div class="callout">为何这一步重要：能交付“<strong>一个上线运营的网站</strong>”而非“一份文档”，把用户从“看完即走”变成“持续托管/迭代”的经常性客户，是激活、留存与客单价的根本跃升，也是闭环数据飞轮的起点。</div>
 
   <h3>基于 Trend Now 的演进</h3>
   <table>
     <thead><tr><th style="text-align:left;">能力层</th><th style="text-align:left;">Trend Now（现状·MVP）</th><th style="text-align:left;">本产品（演进）</th></tr></thead>
     <tbody>
       <tr><td style="text-align:left;">数据</td><td style="text-align:left;">趋势采集、入库、检索、按时间筛选</td><td style="text-align:left;">+ 机会聚类、评分特征、行业标签</td></tr>
-      <tr><td style="text-align:left;">智能</td><td style="text-align:left;">展示与基础分析</td><td style="text-align:left;">+ LLM 编排：脑暴 / 评分 / 成稿</td></tr>
-      <tr><td style="text-align:left;">交付</td><td style="text-align:left;">网页浏览</td><td style="text-align:left;">+ BP 文档、HTML/PDF 导出、API</td></tr>
-      <tr><td style="text-align:left;">商业化</td><td style="text-align:left;">流量入口（免费）</td><td style="text-align:left;">+ Freemium 订阅 / 按量积分 / 企业版</td></tr>
+      <tr><td style="text-align:left;">智能</td><td style="text-align:left;">展示与基础分析</td><td style="text-align:left;">+ LLM 编排：脑暴 / 评分 / 成稿 / 代码生成</td></tr>
+      <tr><td style="text-align:left;">交付</td><td style="text-align:left;">网页浏览</td><td style="text-align:left;">+ BP 文档（HTML/PDF）<strong>+ AI 自动生成并部署上线网站</strong></td></tr>
+      <tr><td style="text-align:left;">商业化</td><td style="text-align:left;">流量入口（免费）</td><td style="text-align:left;">+ Freemium 订阅 / 按量积分 / <strong>建站与托管</strong> / 企业版</td></tr>
     </tbody>
   </table>
-  <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>07 / 产品</span></div>
+  <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>07 / 产品 · Stage 3</span></div>
 </section>
 
 <!-- ============ 7b. PERSONAS & JOURNEY ============ -->
@@ -461,48 +510,50 @@
     <g text-anchor="middle">
       <rect x="20" y="40" width="150" height="48" rx="10" fill="#eef4ff" stroke="#d3e3ff"/><text x="95" y="62" font-size="12" font-weight="700" fill="#1d1d1f">看趋势看板</text><text x="95" y="79" font-size="10" fill="#86868b">SEO 自然流量</text>
       <rect x="216" y="40" width="150" height="48" rx="10" fill="#eaf1ff" stroke="#d3e3ff"/><text x="291" y="62" font-size="12" font-weight="700" fill="#1d1d1f">注册</text><text x="291" y="79" font-size="10" fill="#86868b">免费体验</text>
-      <rect x="412" y="40" width="150" height="48" rx="10" fill="#efeaff" stroke="#ddd2ff"/><text x="487" y="62" font-size="12" font-weight="700" fill="#1d1d1f">激活</text><text x="487" y="79" font-size="10" fill="#86868b">生成首份 BP</text>
-      <rect x="608" y="40" width="150" height="48" rx="10" fill="#e8f7f7" stroke="#cdeeee"/><text x="683" y="62" font-size="12" font-weight="700" fill="#1d1d1f">付费转化</text><text x="683" y="79" font-size="10" fill="#86868b">订阅 / 单份</text>
+      <rect x="412" y="40" width="150" height="48" rx="10" fill="#efeaff" stroke="#ddd2ff"/><text x="487" y="62" font-size="12" font-weight="700" fill="#1d1d1f">激活</text><text x="487" y="79" font-size="10" fill="#86868b">生成 BP / 建站</text>
+      <rect x="608" y="40" width="150" height="48" rx="10" fill="#e8f7f7" stroke="#cdeeee"/><text x="683" y="62" font-size="12" font-weight="700" fill="#1d1d1f">付费转化</text><text x="683" y="79" font-size="10" fill="#86868b">订阅 / 建站 / 托管</text>
       <rect x="804" y="40" width="120" height="48" rx="10" fill="#e7f7ec" stroke="#cdeed6"/><text x="864" y="62" font-size="12" font-weight="700" fill="#1d1d1f">留存复购</text><text x="864" y="79" font-size="10" fill="#86868b">NRR&gt;100%</text>
       <g fill="url(#jg)"><polygon points="170,64 188,57 188,71"/><polygon points="366,64 384,57 384,71"/><polygon points="562,64 580,57 580,71"/><polygon points="758,64 776,57 776,71"/></g>
     </g>
   </svg>
-  <p class="note">每一步都有可优化的转化杠杆：SEO 内容（拉新）、引导式生成（激活）、付费墙与定价实验（转化）、协作与模板（留存）。详见第 11 节漏斗。</p>
+  <p class="note">每一步都有可优化的转化杠杆：SEO 内容（拉新）、引导式生成 BP 与一键建站（激活）、付费墙与定价实验（转化）、托管/协作/模板（留存）。“能直接上线一个网站”是远强于“拿到一份文档”的激活与留存钩子。详见第 11 节漏斗。</p>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>07 / 客户画像</span></div>
 </section>
 
 <!-- ============ 8. BUSINESS MODEL ============ -->
 <section class="page">
   <div class="sec-head"><span class="sec-no">08</span><h2 class="sec">商业模式与定价</h2><span class="sec-sub">Business Model</span></div>
-  <p class="lead">Freemium 拉新 → 订阅为主、按量积分为辅 → 企业版/API 提客单价。定价对标国际竞品并本地化（人民币）。</p>
+  <p class="lead">Freemium 拉新 → 订阅为主、按量积分为辅 → <strong>建站与托管</strong> + 企业版/API 提客单价。定价对标国际竞品并本地化（人民币）。</p>
 
   <h3>定价分层</h3>
   <table>
     <thead><tr><th style="text-align:left;">套餐</th><th>价格</th><th style="text-align:left;">面向</th><th style="text-align:left;">核心权益</th></tr></thead>
     <tbody>
       <tr><td style="text-align:left;">免费 Free</td><td>¥0</td><td style="text-align:left;">尝鲜 / 引流</td><td style="text-align:left;">趋势看板 + 每月 1 份精简 BP（含水印）</td></tr>
-      <tr><td style="text-align:left;">专业 Pro</td><td>¥99 / 月</td><td style="text-align:left;">个人创业者</td><td style="text-align:left;">无限机会脑暴 + 完整 BP + PDF 导出</td></tr>
-      <tr><td style="text-align:left;">团队 Team</td><td>¥299 / 月</td><td style="text-align:left;">工作室 / 小团队</td><td style="text-align:left;">多席位 + 协作 + 品牌定制</td></tr>
+      <tr><td style="text-align:left;">专业 Pro</td><td>¥99 / 月</td><td style="text-align:left;">个人创业者</td><td style="text-align:left;">无限机会脑暴 + 完整 BP + PDF + 站点预览</td></tr>
+      <tr><td style="text-align:left;">团队 Team</td><td>¥299 / 月</td><td style="text-align:left;">工作室 / 小团队</td><td style="text-align:left;">多席位 + 协作 + 品牌定制 + 优先建站额度</td></tr>
+      <tr><td style="text-align:left;">建站 / 托管</td><td>¥299 / 站起 + ¥99 / 月托管</td><td style="text-align:left;">要上线的用户</td><td style="text-align:left;">AI 自动生成并部署上线 + 域名/托管/迭代</td></tr>
       <tr><td style="text-align:left;">按量积分</td><td>¥39 / 份起</td><td style="text-align:left;">低频用户</td><td style="text-align:left;">单份 BP / 按 token 计费</td></tr>
-      <tr><td style="text-align:left;">企业 / API</td><td>定制</td><td style="text-align:left;">孵化器 / 机构</td><td style="text-align:left;">批量生成 + API + 私有模板 + SLA</td></tr>
+      <tr><td style="text-align:left;">企业 / API</td><td>定制</td><td style="text-align:left;">孵化器 / 机构</td><td style="text-align:left;">批量生成 + 批量建站 + API + 私有模板 + SLA</td></tr>
     </tbody>
   </table>
-  <p class="src"><b>竞品定价对标（来源[7]）：</b>LivePlan US$15–20/月、Upmetrics US$14/月、Venturekit US$8/月、IdeaBuddy US$5/月起、PrometAI US$55/月。本产品 Pro ¥99/月（≈US$14）落在主流区间，且提供竞品不具备的“机会发现”。</p>
+  <p class="src"><b>竞品定价对标（来源[7][8]）：</b>BP 工具 LivePlan US$15–20/月、Upmetrics US$14/月、PrometAI US$55/月；AI 建站 Lovable US$25/月起、Vercel v0 US$20/月起、Replit Core US$20/月。本产品 Pro ¥99/月（≈US$14）落在主流区间，<strong>且把“BP + 建站”合并交付</strong>，单一闭环替代“写 BP 工具 + 建站工具 + 自己拼接”。</p>
 
   <h3>收入结构演进（占比）</h3>
   <div class="stack" style="margin:8px 0 4px;">
-    <div style="width:62%; background:#0a84ff;">订阅 62%</div>
-    <div style="width:20%; background:#5e5ce6;">按量积分 20%</div>
-    <div style="width:18%; background:#00a6a6;">企业/API 18%</div>
+    <div style="width:55%; background:#0a84ff;">订阅 55%</div>
+    <div style="width:22%; background:#00a6a6;">建站/托管 22%</div>
+    <div style="width:13%; background:#5e5ce6;">按量积分 13%</div>
+    <div style="width:10%; background:#30b0c7; font-size:9px;">企业/API 10%</div>
   </div>
-  <p class="note">第 5 年稳态收入结构示意：订阅为基本盘，按量积分覆盖长尾低频，企业/API 提升客单价与留存。</p>
+  <p class="note">第 5 年稳态收入结构示意：订阅为基本盘；<strong>建站/托管</strong>带来高粘性的经常性收入（站点上线后持续托管迭代）；按量积分覆盖长尾低频；企业/API 提升客单价与留存。</p>
 
   <div class="grid g3" style="margin-top:14px;">
     <div class="card"><h4>获客 CAC</h4><p class="note" style="margin:0;">以 Trend Now SEO + 内容 PLG 为主，自然流量占比高，<strong>混合 CAC ≈ ¥200</strong>。</p></div>
-    <div class="card"><h4>客户价值 LTV</h4><p class="note" style="margin:0;">付费 ARPU ~¥1,050/年、毛利 ~68%、平均生命周期 ~2.5 年，<strong>LTV ≈ ¥1,785</strong>。</p></div>
+    <div class="card"><h4>客户价值 LTV</h4><p class="note" style="margin:0;">付费 ARPU ~¥1,050/年、毛利 ~68%、平均生命周期 ~2.5 年，<strong>LTV ≈ ¥1,785</strong>；托管用户粘性更高、生命周期更长（上行）。</p></div>
     <div class="card"><h4>单位经济</h4><p class="note" style="margin:0;"><strong>LTV/CAC ≈ 5–9×</strong>，回收期 &lt; 6 个月，符合健康 SaaS 标准。</p></div>
   </div>
-  <div class="callout"><strong>为何能赚钱。</strong>边际成本主要是 LLM token 与算力，随模型降价与缓存/分级调用持续下降；而订阅收入按月复现。规模扩大后毛利由 55% 提升至 75%（见第 13 节）。</div>
+  <div class="callout"><strong>为何能赚钱。</strong>边际成本主要是 LLM/代码生成 token、算力与站点托管：token 随模型降价与缓存/分级调用持续下降，托管成本随用量小幅线性增长且可转嫁给托管套餐；订阅与托管收入按月复现。规模扩大后毛利由 55% 提升至 75%（见第 13 节）。<strong>本 BP 财务以“仅订阅+按量”的保守口径测算，建站/托管带来的增量价值作为上行，不计入基准</strong>。</div>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>08 / 商业模式</span></div>
 </section>
 
@@ -529,8 +580,8 @@
       </svg>
     </div>
     <div>
-      <h4>TAM ≈ US$2.6B（2026）<sup>[7]</sup></h4>
-      <p class="note">全球商业计划 / 商业规划软件市场。受 AI 重塑，品类边界向“AI 辅助创业决策”扩张；更广义生成式 AI 市场（US$28–55B<sup>[3]</sup>）为长期顺风。</p>
+      <h4>TAM ≈ US$2.6B（2026，狭义）<sup>[7]</sup></h4>
+      <p class="note">狭义锚点为全球商业计划 / 规划软件市场。但本产品的闭环把品类拓宽到“<strong>机会发现 + AI 自动建站</strong>”：叠加 AI 网站/应用生成与无代码建站市场（US$13–37B 级、CAGR 20%+<sup>[8]</sup>），<strong>广义 TAM 数十亿至数百亿美元级</strong>；更广义生成式 AI 市场（US$28–55B<sup>[3]</sup>）为长期顺风。本节 SAM/SOM 仍按狭义、保守口径测算。</p>
       <h4>SAM ≈ US$700M</h4>
       <p class="note">可服务市场：支持中英文、面向自助式创业者 / 中小企业 / 创客的线上付费部分。以全球每年 ~5,000 万新创<sup>[4]</sup> 中愿为规划工具付费的子集估算。</p>
       <h4>SOM ≈ US$10M（第 5 年）</h4>
@@ -555,31 +606,32 @@
 <!-- ============ 10. COMPETITION ============ -->
 <section class="page">
   <div class="sec-head"><span class="sec-no">10</span><h2 class="sec">竞争分析</h2><span class="sec-sub">Competition</span></div>
-  <p class="lead">现有玩家分两类：<strong>BP 撰写工具</strong>（已有点子→格式化）与<strong>通用 LLM</strong>（能写但不结构化、无趋势数据）。我们用“<strong>机会发现 + 热词驱动 + 自动交付</strong>”切出独立站位。</p>
+  <p class="lead">现有玩家分三类：<strong>BP 撰写工具</strong>（已有点子→格式化）、<strong>AI 建站工具</strong>（已有点子→建站，如 Lovable / v0 / Bolt / Replit）与<strong>通用 LLM</strong>（能写但不结构化、无趋势数据）。它们都默认“<strong>你已经知道要做什么</strong>”；我们用“<strong>需求验证（热词）→ 机会发现 → 自动建站</strong>”的完整闭环切出独立站位。</p>
 
   <h3>对标矩阵</h3>
-  <table style="font-size:11.5px;">
+  <table style="font-size:11px;">
     <thead><tr>
-      <th style="text-align:left;">能力</th><th>本产品</th><th>LivePlan</th><th>Upmetrics</th><th>PrometAI</th><th>ChatGPT</th>
+      <th style="text-align:left;">能力</th><th>本产品</th><th>LivePlan</th><th>PrometAI</th><th>Lovable/v0</th><th>ChatGPT</th>
     </tr></thead>
     <tbody>
-      <tr><td style="text-align:left;">机会发现（不需先有点子）</td><td class="pill g">✓ 独有</td><td>✗</td><td>✗</td><td>△</td><td>△</td></tr>
+      <tr><td style="text-align:left;">机会发现（不需先有点子）</td><td class="pill g">✓ 独有</td><td>✗</td><td>△</td><td>✗</td><td>△</td></tr>
       <tr><td style="text-align:left;">实时趋势数据驱动</td><td class="pill g">✓</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
-      <tr><td style="text-align:left;">ROI 多维排序</td><td class="pill g">✓</td><td>✗</td><td>✗</td><td>△</td><td>✗</td></tr>
-      <tr><td style="text-align:left;">自动财务模型</td><td>✓</td><td>✓</td><td>✓</td><td>△</td><td>△</td></tr>
-      <tr><td style="text-align:left;">高保真 PDF 导出</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✗</td></tr>
+      <tr><td style="text-align:left;">ROI 多维排序</td><td class="pill g">✓</td><td>✗</td><td>△</td><td>✗</td><td>✗</td></tr>
+      <tr><td style="text-align:left;">自动财务模型 / BP</td><td>✓</td><td>✓</td><td>✓</td><td>✗</td><td>△</td></tr>
+      <tr><td style="text-align:left;">AI 自动建站并部署上线</td><td class="pill g">✓</td><td>✗</td><td>✗</td><td>✓</td><td>△</td></tr>
+      <tr><td style="text-align:left;">闭环：发现→计划→产品</td><td class="pill g">✓ 独有</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td></tr>
       <tr><td style="text-align:left;">中文 / 本地化</td><td class="pill g">✓</td><td>△</td><td>△</td><td>△</td><td>✓</td></tr>
-      <tr><td style="text-align:left;">价格（月）</td><td>¥99</td><td>$15–20</td><td>$14</td><td>$55</td><td>$20</td></tr>
+      <tr><td style="text-align:left;">价格（月）</td><td>¥99</td><td>$15–20</td><td>$55</td><td>$20–25</td><td>$20</td></tr>
     </tbody>
   </table>
-  <p class="note">✓ 具备且强；△ 部分/需手动拼凑；✗ 不具备。来源：竞品官网与定价[7]；ChatGPT 指通用对话模型的“裸用”能力。</p>
+  <p class="note">✓ 具备且强；△ 部分/需手动拼凑；✗ 不具备。来源：竞品官网与定价[7][8]。<strong>AI 建站工具是强劲对手</strong>，但它们解决“怎么做”、不解决“做什么值得做”；我们的差异不在“会建站”，而在“<strong>从已验证的真实需求出发再建站</strong>”。</p>
 
   <h3>竞争优势与护城河</h3>
   <div class="grid g2">
-    <div class="card"><h4>① 数据闭环（最深护城河）</h4><p class="note" style="margin:0;">“热词 → 机会 → 评分 → 成单/留存”的专有数据随使用量增强，反哺机会发现与排序精度，形成数据飞轮。</p></div>
-    <div class="card"><h4>② 工作流整合</h4><p class="note" style="margin:0;">把发现、决策、成稿、交付串成一条线，替代“多个工具 + 人工拼接”，转换成本高。</p></div>
-    <div class="card"><h4>③ 已上线 MVP 与流量</h4><p class="note" style="margin:0;">Trend Now 提供现成数据与 SEO 流量入口，竞品需从零搭建趋势数据能力。</p></div>
-    <div class="card"><h4>④ 本地化 + 价格</h4><p class="note" style="margin:0;">原生中文体验 + 主流价位，先吃下被国际工具忽视的中文长尾市场。</p></div>
+    <div class="card"><h4>① 闭环数据飞轮（最深护城河）</h4><p class="note" style="margin:0;">“热词 → 机会 → BP → 自动建站 → 上线使用/收入”的专有数据随使用量增强，反哺机会发现、排序与生成质量——这是单点工具无法复制的。</p></div>
+    <div class="card"><h4>② 需求验证优先</h4><p class="note" style="margin:0;">建站工具从“点子”起步，命中率随机；我们从实时需求信号起步，<strong>先验证再建造</strong>，显著提升所建产品的存活与变现概率。</p></div>
+    <div class="card"><h4>③ 已上线 MVP 与流量</h4><p class="note" style="margin:0;">Trend Now 提供现成趋势数据与 SEO 流量入口，竞品需从零搭建趋势数据能力。</p></div>
+    <div class="card"><h4>④ 本地化 + 价格 + 一站交付</h4><p class="note" style="margin:0;">原生中文 + 主流价位，且“BP + 建站”一站交付，替代多工具拼接，先吃下被国际工具忽视的中文长尾。</p></div>
   </div>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>10 / 竞争分析</span></div>
 </section>
@@ -587,28 +639,29 @@
 <!-- ============ 10b. POSITIONING QUADRANT ============ -->
 <section class="page">
   <div class="sec-head"><span class="sec-no">10</span><h2 class="sec">竞争格局象限</h2><span class="sec-sub">Positioning</span></div>
-  <p class="lead">两个决定胜负的维度：横轴“<strong>机会发现能力</strong>”（要不要先有点子）与纵轴“<strong>结构化 / 自动交付</strong>”（能否一键产出投资人级文档）。右上角是空白蓝海，我们占位于此。</p>
+  <p class="lead">两个决定胜负的维度：横轴“<strong>机会发现 / 需求验证能力</strong>”（要不要先有点子）与纵轴“<strong>自动交付深度</strong>”（从文档一路做到<strong>上线运营的产品</strong>）。右上角是空白蓝海，我们占位于此。</p>
 
   <svg viewBox="0 0 640 460" width="100%" height="430" font-family="Inter,Noto Sans SC">
     <!-- axes -->
     <rect x="70" y="30" width="520" height="380" fill="#fbfdff" stroke="#e8eef7"/>
     <line x1="330" y1="30" x2="330" y2="410" stroke="#e0e6f0" stroke-dasharray="4 4"/>
     <line x1="70" y1="220" x2="590" y2="220" stroke="#e0e6f0" stroke-dasharray="4 4"/>
-    <text x="330" y="430" text-anchor="middle" font-size="12" fill="#6e6e73" font-weight="600">机会发现能力 →</text>
-    <text x="40" y="220" text-anchor="middle" font-size="12" fill="#6e6e73" font-weight="600" transform="rotate(-90 40 220)">结构化 / 自动交付 →</text>
+    <text x="330" y="430" text-anchor="middle" font-size="12" fill="#6e6e73" font-weight="600">机会发现 / 需求验证 →</text>
+    <text x="40" y="220" text-anchor="middle" font-size="12" fill="#6e6e73" font-weight="600" transform="rotate(-90 40 220)">自动交付深度（文档→上线产品）→</text>
     <!-- shaded sweet spot -->
     <rect x="330" y="30" width="260" height="190" fill="#eef9f3" />
-    <text x="460" y="52" text-anchor="middle" font-size="11" fill="#1a7f37" font-weight="700">蓝海：机会发现 + 自动交付</text>
+    <text x="460" y="52" text-anchor="middle" font-size="11" fill="#1a7f37" font-weight="700">蓝海：需求验证 + 自动建站上线</text>
     <!-- dots -->
     <g font-size="11" font-weight="600">
-      <circle cx="150" cy="300" r="9" fill="#8e8e93"/><text x="150" y="324" text-anchor="middle" fill="#1d1d1f">ChatGPT</text>
-      <circle cx="180" cy="110" r="9" fill="#0a84ff"/><text x="180" y="95" text-anchor="middle" fill="#1d1d1f">LivePlan</text>
-      <circle cx="245" cy="135" r="9" fill="#5e5ce6"/><text x="245" y="120" text-anchor="middle" fill="#1d1d1f">Upmetrics</text>
-      <circle cx="360" cy="190" r="9" fill="#30b0c7"/><text x="392" y="194" text-anchor="middle" fill="#1d1d1f">PrometAI</text>
-      <circle cx="510" cy="95" r="13" fill="url(#pg)"/><text x="510" y="78" text-anchor="middle" fill="#0a7d4b" font-weight="800">本产品</text>
+      <circle cx="150" cy="320" r="9" fill="#8e8e93"/><text x="150" y="344" text-anchor="middle" fill="#1d1d1f">ChatGPT</text>
+      <circle cx="170" cy="205" r="9" fill="#0a84ff"/><text x="170" y="190" text-anchor="middle" fill="#1d1d1f">LivePlan</text>
+      <circle cx="245" cy="215" r="9" fill="#5e5ce6"/><text x="245" y="200" text-anchor="middle" fill="#1d1d1f">Upmetrics</text>
+      <circle cx="320" cy="245" r="9" fill="#30b0c7"/><text x="320" y="262" text-anchor="middle" fill="#1d1d1f">PrometAI</text>
+      <circle cx="175" cy="95" r="10" fill="#ff9f0a"/><text x="175" y="78" text-anchor="middle" fill="#1d1d1f">Lovable / v0</text>
+      <circle cx="510" cy="90" r="13" fill="url(#pg)"/><text x="510" y="72" text-anchor="middle" fill="#0a7d4b" font-weight="800">本产品</text>
     </g>
   </svg>
-  <p class="note">说明：通用 LLM 灵活但不结构化、无趋势数据；传统 BP 工具结构化强但要求“先有点子”；本产品同时具备“机会发现”与“自动交付”，且以实时热词数据为独有输入。</p>
+  <p class="note">说明：通用 LLM 灵活但不结构化、无趋势数据；传统 BP 工具能出文档但止于文档、且要求“先有点子”；AI 建站工具能直接做出上线产品，但同样要求“先有点子”、不做需求验证。本产品<strong>同时</strong>具备“需求验证/机会发现”与“自动建站上线”，且以实时热词数据为独有输入——独占右上象限。</p>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>10 / 竞争象限</span></div>
 </section>
 
@@ -627,12 +680,12 @@
     <img src="assets/engine-flywheel.png" alt="增长飞轮" style="width:100%; border-radius:14px; box-shadow:var(--shadow); border:1px solid var(--line2);" />
     <div>
       <ul>
-        <li><strong>更多用户用趋势看板</strong> → 更多热词使用数据</li>
-        <li><strong>更多数据</strong> → 机会发现 / 排序更准 → BP 质量更高</li>
-        <li><strong>更高质量</strong> → 更多免费用户转付费、更多口碑传播</li>
-        <li><strong>更多付费 + SEO 内容</strong> → 更低 CAC、更多新用户</li>
+        <li><strong>更多用户用趋势看板</strong> → 更多热词与机会数据</li>
+        <li><strong>更多数据</strong> → 机会发现/排序更准、BP 与生成代码质量更高</li>
+        <li><strong>更多上线网站</strong> → 真实使用/收入数据回流 → 信号与模型再升级</li>
+        <li><strong>更高质量 + SEO 内容</strong> → 更多转付费、更多口碑、更低 CAC、更多新用户</li>
       </ul>
-      <p class="note">自然流量与数据资产是飞轮的两个支点：越用越准、越准越便宜获客。</p>
+      <p class="note">闭环的三个支点——自然流量、专有数据、上线产品——彼此加强：越用越准、越准越便宜获客、产品越好越愿付费。</p>
     </div>
   </div>
 
@@ -696,7 +749,7 @@
 <!-- ============ 12. TECH ARCH ============ -->
 <section class="page">
   <div class="sec-head"><span class="sec-no">12</span><h2 class="sec">技术架构</h2><span class="sec-sub">Architecture</span></div>
-  <p class="lead">复用 Trend Now 的 <strong>Astro + React + Neon（PostgreSQL）</strong> 技术栈，叠加 <strong>LLM 编排层、任务队列与 PDF 渲染流水线</strong>。轻量、可控成本、易扩展。</p>
+  <p class="lead">复用 Trend Now 的 <strong>Astro + React + Neon（PostgreSQL）</strong> 技术栈，叠加 <strong>LLM 编排层、AI 代码生成与自动部署流水线、任务队列与 PDF 渲染</strong>。轻量、可控成本、易扩展。</p>
 
   <svg viewBox="0 0 940 360" width="100%" height="330" style="margin:6px 0;" font-family="Inter,Noto Sans SC">
     <defs><linearGradient id="lay" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a84ff"/><stop offset="1" stop-color="#5e5ce6"/></linearGradient></defs>
@@ -716,8 +769,8 @@
       <text x="36" y="184" font-size="13" font-weight="700" fill="#1d1d1f">③ AI 编排层</text>
       <text x="36" y="202" font-size="11" fill="#5b6473">LLM 多模型路由 · Prompt/模板 · 缓存 · 质量校验 · 防幻觉</text>
       <rect x="480" y="158" width="440" height="62" rx="12" fill="#fff4e6" stroke="#ffe6c2"/>
-      <text x="496" y="184" font-size="13" font-weight="700" fill="#1d1d1f">④ 异步任务 / 渲染层</text>
-      <text x="496" y="202" font-size="11" fill="#5b6473">任务队列 · Puppeteer HTML→PDF 流水线 · 导出存储</text>
+      <text x="496" y="184" font-size="13" font-weight="700" fill="#1d1d1f">④ AI 建站 / 部署 / 渲染层</text>
+      <text x="496" y="202" font-size="11" fill="#5b6473">Claude 代码生成 · 自动构建/部署/托管 · 安全扫描 · HTML→PDF</text>
     </g>
     <g>
       <rect x="20" y="234" width="440" height="62" rx="12" fill="#eef4ff" stroke="#d3e3ff"/>
@@ -728,12 +781,12 @@
       <text x="496" y="278" font-size="11" fill="#5b6473">Netlify 部署 · 日志/监控/告警 · 成本看板（token 计量）</text>
     </g>
     <rect x="20" y="310" width="900" height="40" rx="12" fill="url(#lay)"/>
-    <text x="470" y="335" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">外部源：Google Trends 数据 · LLM 供应商（多模型，可切换降本）</text>
+    <text x="470" y="335" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">外部源：Google Trends 数据 · LLM/代码生成供应商（Claude 等多模型，可切换降本）· 部署托管（Netlify 等）</text>
   </svg>
 
   <div class="grid g3">
     <div class="card"><h4>成本可控</h4><p class="note" style="margin:0;">多模型路由 + 缓存 + 分级调用，按难度选模型，token 成本随行业降价持续下行。</p></div>
-    <div class="card"><h4>质量与防幻觉</h4><p class="note" style="margin:0;">模板约束 + 数据回填 + 规则校验 + 人审抽样，降低事实性错误。</p></div>
+    <div class="card"><h4>质量与防幻觉</h4><p class="note" style="margin:0;">BP：模板约束+数据回填+规则校验+人审抽样；建站：自动化测试+安全/依赖扫描+“先预览后发布”人审门，降低事实性错误与上线风险。</p></div>
     <div class="card"><h4>可扩展</h4><p class="note" style="margin:0;">无状态 API + 异步队列，渲染与生成解耦，水平扩容简单。</p></div>
   </div>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>12 / 技术架构</span></div>
@@ -742,7 +795,7 @@
 <!-- ============ 13. FINANCIALS ============ -->
 <section class="page">
   <div class="sec-head"><span class="sec-no">13</span><h2 class="sec">财务预测（基准情景）</h2><span class="sec-sub">Financials</span></div>
-  <p class="lead">自下而上构建：用户 → 转化 → ARPU → 收入 → COGS/毛利 → Opex → EBITDA，全表相互勾稽（单位：人民币）。</p>
+  <p class="lead">自下而上构建：用户 → 转化 → ARPU → 收入 → COGS/毛利 → Opex → EBITDA，全表相互勾稽（单位：人民币）。COGS 含 LLM/代码生成 token、算力与站点托管。<strong>为稳健起见，基准情景按“订阅 + 按量”口径测算，建站/托管的增量收入与粘性作为上行，不计入下表</strong>。</p>
 
   <h3>五年损益表（基准情景，¥万）</h3>
   <table style="font-size:11.5px;">
@@ -980,7 +1033,7 @@
 
   <div class="grid g2" style="margin-top:10px;">
     <div class="card tint"><h4>给投资人的结论</h4><ul style="margin:6px 0 0 16px;"><li><strong>拿到钱的概率（胜率）≈ 28%</strong>；一旦成功，条件年化 ~36%。</li><li>整体期望现金回报 <strong>EV ≈ 1.37×</strong>、风险调整年化 ~6.5%。</li><li>盈亏比 ~4∶1，下行被清算回收与早退纪律限制。</li></ul></div>
-    <div class="card tint"><h4>为何风险可控</h4><ul style="margin:6px 0 0 16px;"><li>已有上线 MVP，降低“从 0 到 1”失败概率。</li><li>单位经济健康（LTV/CAC 5–9×），现金消耗可预测。</li><li>清晰的 A 轮指标与止损/早退路径。</li></ul></div>
+    <div class="card tint"><h4>为何风险可控</h4><ul style="margin:6px 0 0 16px;"><li>已有上线 MVP + 需求验证优先的闭环，降低“从 0 到 1”失败概率。</li><li>单位经济健康（LTV/CAC 5–9×），现金消耗可预测。</li><li>AI 建站执行/质量风险已计入<strong>保守的 28% 胜率</strong>，未对收益做乐观加成。</li></ul></div>
   </div>
   <div class="footer-tag"><span>谷歌热词全自动 AI BP 生成网站 · 商业计划书</span><span>14 / 敏感性</span></div>
 </section>
@@ -1030,11 +1083,11 @@
   <table>
     <thead><tr><th style="text-align:left;">阶段</th><th style="text-align:left;">时间</th><th style="text-align:left;">关键里程碑</th><th style="text-align:left;">验收指标</th></tr></thead>
     <tbody>
-      <tr><td style="text-align:left;">M0 基座</td><td style="text-align:left;">0–3 月</td><td style="text-align:left;">机会引擎 + BP 生成 MVP 上线</td><td style="text-align:left;">首份 BP 自动生成跑通</td></tr>
-      <tr><td style="text-align:left;">M1 商业化</td><td style="text-align:left;">3–6 月</td><td style="text-align:left;">付费墙、订阅、PDF 导出</td><td style="text-align:left;">首批付费用户、付费转化 ≥2%</td></tr>
-      <tr><td style="text-align:left;">M2 PMF</td><td style="text-align:left;">6–12 月</td><td style="text-align:left;">留存优化、内容增长引擎</td><td style="text-align:left;">月活增长、NRR 趋近 100%</td></tr>
+      <tr><td style="text-align:left;">M0 基座</td><td style="text-align:left;">0–3 月</td><td style="text-align:left;">机会引擎 + BP 生成 MVP；AI 建站原型（单模板）</td><td style="text-align:left;">首份 BP + 首个自动生成站点跑通</td></tr>
+      <tr><td style="text-align:left;">M1 商业化</td><td style="text-align:left;">3–6 月</td><td style="text-align:left;">付费墙、订阅、PDF 导出；建站/托管上线（多模板+人审门）</td><td style="text-align:left;">首批付费用户、付费转化 ≥2%、首批托管站点</td></tr>
+      <tr><td style="text-align:left;">M2 PMF</td><td style="text-align:left;">6–12 月</td><td style="text-align:left;">留存优化、内容增长引擎、闭环数据回流</td><td style="text-align:left;">月活增长、NRR 趋近 100%、建站成功率提升</td></tr>
       <tr><td style="text-align:left;">M3 A 轮</td><td style="text-align:left;">12–18 月</td><td style="text-align:left;">完成 A 轮、扩团队</td><td style="text-align:left;">ARR 突破、A 轮交割</td></tr>
-      <tr><td style="text-align:left;">M4 规模</td><td style="text-align:left;">18–36 月</td><td style="text-align:left;">企业版/API、英文市场</td><td style="text-align:left;">企业客户、EBITDA 转正</td></tr>
+      <tr><td style="text-align:left;">M4 规模</td><td style="text-align:left;">18–36 月</td><td style="text-align:left;">企业版/API、批量建站、英文市场</td><td style="text-align:left;">企业客户、EBITDA 转正</td></tr>
     </tbody>
   </table>
 
@@ -1105,7 +1158,7 @@
         <thead><tr><th style="text-align:left;">用途</th><th>占比</th><th>金额</th></tr></thead>
         <tbody>
           <tr><td style="text-align:left;"><span style="color:#0a84ff;">■</span> 产品研发</td><td>40%</td><td>¥320 万</td></tr>
-          <tr><td style="text-align:left;"><span style="color:#5e5ce6;">■</span> 数据与算力（LLM）</td><td>18%</td><td>¥144 万</td></tr>
+          <tr><td style="text-align:left;"><span style="color:#5e5ce6;">■</span> 数据 / 算力 / 建站托管（LLM）</td><td>18%</td><td>¥144 万</td></tr>
           <tr><td style="text-align:left;"><span style="color:#00a6a6;">■</span> 市场与增长</td><td>22%</td><td>¥176 万</td></tr>
           <tr><td style="text-align:left;"><span style="color:#ff9f0a;">■</span> 团队与运营</td><td>15%</td><td>¥120 万</td></tr>
           <tr><td style="text-align:left;"><span style="color:#c7c7cc;">■</span> 合规与储备</td><td>5%</td><td>¥40 万</td></tr>
@@ -1128,9 +1181,11 @@
     <thead><tr><th style="text-align:left;">风险</th><th>等级</th><th style="text-align:left;">说明</th><th style="text-align:left;">对策</th></tr></thead>
     <tbody>
       <tr><td style="text-align:left;">LLM 成本 / 质量 / 幻觉</td><td><span class="pill o">中</span></td><td style="text-align:left;">token 成本波动、事实性错误</td><td style="text-align:left;">多模型路由+缓存降本；模板约束+数据回填+校验+抽审</td></tr>
+      <tr><td style="text-align:left;">AI 建站质量 / 安全</td><td><span class="pill r">中-高</span></td><td style="text-align:left;">生成代码可用性参差、漏洞、上线事故</td><td style="text-align:left;">模板化场景优先、自动化测试+安全扫描、“先预览后发布”人审门、限定可承诺范围</td></tr>
+      <tr><td style="text-align:left;">供应商依赖（Claude/Anthropic）</td><td><span class="pill o">中</span></td><td style="text-align:left;">单一代码模型涨价/限流/政策变化</td><td style="text-align:left;">代码生成层抽象、可切换多家（Claude/OpenAI/开源）、关键能力自评测兜底</td></tr>
       <tr><td style="text-align:left;">Google 数据 / ToS</td><td><span class="pill o">中</span></td><td style="text-align:left;">数据获取方式与条款变化</td><td style="text-align:left;">合规采集、来源多元化、抽象数据接口可切换</td></tr>
-      <tr><td style="text-align:left;">竞争加剧</td><td><span class="pill o">中</span></td><td style="text-align:left;">大厂或竞品跟进</td><td style="text-align:left;">数据闭环+工作流+本地化先发，持续提升切换成本</td></tr>
-      <tr><td style="text-align:left;">合规 / 内容风险</td><td><span class="pill g">低-中</span></td><td style="text-align:left;">生成内容合规、数据隐私</td><td style="text-align:left;">内容审核、隐私合规、免责声明与人审通道</td></tr>
+      <tr><td style="text-align:left;">竞争加剧 / 护城河侵蚀</td><td><span class="pill r">中-高</span></td><td style="text-align:left;">AI 建站能力商品化、大厂或 Lovable/v0 等跟进</td><td style="text-align:left;">护城河锚定“需求验证闭环+专有数据飞轮”而非单点建站能力；持续以数据与本地化提升切换成本</td></tr>
+      <tr><td style="text-align:left;">合规 / 内容 / 生成站点责任</td><td><span class="pill o">中</span></td><td style="text-align:left;">生成内容与上线站点的合规、数据隐私、责任边界</td><td style="text-align:left;">内容审核、隐私合规、ICP/资质提示、服务条款明确责任边界、人审通道</td></tr>
       <tr><td style="text-align:left;">获客 / 转化不及预期</td><td><span class="pill o">中</span></td><td style="text-align:left;">PLG 漏斗未达标</td><td style="text-align:left;">SEO+内容多渠道、定价实验、激活率优化</td></tr>
       <tr><td style="text-align:left;">退出 / 流动性风险</td><td><span class="pill r">高</span></td><td style="text-align:left;">早期股权变现难（核心风险）</td><td style="text-align:left;">尽早跑通现金流、保留并购/老股转让多通道、清算优先权保护</td></tr>
       <tr><td style="text-align:left;">融资接续风险</td><td><span class="pill o">中</span></td><td style="text-align:left;">A 轮未及时到位</td><td style="text-align:left;">里程碑式控费、保留 18 月+ 现金跑道、随时可切换至盈利优先模式</td></tr>
@@ -1158,11 +1213,13 @@
     <li id="r5">IT 桔子《2022 年中国天使投资行业报告》：天使被投项目死亡率 31%、进入下一轮 45%、天使→独角兽 &lt;1%、成功 IPO 2%；种子天使阶段关停占比最高（50.72%）。</li>
     <li id="r6">清科研究 / 千山资本：中国股权投资市场退出 IRR 中位数 ~20–23.2%；早期投资成功退出 IRR 中位数 ~30%；回报呈幂律偏态分布。</li>
     <li id="r7">商业计划/规划软件市场约 US$1.3–2.6B（2024–25），CAGR ~6.6–13.2%；竞品定价：LivePlan US$15–20/月、Upmetrics US$14/月、Venturekit US$8/月、IdeaBuddy US$5/月起、PrometAI US$55/月（竞品官网）。</li>
+    <li id="r8">AI 编程 / 自动建站：Anthropic Claude（Claude Code）、Cursor、Lovable、Vercel v0、Bolt.new、Replit Agent 等已实现“自然语言→可部署应用”；AI 代码工具与无代码/低代码、网站建设市场（合计 US$13–37B 级、CAGR ~20–25%，Grand View / Fortune / Gartner 区间）。竞品定价：Lovable US$25/月起、Vercel v0 US$20/月起、Replit Core US$20/月（竞品官网）。</li>
   </ol>
 
   <h3>关键假设与方法论</h3>
   <ul style="font-size:11.5px;">
-    <li><strong>财务自下而上</strong>：收入 = 付费用户 × ARPU + 按量/企业；付费用户 = 注册 × 转化率；毛利随 token 降价与缓存提升（55%→75%）。</li>
+    <li><strong>闭环框架</strong>：产品 = 热词挖掘（需求验证）→ AI 商业分析（机会/评分/BP）→ AI 编程自动建站并部署，上线数据回流形成飞轮（第 7 节）。</li>
+    <li><strong>财务自下而上</strong>：收入 = 付费用户 × ARPU + 按量/企业；付费用户 = 注册 × 转化率；毛利随 token 降价与缓存提升（55%→75%）。<strong>基准按“订阅+按量”保守口径，建站/托管增量列为上行、不计入基准</strong>。</li>
     <li><strong>种子回报双口径</strong>：账面 = 逐年估值 × 净持股 / 成本；风险调整 = Σ(现金退出情景概率 × 现金 MOIC)。</li>
     <li><strong>胜率与盈亏比</strong>：胜率 = 盈利现金退出概率（28%）；盈亏比 =（平均盈利倍数−1）/（1−平均亏损回收）= 3.64/0.90 ≈ 4.0。</li>
     <li><strong>年化口径</strong>：成功条件年化 = 平均盈利 MOIC<sup>1/5</sup>−1 ≈ 36%；风险调整年化 = EV<sup>1/5</sup>−1 ≈ 6.5%。</li>

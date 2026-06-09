@@ -3,9 +3,10 @@ import React, { useState } from 'react';
 interface LoginFormProps {
   locale: 'zh' | 'en';
   translations: any;
+  redirectTo?: string;
 }
 
-export function LoginForm({ locale, translations }: LoginFormProps) {
+export function LoginForm({ locale, translations, redirectTo = '/' }: LoginFormProps) {
   const t = translations.auth;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -27,7 +28,8 @@ export function LoginForm({ locale, translations }: LoginFormProps) {
       const data = await res.json();
       
       if (data.success) {
-        window.location.href = '/';
+        const target = /^\/(?!\/)/.test(redirectTo) ? redirectTo : '/';
+        window.location.href = target;
       } else {
         setError(data.error || t.errors.generic);
       }

@@ -60,6 +60,7 @@ function expect(cond, req, name, okDetail, failDetail) {
 }
 
 let DB_UP = false;
+let authCookie = '';
 
 async function run() {
   console.log(`\n=== Trend Now live smoke test ===\nTarget: ${BASE_URL}\nTime:   ${new Date().toISOString()}\n`);
@@ -217,6 +218,7 @@ async function run() {
     const setCookie = login.headers.get('set-cookie') || '';
     expect(login.status === 200, 'R1', 'login succeeds with valid creds', `status=${login.status}`, `status=${login.status}`);
     expect(/httponly/i.test(setCookie), 'R12', 'session cookie is HttpOnly', 'httponly set', `set-cookie=${setCookie.slice(0, 80)}`);
+    authCookie = (setCookie.match(/session_token=[^;]+/) || [''])[0];
     const badLogin = await http('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: cred.email, password: 'WrongPass123' }) });
     expect(badLogin.status === 401, 'R1', 'login rejects wrong password (401)', `status=${badLogin.status}`, `status=${badLogin.status}`);
     const fb = await http('/api/feedback/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'E2E Tester', email: 'e2e@example.com', subject: 'Automated test', message: 'This is an automated end-to-end feedback test message.' }) });
@@ -304,6 +306,29 @@ async function run() {
   expect(llmHealth.status === 200 && llmHealthJson?.success === true && typeof llmHealthJson?.count === 'number',
     'R-BP12', 'LLM health endpoint reports rotation', `configured=${llmHealthJson?.configured} count=${llmHealthJson?.count}`,
     `status=${llmHealth.status}`);
+
+  // R-BP14: guest access to the gated flagship deck must redirect to /login.
+  const flagshipGuest = await http('/business-plan', { headers: { Cookie: 'locale=zh' } });
+  const guestLoc = flagshipGuest.headers.get('location') || '';
+  expect([301, 302, 307, 308].includes(flagshipGuest.status) && /\/login/.test(guestLoc),
+    'R-BP14', 'guest /business-plan redirects to login', `status=${flagshipGuest.status} -> ${guestLoc}`,
+    `status=${flagshipGuest.status} location=${guestLoc}`);
+
+  // R-BP15: authenticated access returns the deck (200) with the 3-stage closed-loop narrative.
+  if (DB_UP && authCookie) {
+    const flagshipAuth = await http('/business-plan', { headers: { Cookie: `${authCookie}; locale=zh` } });
+    const hasDeck = flagshipAuth.body.includes('谷歌热词全自动') && flagshipAuth.body.includes('商业计划书');
+    const hasLoop = flagshipAuth.body.includes('AI 自动建站')
+      || flagshipAuth.body.includes('商业闭环')
+      || flagshipAuth.body.includes('Stage 3');
+    const hasToolbar = flagshipAuth.body.includes('bp-toolbar');
+    expect(flagshipAuth.status === 200 && hasDeck && hasLoop && hasToolbar,
+      'R-BP15', 'authed /business-plan serves closed-loop deck', `deck=${hasDeck} loop=${hasLoop} toolbar=${hasToolbar}`,
+      `status=${flagshipAuth.status} deck=${hasDeck} loop=${hasLoop} toolbar=${hasToolbar}`);
+  } else {
+    record('R-BP15', 'authed /business-plan serves closed-loop deck', 'BLOCKED',
+      !authCookie ? 'no auth cookie (login blocked)' : 'DB down (Neon quota)');
+  }
 
   // R-BP7/8/9: authenticated cron run (only when E2E_CRON_SECRET is provided).
   const E2E_CRON_SECRET = process.env.E2E_CRON_SECRET;

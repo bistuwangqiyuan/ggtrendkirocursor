@@ -31,6 +31,9 @@ pnpm-debug.log*
 tests/e2e/last-run.json
 tests/e2e/last-run.md
 
+# BP QA screenshots (regenerable via bp/qa-screenshot.mjs)
+bp/assets/qa/
+
 # local scratch / secrets (never commit)
 tmp-*
 *.secret.txt

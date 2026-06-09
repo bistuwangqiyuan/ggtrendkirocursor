@@ -10,6 +10,7 @@ export const zh = {
     about: '关于我们',
     contact: '联系我们',
     bp: '商业计划书',
+    flagship: '本项目商业计划书',
     login: '登录',
     register: '注册',
     logout: '退出'

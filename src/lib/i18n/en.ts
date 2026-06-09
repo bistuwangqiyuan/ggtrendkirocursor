@@ -10,6 +10,7 @@ export const en = {
     about: 'About',
     contact: 'Contact',
     bp: 'Business Plans',
+    flagship: 'Our Business Plan',
     login: 'Login',
     register: 'Register',
     logout: 'Logout'

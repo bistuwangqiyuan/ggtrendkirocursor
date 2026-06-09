@@ -2,6 +2,8 @@
 
 投资人级中文商业计划书，Apple Keynote / macOS 视觉语言，自包含 HTML 一键渲染为高保真 A4 PDF。
 
+**核心叙事：从热词到上线产品的全自动商业闭环** —— ① 谷歌热词挖掘（需求验证）→ ② AI 商业分析（机会脑暴 / 六维评分 / ROI 排序 / 自动 BP）→ ③ AI 编程（Claude）自动生成并部署服务网站；上线产品的真实使用与收入数据回流，持续优化前端信号，形成数据飞轮。
+
 ## 目录结构
 
 ```
@@ -9,12 +11,12 @@ bp/
 ├── business-plan.html                      # 自包含 BP（内联 CSS + 内联 SVG 图表），可直接双击打开
 ├── render-pdf.mjs                          # Puppeteer 渲染脚本（HTML → A4 PDF，含页码）
 ├── qa-screenshot.mjs                       # 自检脚本（逐页截图 + 溢出检测）
-├── 谷歌热词AI-BP生成网站_商业计划书.pdf    # 最终高保真 PDF（28 页）
+├── 谷歌热词AI-BP生成网站_商业计划书.pdf    # 最终高保真 PDF（29 页）
 ├── README.md
 └── assets/
     ├── cover-hero.png                      # 封面 hero（AI 生成）
-    ├── product-ui.png                      # 产品界面意象（AI 生成）
-    └── engine-flywheel.png                 # 增长飞轮意象（AI 生成）
+    ├── product-ui.png                      # 产品界面意象：三段闭环看板（AI 生成）
+    └── engine-flywheel.png                 # 三段式闭环数据飞轮意象（AI 生成）
 ```
 
 ## 重新生成 PDF
@@ -71,5 +73,6 @@ node bp/qa-screenshot.mjs      # 输出 bp/assets/qa/*.png，并打印页数与�
 4. Mordor / Research and Markets / Precedence：生成式 AI 2026 市场 ≈ US$28–55B，CAGR ~30–37%。
 5. World Bank / Creately 等：全球存量 startup &gt;1.5 亿、每年新创 ~5,000 万。
 6. 商业计划软件市场 ≈ US$2.6B（2026）；竞品定价（LivePlan / Upmetrics / PrometAI 等官网）。
+7. AI 编程 / 自动建站：Anthropic Claude（Claude Code）、Cursor、Lovable、Vercel v0、Bolt、Replit 等；AI 代码工具 + 无代码/建站市场合计 US$13–37B 级、CAGR ~20–25%；竞品定价（Lovable / v0 / Replit 官网）。
 
 > 免责声明：本文件含前瞻性陈述，实际结果可能存在重大差异；不构成任何要约或投资建议。
