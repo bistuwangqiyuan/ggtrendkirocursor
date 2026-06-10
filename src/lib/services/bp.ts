@@ -67,6 +67,23 @@ export function parseWinRatePercent(s: unknown): number | null {
 export const WIN_RATE_OPTIMISM_THRESHOLD = 40;
 
 /**
+ * Parse the first signed number out of a percent-like string, e.g.
+ * "约6.5%" -> 6.5, "-12%（悲观）" -> -12. Sign matters for risk-adjusted
+ * returns (unlike parseWinRatePercent which takes the optimistic max).
+ */
+export function parseSignedPercent(s: unknown): number | null {
+  if (typeof s !== 'string') return null;
+  const m = s.match(/-?\d+(?:\.\d+)?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Whitelisted sort options for the report list. */
+export type BpListSortBy = 'createdAt' | 'riskAdjusted';
+export type BpListSortOrder = 'asc' | 'desc';
+
+/**
  * Validate the raw LLM JSON against the BP contract and normalize it:
  * - recompute every weighted score (do not trust the model's self-report)
  * - rank opportunities by weighted score and mark the top one as selected
@@ -823,8 +840,17 @@ export class BpService {
     return { success: true, data: report };
   }
 
-  /** Paginated list of reports (without the large content JSON). */
-  async list(page = 1, pageSize = 20): Promise<Result<PaginatedBpReports, BpError>> {
+  /**
+   * Paginated list of reports (without the large content JSON).
+   * Exposes the risk-adjusted annualized return (resolved through
+   * canonical_report_id for dedup pointers) and supports sorting by it.
+   */
+  async list(
+    page = 1,
+    pageSize = 20,
+    sortBy: BpListSortBy = 'createdAt',
+    sortOrder: BpListSortOrder = 'desc'
+  ): Promise<Result<PaginatedBpReports, BpError>> {
     const safePage = Math.max(1, page);
     const safeSize = Math.min(100, Math.max(1, pageSize));
     const offset = (safePage - 1) * safeSize;
@@ -833,9 +859,24 @@ export class BpService {
     const totalItems = parseInt(countRow?.total || '0', 10);
     const totalPages = Math.max(1, Math.ceil(totalItems / safeSize));
 
+    const dir = sortOrder === 'asc' ? 'ASC' : 'DESC';
+    // Whitelist-built ORDER BY (no user input is interpolated directly).
+    const orderBy = sortBy === 'riskAdjusted'
+      ? `risk_adjusted_num ${dir} NULLS LAST, r.created_at DESC`
+      : `r.created_at ${dir}`;
+
+    // Duplicate reports store no content; resolve via the canonical report.
+    // risk_adjusted_num extracts the first signed number ("约6.5%" -> 6.5) for sorting.
     const rows = await query<any>(
-      `SELECT id, keyword, title, status, selected_opportunity, created_at
-       FROM bp_reports ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT r.id, r.keyword, r.title, r.status, r.selected_opportunity, r.created_at,
+              COALESCE(r.content_json, c.content_json)->'seedReturn'->>'riskAdjustedAnnualized' AS risk_adjusted,
+              NULLIF(substring(
+                COALESCE(r.content_json, c.content_json)->'seedReturn'->>'riskAdjustedAnnualized'
+                from '-?[0-9]+\\.?[0-9]*'
+              ), '')::numeric AS risk_adjusted_num
+       FROM bp_reports r
+       LEFT JOIN bp_reports c ON r.canonical_report_id = c.id
+       ORDER BY ${orderBy} LIMIT $1 OFFSET $2`,
       [safeSize, offset]
     );
 
@@ -845,6 +886,7 @@ export class BpService {
       title: r.title ?? undefined,
       status: r.status,
       selectedOpportunity: r.selected_opportunity ?? undefined,
+      riskAdjustedAnnualized: r.risk_adjusted ?? undefined,
       createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
     }));
 

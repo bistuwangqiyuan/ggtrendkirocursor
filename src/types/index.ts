@@ -189,6 +189,8 @@ export interface BpReportListItem {
   title?: string;
   status: BpStatus;
   selectedOpportunity?: string;
+  /** Risk-adjusted annualized return (display string from the report content). */
+  riskAdjustedAnnualized?: string;
   createdAt: Date;
 }
 

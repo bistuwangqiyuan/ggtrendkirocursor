@@ -261,6 +261,17 @@ async function run() {
     'R-BP1', '/bp list page renders (SSR)', `status=${bpPage.status}`,
     `status=${bpPage.status}`);
 
+  // R-BP16: /bp list sortable by risk-adjusted annualized (page + API).
+  const bpSorted = await http('/bp?sort=riskAdjusted&order=desc', { headers: { Cookie: 'locale=zh' } });
+  expect(bpSorted.status === 200 && bpSorted.body.includes('sort-risk-adjusted') && bpSorted.body.includes('风险调整年化'),
+    'R-BP16', '/bp sorts by risk-adjusted annualized', `status=${bpSorted.status}`,
+    `status=${bpSorted.status} marker=${bpSorted.body.includes('sort-risk-adjusted')}`);
+  const bpListApiSorted = await http('/api/bp/list?sort=riskAdjusted&order=asc&pageSize=5');
+  const bpListSortedJson = jsonOf(bpListApiSorted.body);
+  expect(bpListApiSorted.status === 200 && bpListSortedJson?.success === true && Array.isArray(bpListSortedJson?.data?.reports),
+    'R-BP16', 'bp list API accepts riskAdjusted sort', `count=${bpListSortedJson?.data?.reports?.length}`,
+    `status=${bpListApiSorted.status}`);
+
   // R-BP2: header exposes the BP nav link.
   expect(home.body.includes('/bp') && (home.body.includes('商业计划书') || home.body.includes('Business Plans')),
     'R-BP2', 'header exposes BP nav link', 'nav present', 'nav missing');

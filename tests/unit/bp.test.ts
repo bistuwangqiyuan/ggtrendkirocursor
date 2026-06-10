@@ -10,6 +10,7 @@ import {
   normalizeBusinessModel,
   pickCanonicalByBusinessModel,
   parseWinRatePercent,
+  parseSignedPercent,
   WIN_RATE_OPTIMISM_THRESHOLD,
   DEDUPE_WINDOW_DAYS,
   isWithinDays,
@@ -142,6 +143,27 @@ describe('parseWinRatePercent', () => {
   test('threshold is a sane percentage', () => {
     expect(WIN_RATE_OPTIMISM_THRESHOLD).toBeGreaterThan(0);
     expect(WIN_RATE_OPTIMISM_THRESHOLD).toBeLessThan(100);
+  });
+});
+
+describe('parseSignedPercent (risk-adjusted annualized sorting)', () => {
+  test('parses a positive percentage with prose around it', () => {
+    expect(parseSignedPercent('约6.5%（中性情景）')).toBe(6.5);
+  });
+
+  test('keeps the negative sign', () => {
+    expect(parseSignedPercent('-12%')).toBe(-12);
+    expect(parseSignedPercent('约-8.5%')).toBe(-8.5);
+  });
+
+  test('takes the first number of a range', () => {
+    expect(parseSignedPercent('5%-10%')).toBe(5);
+  });
+
+  test('returns null for non-numeric or non-string input', () => {
+    expect(parseSignedPercent('未知')).toBeNull();
+    expect(parseSignedPercent(undefined)).toBeNull();
+    expect(parseSignedPercent(null)).toBeNull();
   });
 });
 
