@@ -43,7 +43,7 @@
 
 - 实现：[netlify/functions/trends-collector.ts](../../../netlify/functions/trends-collector.ts)，`schedule('50 */6 * * *', ...)`，UTC 每 6 小时的第 50 分（比 BP 批量生成早约 10 分钟，先补充词池）。
 - 行为：调用 `POST /api/trends/collect`（`Authorization: Bearer ${CRON_SECRET}`）→ `trendsCollector.collect()`：
-  1. 抓取 Google Trends 每日热搜 RSS（`https://trends.google.com/trends/trendingsearches/daily/rss?geo=...`），默认地区 `US,GB,CA,AU,IN,SG`；
+  1. 抓取 Google Trends 实时热搜 RSS（`https://trends.google.com/trending/rss?geo=...`），默认地区 `US,GB,CA,AU,IN,SG`；
   2. 解析关键词与 `approx_traffic`（"200K+"→200000），按地区 24h 去重后写入活跃趋势表，采集时间戳 = `NOW()`；
   3. `growth_rate` 由流量分级保守估算（界定 74-100，仅作内部评分信号，避免乐观偏差），确保新词在 BP 选词器中 > `MIN_TREND_SCORE`。
 - 成本：**0 LLM token**。解决「词池静态、7 天去重后无新词可用」与 R3 采集时效问题。

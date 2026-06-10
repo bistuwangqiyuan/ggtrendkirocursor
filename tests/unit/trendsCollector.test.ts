@@ -22,6 +22,9 @@ const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
     <title>Acme &amp; Co launch</title>
     <ht:approx_traffic>200,000+</ht:approx_traffic>
     <pubDate>Wed, 10 Jun 2026 00:00:00 -0700</pubDate>
+    <ht:news_item>
+      <ht:news_item_title>Some unrelated news headline</ht:news_item_title>
+    </ht:news_item>
   </item>
   <item>
     <title><![CDATA[New iPhone]]></title>

@@ -10,7 +10,7 @@ import { query, getTrendsTableName, getTimestampColumnName } from '../db/client'
  * and the BP picker both see fresh, eligible keywords.
  *
  * The RSS feed is public and unauthenticated:
- *   https://trends.google.com/trends/trendingsearches/daily/rss?geo=US
+ *   https://trends.google.com/trending/rss?geo=US
  */
 
 /** Geographies to harvest (English-language markets keep keywords usable). */
@@ -151,7 +151,7 @@ export function dedupeRssItems(items: RssTrendItem[]): RssTrendItem[] {
 }
 
 async function fetchRss(geo: string): Promise<string | null> {
-  const url = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${encodeURIComponent(geo)}`;
+  const url = `https://trends.google.com/trending/rss?geo=${encodeURIComponent(geo)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), RSS_TIMEOUT_MS);
   try {
