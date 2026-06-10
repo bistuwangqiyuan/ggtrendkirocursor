@@ -4,84 +4,146 @@ import { getTranslations } from '../../lib/i18n';
 const locale = Astro.locals.locale || 'zh';
 const user = Astro.locals.user;
 const t = getTranslations(locale);
-
 const { currentPath } = Astro.props;
+
+const navItems = [
+  { href: '/', label: t.nav.home, match: (p: string) => p === '/' },
+  { href: '/product', label: t.nav.product, match: (p: string) => p === '/product' },
+  { href: '/pricing', label: t.nav.pricing, match: (p: string) => p === '/pricing' },
+  { href: '/trends', label: t.nav.trends, match: (p: string) => p === '/trends' || p.startsWith('/trends') },
+  { href: '/bp', label: t.nav.bp, match: (p: string) => p.startsWith('/bp') },
+  { href: '/business-plan', label: t.nav.flagship, match: (p: string) => p === '/business-plan' },
+];
 ---
 
-<header class="py-6 flex items-center justify-between">
-  <a href="/" class="text-2xl font-bold text-white flex items-center gap-2">
-    <span class="bg-blue-600 text-white p-1 rounded">T</span>
+<header class="py-5 flex items-center justify-between relative z-50">
+  <a href="/" class="text-xl font-bold text-white flex items-center gap-2 no-underline shrink-0">
+    <span class="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center text-sm font-extrabold">T</span>
     Trend Now
   </a>
 
-  <nav class="hidden md:flex items-center gap-6">
-    <a href="/" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/' ? 'text-blue-400' : 'text-gray-300'}`}>
-      {t.nav.home}
-    </a>
-    <a href="/bp" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath?.startsWith('/bp') ? 'text-blue-400' : 'text-gray-300'}`}>
-      {t.nav.bp}
-    </a>
-    <a href="/business-plan" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/business-plan' ? 'text-blue-400' : 'text-gray-300'}`}>
-      {t.nav.flagship}
-    </a>
-    <a href="/about" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/about' ? 'text-blue-400' : 'text-gray-300'}`}>
-      {t.nav.about}
-    </a>
-    <a href="/contact" class={`text-sm font-medium hover:text-blue-400 transition-colors ${currentPath === '/contact' ? 'text-blue-400' : 'text-gray-300'}`}>
-      {t.nav.contact}
-    </a>
+  <!-- Desktop nav -->
+  <nav class="hidden lg:flex items-center gap-5" aria-label="Main">
+    {navItems.map(item => (
+      <a
+        href={item.href}
+        class={`nav-link ${item.match(currentPath) ? 'nav-link-active' : ''}`}
+      >
+        {item.label}
+      </a>
+    ))}
   </nav>
 
-  <div class="flex items-center gap-4">
-    <!-- Language Switcher -->
-    <div class="flex items-center bg-gray-800 rounded-full p-1">
-      <button 
-        class={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'zh' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+  <div class="flex items-center gap-3">
+    <!-- Language -->
+    <div class="flex items-center bg-gray-800/80 rounded-full p-0.5 border border-gray-700/50">
+      <button
+        type="button"
+        class={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'zh' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
         onclick="document.cookie='locale=zh; path=/; max-age=31536000'; window.location.reload()"
-      >
-        中
-      </button>
-      <button 
-        class={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+        aria-label="中文"
+      >中</button>
+      <button
+        type="button"
+        class={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
         onclick="document.cookie='locale=en; path=/; max-age=31536000'; window.location.reload()"
-      >
-        EN
-      </button>
+        aria-label="English"
+      >EN</button>
     </div>
 
-    <!-- Auth Menu -->
-    {user ? (
-      <div class="relative group">
-        <button class="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-white">
-          {user.username}
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-        </button>
-        <div class="absolute right-0 mt-2 w-48 bg-gray-900 border border-gray-700 rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-          <button 
-            id="logout-btn"
-            class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white rounded-md"
-          >
-            {t.nav.logout}
+    <!-- Auth (desktop) -->
+    <div class="hidden sm:flex items-center gap-3">
+      {user ? (
+        <div class="relative group">
+          <button type="button" class="flex items-center gap-1.5 text-sm font-medium text-gray-300 hover:text-white">
+            {user.username}
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </button>
+          <div class="absolute right-0 mt-2 w-44 bg-gray-900 border border-gray-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+            <button id="logout-btn" type="button" class="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-white rounded-lg">
+              {t.nav.logout}
+            </button>
+          </div>
         </div>
-      </div>
-    ) : (
-      <div class="flex items-center gap-4">
-        <a href="/login" class="text-sm font-medium text-gray-300 hover:text-white">{t.nav.login}</a>
-        <a href="/register" class="text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors">{t.nav.register}</a>
-      </div>
-    )}
+      ) : (
+        <>
+          <a href="/login" class="nav-link text-sm">{t.nav.login}</a>
+          <a href="/register" class="btn text-sm !py-2 !px-4 !rounded-lg">{t.nav.register}</a>
+        </>
+      )}
+    </div>
+
+    <!-- Mobile menu toggle -->
+    <button
+      type="button"
+      id="mobile-menu-btn"
+      class="lg:hidden p-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+      aria-expanded="false"
+      aria-controls="mobile-menu"
+      data-label-open={t.common.menuOpen}
+      data-label-close={t.common.menuClose}
+    >
+      <svg id="menu-icon-open" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <svg id="menu-icon-close" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+    </button>
   </div>
 </header>
 
+<!-- Mobile menu panel -->
+<div id="mobile-menu" class="hidden lg:hidden fixed inset-0 z-40" aria-hidden="true">
+  <div id="mobile-menu-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+  <nav id="mobile-menu-panel" class="absolute top-0 right-0 h-full w-72 max-w-[85vw] bg-gray-950 border-l border-gray-800 p-6 pt-20 flex flex-col gap-1 motion-slide-up" aria-label="Mobile">
+    {navItems.map(item => (
+      <a
+        href={item.href}
+        class={`block px-4 py-3 rounded-lg text-base font-medium no-underline transition-colors ${item.match(currentPath) ? 'bg-blue-600/15 text-blue-400' : 'text-gray-300 hover:bg-gray-800 hover:text-white'}`}
+      >
+        {item.label}
+      </a>
+    ))}
+    <div class="border-t border-gray-800 my-4"></div>
+    {user ? (
+      <button id="mobile-logout-btn" type="button" class="block w-full text-left px-4 py-3 rounded-lg text-base text-gray-300 hover:bg-gray-800">
+        {t.nav.logout}
+      </button>
+    ) : (
+      <>
+        <a href="/login" class="block px-4 py-3 rounded-lg text-base text-gray-300 hover:bg-gray-800 no-underline">{t.nav.login}</a>
+        <a href="/register" class="block px-4 py-3 rounded-lg text-base bg-blue-600 text-white text-center no-underline mt-2">{t.nav.register}</a>
+      </>
+    )}
+  </nav>
+</div>
+
 <script>
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('mobile-menu-btn');
+  const menu = document.getElementById('mobile-menu');
+  const backdrop = document.getElementById('mobile-menu-backdrop');
+  const iconOpen = document.getElementById('menu-icon-open');
+  const iconClose = document.getElementById('menu-icon-close');
+
+  function toggleMenu(open?: boolean) {
+    const isOpen = open ?? menu?.classList.contains('hidden');
+    menu?.classList.toggle('hidden', !isOpen);
+    menu?.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+    btn?.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    iconOpen?.classList.toggle('hidden', isOpen);
+    iconClose?.classList.toggle('hidden', !isOpen);
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+  }
+
+  btn?.addEventListener('click', () => toggleMenu());
+  backdrop?.addEventListener('click', () => toggleMenu(false));
+  menu?.querySelectorAll('a').forEach(a => a.addEventListener('click', () => toggleMenu(false)));
+
+  async function logout() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
       window.location.href = '/';
-    } catch (error) {
-      console.error('Logout failed', error);
+    } catch (e) {
+      console.error('Logout failed', e);
     }
-  });
+  }
+  document.getElementById('logout-btn')?.addEventListener('click', logout);
+  document.getElementById('mobile-logout-btn')?.addEventListener('click', logout);
 </script>
-

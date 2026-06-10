@@ -81,7 +81,8 @@ async function run() {
   const home = await http('/', { headers: { Cookie: 'locale=zh' } });
   expect(home.status === 200, 'R2', 'homepage returns 200', `status=${home.status}`, `status=${home.status}`);
   expect(/<html[^>]*lang=/.test(home.body), 'R5', 'homepage has html lang attribute', 'lang present', 'missing lang');
-  expect(home.body.includes('趋势数据'), 'R2', 'homepage SSR renders trends title (zh)', 'title found', 'title missing');
+  expect(home.body.includes('data-page="marketing-home"') || home.body.includes('从热搜发现机会'),
+    'R2', 'homepage SSR renders marketing landing (zh)', 'hero found', 'marketing hero missing');
   expect(home.body.includes('Trend Now'), 'R7', 'homepage renders header brand', 'brand found', 'brand missing');
   expect(home.body.includes('/privacy') && home.body.includes('/terms'), 'R7', 'homepage renders footer links', 'footer links found', 'footer links missing');
   expect(/<meta[^>]+name=["']viewport["']/.test(home.body), 'R6', 'homepage has responsive viewport meta', 'viewport present', 'viewport missing');
@@ -96,10 +97,10 @@ async function run() {
   // ---- Req 4: i18n ----
   // Use the <title> tag (locale-specific) to avoid matching the bilingual keywords meta tag.
   const homeEn = await http('/', { headers: { Cookie: 'locale=en' } });
-  expect(homeEn.status === 200 && homeEn.body.includes('<title>Trends Data | Trend Now</title>'),
+  expect(homeEn.status === 200 && homeEn.body.includes('<title>Home | Trend Now</title>'),
     'R4', 'english locale renders english UI', 'en title rendered',
-    `status=${homeEn.status} titleEn=${homeEn.body.includes('<title>Trends Data | Trend Now</title>')}`);
-  expect(home.body.includes('<title>趋势数据 | Trend Now</title>') && home.body.includes('首页'),
+    `status=${homeEn.status} titleEn=${homeEn.body.includes('<title>Home | Trend Now</title>')}`);
+  expect(home.body.includes('<title>首页 | Trend Now</title>') && home.body.includes('首页'),
     'R4', 'chinese locale renders chinese UI', 'zh title + nav found', 'zh title/nav missing');
 
   // ---- Req 7: static pages ----
@@ -264,14 +265,66 @@ async function run() {
   expect(home.body.includes('/bp') && (home.body.includes('商业计划书') || home.body.includes('Business Plans')),
     'R-BP2', 'header exposes BP nav link', 'nav present', 'nav missing');
 
-  // R-BP3: homepage shows the "generate BP" CTA when trend data is present.
+  // R-BP3: /trends dashboard shows the generate-BP CTA when trend data is present.
+  const trendsPage = await http('/trends', { headers: { Cookie: 'locale=zh' } });
+  expect(trendsPage.status === 200 && trendsPage.body.includes('data-page="trends"'),
+    'R-SITE1', '/trends dashboard renders', `status=${trendsPage.status}`, `status=${trendsPage.status}`);
   if (DB_UP) {
-    expect(home.body.includes('generate-bp-btn') || home.body.includes('一键生成商业计划书'),
-      'R-BP3', 'homepage shows generate-BP CTA', 'cta present',
+    expect(trendsPage.body.includes('generate-bp-btn') || trendsPage.body.includes('一键生成商业计划书'),
+      'R-BP3', '/trends shows generate-BP CTA', 'cta present',
       'cta missing (no top trend?)');
   } else {
-    record('R-BP3', 'homepage shows generate-BP CTA', 'BLOCKED', 'DB down (Neon quota)');
+    record('R-BP3', '/trends shows generate-BP CTA', 'BLOCKED', 'DB down (Neon quota)');
   }
+
+  // ---- Marketing site pages (zh + en) ----
+  const marketingPages = [
+    ['/product', 'data-page="product"', 'R-SITE2'],
+    ['/pricing', 'data-page="pricing"', 'R-SITE3'],
+    ['/faq', 'data-page="faq"', 'R-SITE4'],
+  ];
+  for (const [path, marker, req] of marketingPages) {
+    const rZh = await http(path, { headers: { Cookie: 'locale=zh' } });
+    expect(rZh.status === 200 && rZh.body.includes(marker), req, `${path} renders (zh)`, `status=${rZh.status}`, `status=${rZh.status}`);
+    const rEn = await http(path, { headers: { Cookie: 'locale=en' } });
+    expect(rEn.status === 200 && rEn.body.includes(marker), req, `${path} renders (en)`, `status=${rEn.status}`, `status=${rEn.status}`);
+  }
+
+  // Pricing tiers match deck numbers
+  const pricingZh = await http('/pricing', { headers: { Cookie: 'locale=zh' } });
+  expect(pricingZh.body.includes('¥99') && pricingZh.body.includes('¥299') && pricingZh.body.includes('¥39'),
+    'R-SITE5', 'pricing page shows deck tier prices', 'prices present', 'pricing tiers missing');
+
+  // Legal pages have fixed last-updated (not dynamic today-only)
+  const privacyZh = await http('/privacy', { headers: { Cookie: 'locale=zh' } });
+  expect(privacyZh.body.includes('2026年6月10日') && privacyZh.body.includes('data-page="privacy"'),
+    'R-SITE6', 'privacy policy has fixed date + sections (zh)', 'ok', 'privacy incomplete');
+  const termsEn = await http('/terms', { headers: { Cookie: 'locale=en' } });
+  expect(termsEn.body.includes('June 10, 2026') && termsEn.body.includes('data-page="terms"'),
+    'R-SITE7', 'terms has fixed date + sections (en)', 'ok', 'terms incomplete');
+
+  // Removed Netlify starter demos return 404
+  const edgeDemo = await http('/edge');
+  expect(edgeDemo.status === 404, 'R-SITE8', '/edge starter removed (404)', `status=${edgeDemo.status}`, `status=${edgeDemo.status}`);
+  const blobsDemo = await http('/blobs');
+  expect(blobsDemo.status === 404, 'R-SITE9', '/blobs starter removed (404)', `status=${blobsDemo.status}`, `status=${blobsDemo.status}`);
+
+  // Sitemap includes new routes
+  expect(sitemap.body.includes('/trends') && sitemap.body.includes('/product') && sitemap.body.includes('/pricing') && sitemap.body.includes('/faq') && sitemap.body.includes('/bp'),
+    'R-SITE10', 'sitemap lists marketing + product routes', 'routes present', 'sitemap stale');
+
+  // Mobile menu toggle present in header
+  expect(home.body.includes('mobile-menu-btn') && home.body.includes('mobile-menu'),
+    'R-SITE11', 'header has mobile navigation', 'mobile nav present', 'mobile nav missing');
+
+  // Hero marker on marketing homepage
+  expect(home.body.includes('data-testid="hero-headline"'),
+    'R-SITE12', 'marketing homepage hero marker', 'hero present', 'hero missing');
+
+  // Nav includes Product and Pricing links
+  expect(home.body.includes('/product') && home.body.includes('/pricing') && home.body.includes('/trends'),
+    'R-SITE13', 'nav includes product/pricing/trends links', 'links present', 'nav links missing');
+
 
   // R-BP4: cron without secret must be rejected (401 when secret configured, 503 when not).
   const cronNoAuth = await http('/api/bp/cron', { method: 'POST', headers: { 'Content-Type': 'application/json' } });

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 interface TrendsFiltersProps {
+  basePath?: string;
   initialFilters: {
     timeRange: string;
     collectedWithin: string;
@@ -14,7 +15,7 @@ interface TrendsFiltersProps {
 
 const COLLECTED_WITHIN_OPTIONS = ['6h', '12h', '24h', '48h'] as const;
 
-export function TrendsFilters({ initialFilters, categories, locale, translations }: TrendsFiltersProps) {
+export function TrendsFilters({ basePath = '/trends', initialFilters, categories, locale, translations }: TrendsFiltersProps) {
   const [filters, setFilters] = useState(initialFilters);
   const [isPending, setIsPending] = useState(false);
 
@@ -39,7 +40,7 @@ export function TrendsFilters({ initialFilters, categories, locale, translations
     // Since this is a React component, standard window.location works but causes full reload unless intercepted.
     // Astro 5 ClientRouter intercepts popstate, but pushState might not trigger it automatically.
     // Actually, modifying query params and creating a new URL, then navigating to it.
-    window.location.href = `/?${params.toString()}`;
+    window.location.href = `${basePath}?${params.toString()}`;
   };
 
   const handleChange = (key: keyof typeof filters, value: string) => {

@@ -1,22 +1,48 @@
 ---
 import { getTranslations } from '../../lib/i18n';
+import { NewsletterForm } from '../footer/NewsletterForm';
 
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
 const year = new Date().getFullYear();
+const copyright = t.footer.copyright.replace('{year}', String(year));
 ---
 
-<footer class="py-8 mt-12 border-t border-gray-800">
-  <div class="flex flex-col md:flex-row justify-between items-center gap-4">
-    <div class="text-gray-400 text-sm">
-      {t.footer.copyright.replace('2024', year.toString())}
+<footer class="py-12 mt-16 border-t border-gray-800">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-10">
+    <div>
+      <h3 class="text-sm font-semibold text-white mb-4">{t.footer.product}</h3>
+      <ul class="space-y-2.5">
+        <li><a href="/product" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.product}</a></li>
+        <li><a href="/pricing" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.pricing}</a></li>
+        <li><a href="/trends" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.trends}</a></li>
+        <li><a href="/bp" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.bp}</a></li>
+      </ul>
     </div>
-    <div class="flex items-center gap-6">
-      <a href="/about" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.nav.about}</a>
-      <a href="/contact" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.nav.contact}</a>
-      <a href="/privacy" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.footer.privacy}</a>
-      <a href="/terms" class="text-sm text-gray-500 hover:text-blue-400 transition-colors">{t.footer.terms}</a>
+    <div>
+      <h3 class="text-sm font-semibold text-white mb-4">{t.footer.company}</h3>
+      <ul class="space-y-2.5">
+        <li><a href="/about" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.about}</a></li>
+        <li><a href="/contact" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.contact}</a></li>
+        <li><a href="/faq" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.faq}</a></li>
+        <li><a href="/business-plan" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.nav.flagship}</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="text-sm font-semibold text-white mb-4">{t.footer.legal}</h3>
+      <ul class="space-y-2.5">
+        <li><a href="/privacy" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.footer.privacy}</a></li>
+        <li><a href="/terms" class="text-sm text-gray-400 hover:text-blue-400 transition-colors no-underline">{t.footer.terms}</a></li>
+      </ul>
+    </div>
+    <div class="col-span-2 md:col-span-1">
+      <h3 class="text-sm font-semibold text-white mb-1">{t.footer.newsletter.title}</h3>
+      <p class="text-xs text-gray-500">{t.footer.newsletter.subtitle}</p>
+      <NewsletterForm client:load translations={t.footer.newsletter} />
     </div>
   </div>
+  <div class="flex flex-col sm:flex-row justify-between items-center gap-3 pt-6 border-t border-gray-800/60">
+    <p class="text-gray-500 text-sm">{copyright}</p>
+    <a href="/" class="text-sm text-gray-500 hover:text-blue-400 transition-colors no-underline font-semibold">Trend Now</a>
+  </div>
 </footer>
-

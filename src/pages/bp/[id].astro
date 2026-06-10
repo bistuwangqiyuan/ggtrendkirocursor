@@ -219,7 +219,7 @@ const selectedOpp = opportunities.find((o) => o.isSelected);
               <div class="bp-muted bp-mb">{t.bp.seed.roiByYear}</div>
               <div class="bp-chips">
                 {content.seedReturn.bookRoiByYear.map((roi, i) => (
-                  <span class="bp-chip"><span class="bp-muted">Y{i + 1}</span> <span class="bp-mono bp-strong">{roi}%</span></span>
+                  <span class="bp-chip"><span class="bp-muted">{t.bp.seed.year.replace('{n}', String(i + 1))}</span> <span class="bp-mono bp-strong">{roi}%</span></span>
                 ))}
               </div>
             </div>

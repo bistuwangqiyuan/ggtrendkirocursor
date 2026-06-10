@@ -91,6 +91,12 @@ const BASE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_business_model_norm ON bp_reports(business_model_norm)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_opportunities_report_id ON bp_opportunities(report_id)`,
+  `CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_newsletter_subscribers_email ON newsletter_subscribers(email)`,
 ];
 
 // Columns the application code requires on each table.
@@ -100,6 +106,7 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   feedback: ['id', 'user_id', 'name', 'email', 'subject', 'message', 'status', 'created_at'],
   bp_reports: ['id', 'keyword', 'keyword_norm', 'source_trend_id', 'search_volume', 'growth_rate', 'category', 'time_range', 'region', 'rank', 'status', 'title', 'summary', 'selected_opportunity', 'content_json', 'business_model_norm', 'canonical_report_id', 'model', 'tokens_used', 'error', 'user_id', 'created_at', 'updated_at'],
   bp_opportunities: ['id', 'report_id', 'name', 'description', 'score_market', 'score_roi', 'score_onlineability', 'score_feasibility', 'score_speed', 'score_moat', 'weighted_score', 'is_selected', 'rank', 'created_at'],
+  newsletter_subscribers: ['id', 'email', 'created_at'],
 };
 
 // Destructive recreate of the auth/feedback tables (drops mismatched legacy schema).

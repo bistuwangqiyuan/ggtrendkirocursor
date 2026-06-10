@@ -5,33 +5,15 @@ import { getTranslations } from '../lib/i18n';
 
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
-const user = Astro.locals.user;
-
-const initialUser = user ? { name: user.username, email: user.email } : undefined;
 ---
 
 <Layout title={t.feedback.title}>
-  <div class="max-w-2xl mx-auto">
-    <h1 class="text-3xl font-bold mb-8 text-white">{t.feedback.title}</h1>
-    
-    <div class="mb-8 text-gray-400">
-      <p class="mb-4">
-        {locale === 'zh' 
-          ? '我们非常重视您的反馈。如果您有任何问题、建议或发现任何错误，请随时通过下方表单告诉我们。' 
-          : 'We value your feedback. If you have any questions, suggestions, or bugs to report, please let us know using the form below.'}
-      </p>
-      <p class="flex items-center gap-2">
-        <span class="text-gray-300 font-medium">{locale === 'zh' ? '邮箱：' : 'Email:'}</span>
-        <a href="mailto:13426086861@139.com" class="text-blue-400 hover:text-blue-300 underline-offset-4 hover:underline">13426086861@139.com</a>
-      </p>
-    </div>
-
-    <FeedbackForm 
-      client:load 
-      locale={locale} 
-      translations={{ feedback: t.feedback }} 
-      user={initialUser}
-    />
+  <div class="max-w-xl mx-auto" data-page="contact">
+    <h1 class="text-3xl font-bold text-white mb-2">{t.feedback.title}</h1>
+    <p class="text-gray-400 mb-8">
+      {t.feedback.emailLabel}:{' '}
+      <a href="mailto:13426086861@139.com" class="text-blue-400 hover:text-blue-300 no-underline">13426086861@139.com</a>
+    </p>
+    <FeedbackForm client:load translations={t.feedback} />
   </div>
 </Layout>
-

@@ -2,15 +2,19 @@
 
 @theme {
     --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-    --color-primary: #f67280;
-    --color-primary-content: #101828;
-    --color-complementary: #355c7d;
+    --color-primary: #0a84ff;
+    --color-primary-content: #ffffff;
+    --color-accent: #5e5ce6;
+    --color-complementary: #00a6a6;
+    --color-surface: #111827;
+    --color-surface-elevated: #1f2937;
     --background-image-noise: linear-gradient(
             to bottom,
             color-mix(in oklab, var(--color-gray-950) 0%, transparent),
             color-mix(in oklab, var(--color-gray-950) 100%, transparent)
         ),
         url('/images/noise.png');
+    --background-image-hero-glow: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(10, 132, 255, 0.25), transparent);
 }
 
 @layer base {
@@ -22,7 +26,9 @@
         @apply text-2xl font-bold sm:text-3xl;
     }
 
-    a:not(.btn) {
+    /* Underline only in prose/markdown, not nav or marketing cards */
+    .prose a:not(.btn),
+    .markdown a:not(.btn) {
         @apply underline transition hover:opacity-80;
     }
 
@@ -59,10 +65,10 @@
         @apply inline-flex items-center justify-center gap-2 bg-primary text-primary-content cursor-pointer text-center font-semibold no-underline transition-colors;
         padding: var(--btn-py, 0.875rem) var(--btn-px, 1.25rem);
         font-size: var(--btn-font-size, 0.875rem);
-        border-radius: var(--btn-border-radius, 0.25rem);
+        border-radius: var(--btn-border-radius, 0.5rem);
 
         &:hover {
-            @apply bg-primary/85;
+            @apply bg-primary/90;
         }
 
         &:disabled {
@@ -74,5 +80,149 @@
         --btn-font-size: 1.125rem;
         --btn-px: 1.5rem;
         --btn-py: 1.125rem;
+    }
+
+    .btn-outline {
+        @apply inline-flex items-center justify-center gap-2 border border-gray-600 bg-transparent text-white font-semibold no-underline transition-colors rounded-lg px-5 py-2.5 text-sm;
+    }
+
+    .btn-outline:hover {
+        @apply border-gray-500 bg-gray-800/50;
+    }
+
+    .btn-ghost {
+        @apply inline-flex items-center justify-center gap-2 text-blue-400 font-medium no-underline transition-colors hover:text-blue-300;
+    }
+
+    /* Marketing sections */
+    .mkt-section {
+        @apply py-16 sm:py-24;
+    }
+
+    .mkt-section-sm {
+        @apply py-12 sm:py-16;
+    }
+
+    .mkt-eyebrow {
+        @apply text-xs font-semibold uppercase tracking-widest text-blue-400 mb-3;
+    }
+
+    .mkt-headline {
+        @apply text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-tight;
+    }
+
+    .mkt-subhead {
+        @apply text-lg sm:text-xl text-gray-400 mt-4 max-w-2xl leading-relaxed;
+    }
+
+    .mkt-card {
+        @apply rounded-2xl border border-gray-800 bg-gray-900/60 backdrop-blur-sm p-6 sm:p-8 transition-colors hover:border-gray-700;
+    }
+
+    .mkt-card-glass {
+        @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-6 sm:p-8;
+    }
+
+    .mkt-pill {
+        @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/25;
+    }
+
+    .mkt-gradient-text {
+        background: linear-gradient(135deg, #0a84ff 0%, #5e5ce6 55%, #00a6a6 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .mkt-hero-glow {
+        background-image: var(--background-image-hero-glow);
+    }
+
+    .mkt-grid-3 {
+        @apply grid gap-6 sm:grid-cols-2 lg:grid-cols-3;
+    }
+
+    .mkt-grid-2 {
+        @apply grid gap-6 sm:grid-cols-2;
+    }
+
+    .mkt-stat {
+        @apply text-center p-6 rounded-xl border border-gray-800 bg-gray-900/40;
+    }
+
+    .mkt-stat-num {
+        font-size: 1.875rem;
+        font-weight: 700;
+        margin-top: 0.5rem;
+        font-variant-numeric: tabular-nums;
+        background: linear-gradient(135deg, #0a84ff 0%, #5e5ce6 55%, #00a6a6 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .mkt-stat-label {
+        @apply text-sm text-gray-400 mt-2;
+    }
+
+    .mkt-divider {
+        @apply h-px bg-gradient-to-r from-transparent via-gray-700 to-transparent my-16;
+    }
+
+    .mkt-link {
+        @apply text-blue-400 hover:text-blue-300 transition-colors no-underline font-medium;
+    }
+
+    .nav-link {
+        @apply text-sm font-medium text-gray-300 hover:text-blue-400 transition-colors no-underline;
+    }
+
+    .nav-link-active {
+        @apply text-blue-400;
+    }
+
+    .legal-section {
+        @apply mb-8;
+    }
+
+    .legal-section h3 {
+        @apply text-lg font-semibold text-white mb-3;
+    }
+
+    .legal-section p,
+    .legal-section li {
+        @apply text-gray-400 leading-relaxed;
+    }
+
+    .legal-section ul {
+        @apply list-disc pl-5 space-y-2 mt-2;
+    }
+
+    .pricing-card {
+        @apply rounded-2xl border border-gray-800 bg-gray-900/60 p-8 flex flex-col;
+    }
+
+    .pricing-card-featured {
+        @apply border-blue-500/50 bg-gradient-to-b from-blue-950/40 to-gray-900/60 ring-1 ring-blue-500/30;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .motion-fade-in {
+            animation: fadeIn 0.6s ease-out both;
+        }
+
+        .motion-slide-up {
+            animation: slideUp 0.5s ease-out both;
+        }
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
     }
 }

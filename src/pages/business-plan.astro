@@ -2,10 +2,12 @@
 // Login-gated flagship pitch deck. Served as its own print-paged document
 // (single source of truth = the same HTML the PDF is rendered from).
 import deckHtml from '../../bp/business-plan.html?raw';
+import { getTranslations } from '../lib/i18n';
 
 export const prerender = false;
 
 const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
 
 // Gate: guests are sent to login and bounced back here afterwards.
 if (!Astro.locals.user) {
@@ -28,7 +30,10 @@ const toolbar = `
   <span class="bp-tb-title">${docTitle}</span>
   <button class="bp-tb-btn bp-tb-primary" type="button" onclick="window.print()">${exportLabel}</button>
 </div>
+${locale === 'en' ? `<div class="bp-en-notice" role="note">${t.flagship.enNotice}</div>` : ''}
 <style>
+  .bp-en-notice{background:#fff8ef;border-bottom:1px solid #ffe2b8;padding:10px 18px;font-size:13px;color:#9a5b00;
+    font-family:"Inter","Noto Sans SC",-apple-system,sans-serif;text-align:center;}
   .bp-toolbar{position:sticky;top:0;z-index:1000;display:flex;align-items:center;gap:12px;
     height:54px;padding:0 18px;background:rgba(245,245,247,.82);backdrop-filter:saturate(180%) blur(18px);
     -webkit-backdrop-filter:saturate(180%) blur(18px);border-bottom:1px solid #d2d2d7;

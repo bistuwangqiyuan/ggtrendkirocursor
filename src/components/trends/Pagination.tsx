@@ -1,6 +1,7 @@
 import React from 'react';
 
 interface PaginationProps {
+  basePath?: string;
   currentPage: number;
   totalPages: number;
   totalItems: number;
@@ -9,13 +10,13 @@ interface PaginationProps {
   translations: any;
 }
 
-export function Pagination({ currentPage, totalPages, totalItems, pageSize, locale, translations }: PaginationProps) {
+export function Pagination({ basePath = '/trends', currentPage, totalPages, totalItems, pageSize, locale, translations }: PaginationProps) {
   const t = translations.trends.pagination;
 
   const handlePageChange = (page: number) => {
     const params = new URLSearchParams(window.location.search);
     params.set('page', page.toString());
-    window.location.href = `/?${params.toString()}`;
+    window.location.href = `${basePath}?${params.toString()}`;
   };
 
   const startItem = (currentPage - 1) * pageSize + 1;

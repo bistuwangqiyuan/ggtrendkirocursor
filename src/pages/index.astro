@@ -1,172 +1,153 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import TrendsTable from '../components/trends/TrendsTable.astro';
-import { TrendsFilters } from '../components/trends/TrendsFilters';
-import { Pagination } from '../components/trends/Pagination';
-import { trendsService } from '../lib/services/trends';
 import { getTranslations } from '../lib/i18n';
-import type { TrendsQueryParams } from '../types/index';
 
-// Enable SSR back
 export const prerender = false;
 
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
-
-// Parse Query Params
-const urlTimeRange = Astro.url.searchParams.get('timeRange') || '';
-const collectedWithin = Astro.url.searchParams.get('collectedWithin') || '';
-const keyword = Astro.url.searchParams.get('keyword') || '';
-const category = Astro.url.searchParams.get('category') || '';
-const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
-const pageSize = 20;
-
-const params: TrendsQueryParams = {
-    timeRange: urlTimeRange || undefined,
-    collectedWithin: collectedWithin || undefined,
-    keyword: keyword || undefined,
-    category: category || undefined,
-    page,
-    pageSize,
-    sortBy: 'search_volume',
-    sortOrder: 'desc'
-};
-
-// Fetch Data
-const categoriesResult = await trendsService.getCategories();
-let trendsResult = await trendsService.getTrends(params);
-
-// Fallback: if no data for the selected time range, try without time_range filter
-if (trendsResult.success && trendsResult.data.trends.length === 0 && urlTimeRange) {
-    trendsResult = await trendsService.getTrends({
-        ...params,
-        timeRange: undefined
-    });
-}
-
-const timeRange = urlTimeRange || '4h';
-const trendsData = trendsResult.success ? trendsResult.data : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
-const categories = categoriesResult.success ? categoriesResult.data : [];
-const error = !trendsResult.success ? trendsResult.error : null;
-
-const isLoggedIn = !!Astro.locals.user;
-const topTrend = trendsData.trends[0];
+const h = t.home;
 ---
 
-<Layout title={t.trends.title}>
-    <div class="space-y-6">
-        <div class="flex items-center justify-between">
-            <h1 class="text-3xl font-bold tracking-tight text-white">
-                {t.trends.title}
-            </h1>
-            <div class="text-sm text-gray-400">
-                {t.trends.timeRange[timeRange as keyof typeof t.trends.timeRange]}
-            </div>
+<Layout title={h.title} description={t.common.metaDescription}>
+  <div data-page="marketing-home">
+    <!-- Hero -->
+    <section class="relative mkt-section mkt-hero-glow -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8">
+      <div class="max-w-4xl mx-auto text-center motion-fade-in">
+        <p class="mkt-eyebrow">{h.hero.eyebrow}</p>
+        <h1 class="mkt-headline" data-testid="hero-headline">{h.hero.headline}</h1>
+        <p class="mkt-subhead mx-auto">{h.hero.subhead}</p>
+        <div class="flex flex-col sm:flex-row gap-4 justify-center mt-10">
+          <a href="/trends" class="btn btn-lg !rounded-xl">{h.hero.ctaPrimary}</a>
+          <a href="/product" class="btn-outline btn-lg !rounded-xl">{h.hero.ctaSecondary}</a>
         </div>
+      </div>
+      <div class="max-w-5xl mx-auto mt-14 rounded-2xl overflow-hidden border border-gray-800 shadow-2xl">
+        <img src="/images/marketing/hero.png" alt="" class="w-full h-auto" loading="eager" />
+      </div>
+    </section>
 
-        {error && <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-md">{t.auth.errors.generic}</div>}
+    <div class="mkt-divider"></div>
 
-        {topTrend && (
-          <div class="flex flex-col gap-3 rounded-xl border border-blue-500/30 bg-gradient-to-r from-blue-600/15 to-purple-600/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div class="min-w-0">
-              <p class="text-xs font-medium uppercase tracking-wider text-blue-300">{t.bp.subtitle}</p>
-              <p class="mt-1 truncate text-lg font-semibold text-white">
-                #1 · {topTrend.keyword}
-              </p>
-            </div>
-            <button
-              id="generate-bp-btn"
-              data-keyword={topTrend.keyword}
-              data-trend-id={topTrend.id}
-              data-time-range={timeRange}
-              data-logged-in={isLoggedIn ? '1' : '0'}
-              class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <span class="btn-label">{t.bp.generateCta}</span>
-            </button>
+    <!-- Closed loop -->
+    <section class="mkt-section-sm">
+      <div class="text-center mb-12">
+        <p class="mkt-eyebrow">{h.loop.title}</p>
+        <h2 class="text-2xl sm:text-3xl font-bold text-white">{h.loop.subtitle}</h2>
+      </div>
+      <div class="mkt-grid-3">
+        <div class="mkt-card">
+          <span class="mkt-pill mb-4">01</span>
+          <h3 class="text-lg font-semibold text-white mb-2">{h.loop.step1Title}</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">{h.loop.step1Desc}</p>
+        </div>
+        <div class="mkt-card">
+          <span class="mkt-pill mb-4">02</span>
+          <h3 class="text-lg font-semibold text-white mb-2">{h.loop.step2Title}</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">{h.loop.step2Desc}</p>
+        </div>
+        <div class="mkt-card">
+          <span class="mkt-pill mb-4">03</span>
+          <h3 class="text-lg font-semibold text-white mb-2">{h.loop.step3Title}</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">{h.loop.step3Desc}</p>
+        </div>
+      </div>
+      <div class="max-w-3xl mx-auto mt-10 rounded-2xl overflow-hidden border border-gray-800">
+        <img src="/images/marketing/closed-loop.png" alt="" class="w-full h-auto" loading="lazy" />
+      </div>
+    </section>
+
+    <!-- Capabilities -->
+    <section class="mkt-section-sm">
+      <div class="text-center mb-12">
+        <h2 class="text-2xl sm:text-3xl font-bold text-white">{h.capabilities.title}</h2>
+        <p class="mkt-subhead mx-auto">{h.capabilities.subtitle}</p>
+      </div>
+      <div class="mkt-grid-3">
+        {[['c1', h.capabilities.c1Title, h.capabilities.c1Desc], ['c2', h.capabilities.c2Title, h.capabilities.c2Desc], ['c3', h.capabilities.c3Title, h.capabilities.c3Desc], ['c4', h.capabilities.c4Title, h.capabilities.c4Desc], ['c5', h.capabilities.c5Title, h.capabilities.c5Desc], ['c6', h.capabilities.c6Title, h.capabilities.c6Desc]].map(([, title, desc]) => (
+          <div class="mkt-card">
+            <h3 class="text-base font-semibold text-white mb-2">{title}</h3>
+            <p class="text-gray-400 text-sm leading-relaxed">{desc}</p>
           </div>
-        )}
+        ))}
+      </div>
+    </section>
 
-        <div id="bp-gen-message" class="hidden rounded-md border px-4 py-3 text-sm"></div>
+    <!-- Sample report -->
+    <section class="mkt-section-sm">
+      <div class="mkt-grid-2 items-center gap-10">
+        <div>
+          <h2 class="text-2xl sm:text-3xl font-bold text-white mb-4">{h.sample.title}</h2>
+          <p class="text-gray-400 mb-6 leading-relaxed">{h.sample.subtitle}</p>
+          <a href="/bp" class="btn !rounded-xl">{h.sample.cta}</a>
+        </div>
+        <div class="rounded-2xl overflow-hidden border border-gray-800 shadow-xl">
+          <img src="/images/marketing/sample-report.png" alt="" class="w-full h-auto" loading="lazy" />
+        </div>
+      </div>
+    </section>
 
-        <TrendsFilters
-            client:load
-            initialFilters={{ timeRange, collectedWithin, keyword, category }}
-            categories={categories}
-            locale={locale}
-            translations={{ trends: t.trends }}
-        />
+    <!-- Trust -->
+    <section class="mkt-section-sm">
+      <div class="text-center mb-10">
+        <h2 class="text-2xl sm:text-3xl font-bold text-white">{h.trust.title}</h2>
+        <p class="mkt-subhead mx-auto">{h.trust.subtitle}</p>
+      </div>
+      <div class="mkt-grid-3 mb-8">
+        <div class="mkt-stat">
+          <div class="text-lg font-semibold text-white mb-2">{h.trust.t1Title}</div>
+          <p class="text-sm text-gray-400">{h.trust.t1Desc}</p>
+        </div>
+        <div class="mkt-stat">
+          <div class="text-lg font-semibold text-white mb-2">{h.trust.t2Title}</div>
+          <p class="text-sm text-gray-400">{h.trust.t2Desc}</p>
+        </div>
+        <div class="mkt-stat">
+          <div class="text-lg font-semibold text-white mb-2">{h.trust.t3Title}</div>
+          <p class="text-sm text-gray-400">{h.trust.t3Desc}</p>
+        </div>
+      </div>
+      <div class="rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 text-sm text-amber-200/90 text-center max-w-3xl mx-auto">
+        {h.trust.disclaimer}
+      </div>
+    </section>
 
-        <TrendsTable trends={trendsData.trends} locale={locale} />
+    <!-- Pricing + FAQ teasers -->
+    <section class="mkt-section-sm">
+      <div class="mkt-grid-2 gap-8">
+        <div class="mkt-card">
+          <h3 class="text-xl font-bold text-white mb-2">{h.pricingTeaser.title}</h3>
+          <p class="text-gray-400 text-sm mb-1">{h.pricingTeaser.subtitle}</p>
+          <p class="text-blue-400 font-semibold mb-4">{h.pricingTeaser.from}</p>
+          <a href="/pricing" class="mkt-link">{h.pricingTeaser.cta} →</a>
+        </div>
+        <div class="mkt-card">
+          <h3 class="text-xl font-bold text-white mb-4">{h.faqTeaser.title}</h3>
+          <div class="space-y-4 text-sm">
+            <div>
+              <p class="font-medium text-white">{h.faqTeaser.q1}</p>
+              <p class="text-gray-400 mt-1">{h.faqTeaser.a1}</p>
+            </div>
+            <div>
+              <p class="font-medium text-white">{h.faqTeaser.q2}</p>
+              <p class="text-gray-400 mt-1">{h.faqTeaser.a2}</p>
+            </div>
+          </div>
+          <a href="/faq" class="mkt-link mt-4 inline-block">{h.faqTeaser.cta} →</a>
+        </div>
+      </div>
+    </section>
 
-        <Pagination
-            client:load
-            currentPage={trendsData.pagination.currentPage}
-            totalPages={trendsData.pagination.totalPages}
-            totalItems={trendsData.pagination.totalItems}
-            pageSize={trendsData.pagination.pageSize}
-            locale={locale}
-            translations={{ trends: t.trends }}
-        />
-    </div>
+    <!-- Final CTA -->
+    <section class="mkt-section-sm pb-8">
+      <div class="rounded-2xl border border-blue-500/30 bg-gradient-to-br from-blue-950/50 to-gray-900/80 p-10 sm:p-14 text-center">
+        <h2 class="text-2xl sm:text-3xl font-bold text-white mb-3">{h.finalCta.title}</h2>
+        <p class="text-gray-400 mb-8 max-w-lg mx-auto">{h.finalCta.subtitle}</p>
+        <div class="flex flex-col sm:flex-row gap-4 justify-center">
+          <a href="/register" class="btn btn-lg !rounded-xl">{h.finalCta.cta}</a>
+          <a href="/trends" class="btn-outline btn-lg !rounded-xl">{h.finalCta.ctaTrends}</a>
+        </div>
+      </div>
+    </section>
+  </div>
 </Layout>
-
-<script>
-  const btn = document.getElementById('generate-bp-btn') as HTMLButtonElement | null;
-  const msg = document.getElementById('bp-gen-message');
-
-  function showMessage(text: string, kind: 'info' | 'error') {
-    if (!msg) return;
-    msg.textContent = text;
-    msg.classList.remove('hidden');
-    msg.classList.toggle('border-red-500/30', kind === 'error');
-    msg.classList.toggle('bg-red-500/10', kind === 'error');
-    msg.classList.toggle('text-red-400', kind === 'error');
-    msg.classList.toggle('border-blue-500/30', kind === 'info');
-    msg.classList.toggle('bg-blue-500/10', kind === 'info');
-    msg.classList.toggle('text-blue-300', kind === 'info');
-  }
-
-  btn?.addEventListener('click', async () => {
-    if (btn.dataset.loggedIn !== '1') {
-      window.location.href = '/login';
-      return;
-    }
-
-    const label = btn.querySelector('.btn-label');
-    const original = label?.textContent || '';
-    btn.disabled = true;
-    if (label) label.textContent = '生成中… / Generating…';
-    showMessage('正在生成商业计划书，请稍候（约 20–60 秒）… / Generating, please wait…', 'info');
-
-    try {
-      const res = await fetch('/api/bp/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          keyword: btn.dataset.keyword,
-          trendId: btn.dataset.trendId,
-          timeRange: btn.dataset.timeRange,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok && data?.success && data?.data?.id) {
-        window.location.href = `/bp/${data.data.id}`;
-        return;
-      }
-
-      if (res.status === 401) {
-        window.location.href = '/login';
-        return;
-      }
-
-      showMessage(data?.error || '生成失败，请稍后重试 / Generation failed', 'error');
-    } catch {
-      showMessage('生成失败，请稍后重试 / Generation failed', 'error');
-    } finally {
-      btn.disabled = false;
-      if (label) label.textContent = original;
-    }
-  });
-</script>

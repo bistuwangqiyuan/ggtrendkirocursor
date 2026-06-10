@@ -1,0 +1,54 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getTranslations } from '../lib/i18n';
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+const p = t.pricing;
+
+const tierOrder = ['free', 'pro', 'team', 'build', 'usage', 'enterprise'] as const;
+---
+
+<Layout title={p.title} description={p.metaDescription}>
+  <div data-page="pricing">
+    <section class="mkt-section-sm text-center max-w-3xl mx-auto">
+      <h1 class="mkt-headline">{p.title}</h1>
+      <p class="mkt-subhead mx-auto">{p.subtitle}</p>
+    </section>
+
+    <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 mb-10">
+      {tierOrder.map(key => {
+        const tier = p.tiers[key];
+        const isFeatured = key === 'pro';
+        return (
+          <div class={`pricing-card ${isFeatured ? 'pricing-card-featured' : ''}`} data-tier={key}>
+            {isFeatured && <span class="mkt-pill mb-4 self-start">{p.featured}</span>}
+            <h3 class="text-lg font-bold text-white">{tier.name}</h3>
+            <div class="mt-3 mb-1">
+              <span class="text-3xl font-bold text-white">{tier.price}</span>
+              {key === 'pro' || key === 'team' ? <span class="text-gray-400 text-sm">{p.monthly}</span> : null}
+              {key === 'build' ? <span class="text-gray-400 text-sm block mt-1">{tier.priceNote}</span> : null}
+              {key === 'usage' ? <span class="text-gray-400 text-sm">{p.perReport}</span> : null}
+            </div>
+            <p class="text-sm text-gray-500 mb-5">{tier.audience}</p>
+            <ul class="space-y-2 flex-1 mb-6">
+              {tier.features.map(f => (
+                <li class="text-sm text-gray-300 flex gap-2">
+                  <span class="text-blue-400 shrink-0">✓</span>{f}
+                </li>
+              ))}
+            </ul>
+            <a href={key === 'enterprise' ? '/contact' : '/register'} class={`text-center ${isFeatured ? 'btn !rounded-lg w-full' : 'btn-outline !rounded-lg w-full'}`}>
+              {key === 'enterprise' ? p.ctaContact : p.cta}
+            </a>
+          </div>
+        );
+      })}
+    </div>
+
+    <div class="max-w-2xl mx-auto space-y-4 text-sm text-gray-400 text-center pb-12">
+      <p>{p.note}</p>
+      <p class="text-gray-500">{p.disclaimer}</p>
+    </div>
+  </div>
+</Layout>

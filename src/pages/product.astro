@@ -1,0 +1,65 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getTranslations } from '../lib/i18n';
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+const p = t.product;
+const steps = [
+  { title: p.pipeline.s1, desc: p.pipeline.s1Desc },
+  { title: p.pipeline.s2, desc: p.pipeline.s2Desc },
+  { title: p.pipeline.s3, desc: p.pipeline.s3Desc },
+  { title: p.pipeline.s4, desc: p.pipeline.s4Desc },
+  { title: p.pipeline.s5, desc: p.pipeline.s5Desc },
+  { title: p.pipeline.s6, desc: p.pipeline.s6Desc },
+];
+const personas = [
+  { title: p.forWhom.p1Title, desc: p.forWhom.p1Desc },
+  { title: p.forWhom.p2Title, desc: p.forWhom.p2Desc },
+  { title: p.forWhom.p3Title, desc: p.forWhom.p3Desc },
+];
+---
+
+<Layout title={p.title} description={p.metaDescription}>
+  <div data-page="product">
+    <section class="mkt-section-sm text-center max-w-3xl mx-auto">
+      <h1 class="mkt-headline">{p.hero.headline}</h1>
+      <p class="mkt-subhead mx-auto">{p.hero.subhead}</p>
+    </section>
+
+    <div class="rounded-2xl overflow-hidden border border-gray-800 mb-16 max-w-4xl mx-auto">
+      <img src="/images/marketing/product-ui.png" alt="" class="w-full h-auto" loading="lazy" />
+    </div>
+
+    <section class="mkt-section-sm">
+      <h2 class="text-2xl font-bold text-white mb-8 text-center">{p.pipeline.title}</h2>
+      <div class="space-y-4 max-w-3xl mx-auto">
+        {steps.map((s, i) => (
+          <div class="flex gap-4 mkt-card !py-5">
+            <span class="mkt-pill shrink-0 h-fit">{String(i + 1).padStart(2, '0')}</span>
+            <div>
+              <h3 class="font-semibold text-white">{s.title}</h3>
+              <p class="text-gray-400 text-sm mt-1 leading-relaxed">{s.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section class="mkt-section-sm">
+      <h2 class="text-2xl font-bold text-white mb-8 text-center">{p.forWhom.title}</h2>
+      <div class="mkt-grid-3">
+        {personas.map(pers => (
+          <div class="mkt-card">
+            <h3 class="font-semibold text-white mb-2">{pers.title}</h3>
+            <p class="text-gray-400 text-sm leading-relaxed">{pers.desc}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <div class="text-center pb-12">
+      <a href="/trends" class="btn btn-lg !rounded-xl">{p.cta}</a>
+    </div>
+  </div>
+</Layout>

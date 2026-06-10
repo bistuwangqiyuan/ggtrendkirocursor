@@ -14,8 +14,8 @@ interface Props {
 
 const {
   title,
-  description = "Trend Now —  实时 Google Trends 数据可视化平台，提供美国热门搜索趋势的查询、筛选与分析。",
-  image = "/og-image.svg",
+  description,
+  image = '/og-image.svg',
 } = Astro.props;
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
@@ -26,20 +26,40 @@ const canonicalURL = new URL(Astro.url.pathname, siteOrigin).href;
 const ogImage = new URL(image, siteOrigin).href;
 const fullTitle = `${title} | ${t.common.appName}`;
 const ogLocale = locale === 'zh' ? 'zh_CN' : 'en_US';
+const metaDescription = description ?? t.common.metaDescription;
+const metaKeywords = t.common.metaKeywords;
 
-const structuredData = {
-  '@context': 'https://schema.org',
-  '@type': 'WebSite',
-  name: t.common.appName,
-  url: siteOrigin,
-  description,
-  inLanguage: ogLocale,
-  potentialAction: {
-    '@type': 'SearchAction',
-    target: `${siteOrigin}/?keyword={search_term_string}`,
-    'query-input': 'required name=search_term_string',
+const structuredData = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: t.common.appName,
+    url: siteOrigin,
+    description: metaDescription,
   },
-};
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: t.common.appName,
+    url: siteOrigin,
+    description: metaDescription,
+    inLanguage: ogLocale,
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: `${siteOrigin}/trends?keyword={search_term_string}`,
+      'query-input': 'required name=search_term_string',
+    },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: t.common.appName,
+    applicationCategory: 'BusinessApplication',
+    operatingSystem: 'Web',
+    description: metaDescription,
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'CNY' },
+  },
+];
 ---
 
 <!doctype html>
@@ -47,26 +67,24 @@ const structuredData = {
   <head>
     <meta charset="UTF-8" />
     <title>{fullTitle}</title>
-    <meta name="description" content={description} />
-    <meta name="keywords" content="Google Trends, 趋势数据, 热门搜索, 实时趋势, trend analysis, trending now" />
+    <meta name="description" content={metaDescription} />
+    <meta name="keywords" content={metaKeywords} />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="canonical" href={canonicalURL} />
     <meta name="generator" content={Astro.generator} />
 
-    <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={t.common.appName} />
     <meta property="og:title" content={fullTitle} />
-    <meta property="og:description" content={description} />
+    <meta property="og:description" content={metaDescription} />
     <meta property="og:url" content={canonicalURL} />
     <meta property="og:image" content={ogImage} />
     <meta property="og:locale" content={ogLocale} />
 
-    <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={fullTitle} />
-    <meta name="twitter:description" content={description} />
+    <meta name="twitter:description" content={metaDescription} />
     <meta name="twitter:image" content={ogImage} />
 
     <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />

@@ -1,0 +1,169 @@
+---
+import Layout from '../layouts/Layout.astro';
+import TrendsTable from '../components/trends/TrendsTable.astro';
+import { TrendsFilters } from '../components/trends/TrendsFilters';
+import { Pagination } from '../components/trends/Pagination';
+import { trendsService } from '../lib/services/trends';
+import { getTranslations } from '../lib/i18n';
+import type { TrendsQueryParams } from '../types/index';
+
+export const prerender = false;
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+
+const urlTimeRange = Astro.url.searchParams.get('timeRange') || '';
+const collectedWithin = Astro.url.searchParams.get('collectedWithin') || '';
+const keyword = Astro.url.searchParams.get('keyword') || '';
+const category = Astro.url.searchParams.get('category') || '';
+const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
+const pageSize = 20;
+
+const params: TrendsQueryParams = {
+  timeRange: urlTimeRange || undefined,
+  collectedWithin: collectedWithin || undefined,
+  keyword: keyword || undefined,
+  category: category || undefined,
+  page,
+  pageSize,
+  sortBy: 'search_volume',
+  sortOrder: 'desc',
+};
+
+const categoriesResult = await trendsService.getCategories();
+let trendsResult = await trendsService.getTrends(params);
+let usedFallback = false;
+
+if (trendsResult.success && trendsResult.data.trends.length === 0 && urlTimeRange) {
+  trendsResult = await trendsService.getTrends({ ...params, timeRange: undefined });
+  usedFallback = trendsResult.success && trendsResult.data.trends.length > 0;
+}
+
+const timeRange = urlTimeRange || '4h';
+const trendsData = trendsResult.success
+  ? trendsResult.data
+  : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
+const categories = categoriesResult.success ? categoriesResult.data : [];
+const error = !trendsResult.success ? trendsResult.error : null;
+const isLoggedIn = !!Astro.locals.user;
+const topTrend = trendsData.trends[0];
+
+const timeLabel = usedFallback
+  ? t.trends.showingAllNote
+  : t.trends.timeRange[timeRange as keyof typeof t.trends.timeRange];
+---
+
+<Layout title={t.trends.title} description={t.common.metaDescription}>
+  <div class="space-y-6" data-page="trends">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <h1 class="text-3xl font-bold tracking-tight text-white">{t.trends.title}</h1>
+      <div class={`text-sm ${usedFallback ? 'text-amber-400/90' : 'text-gray-400'}`}>{timeLabel}</div>
+    </div>
+
+    {error && (
+      <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg">{t.auth.errors.generic}</div>
+    )}
+
+    {topTrend && (
+      <div class="flex flex-col gap-3 rounded-xl border border-blue-500/30 bg-gradient-to-r from-blue-600/15 to-purple-600/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between" data-testid="bp-cta-banner">
+        <div class="min-w-0">
+          <p class="text-xs font-medium uppercase tracking-wider text-blue-300">{t.bp.subtitle}</p>
+          <p class="mt-1 truncate text-lg font-semibold text-white">#1 · {topTrend.keyword}</p>
+        </div>
+        <button
+          id="generate-bp-btn"
+          data-keyword={topTrend.keyword}
+          data-trend-id={topTrend.id}
+          data-time-range={timeRange}
+          data-logged-in={isLoggedIn ? '1' : '0'}
+          data-msg-generating={t.bp.generatingHint}
+          data-msg-failed={t.bp.failed}
+          data-label-generating={t.bp.generating}
+          class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <span class="btn-label">{t.bp.generateCta}</span>
+        </button>
+      </div>
+    )}
+
+    <div id="bp-gen-message" class="hidden rounded-lg border px-4 py-3 text-sm"></div>
+
+    <TrendsFilters
+      client:load
+      basePath="/trends"
+      initialFilters={{ timeRange, collectedWithin, keyword, category }}
+      categories={categories}
+      locale={locale}
+      translations={{ trends: t.trends }}
+    />
+
+    <TrendsTable trends={trendsData.trends} locale={locale} noDataLabel={t.trends.noData} />
+
+    <Pagination
+      client:load
+      basePath="/trends"
+      currentPage={trendsData.pagination.currentPage}
+      totalPages={trendsData.pagination.totalPages}
+      totalItems={trendsData.pagination.totalItems}
+      pageSize={trendsData.pagination.pageSize}
+      locale={locale}
+      translations={{ trends: t.trends }}
+    />
+  </div>
+</Layout>
+
+<script>
+  const btn = document.getElementById('generate-bp-btn') as HTMLButtonElement | null;
+  const msg = document.getElementById('bp-gen-message');
+
+  function showMessage(text: string, kind: 'info' | 'error') {
+    if (!msg) return;
+    msg.textContent = text;
+    msg.classList.remove('hidden');
+    msg.classList.toggle('border-red-500/30', kind === 'error');
+    msg.classList.toggle('bg-red-500/10', kind === 'error');
+    msg.classList.toggle('text-red-400', kind === 'error');
+    msg.classList.toggle('border-blue-500/30', kind === 'info');
+    msg.classList.toggle('bg-blue-500/10', kind === 'info');
+    msg.classList.toggle('text-blue-300', kind === 'info');
+  }
+
+  btn?.addEventListener('click', async () => {
+    if (btn.dataset.loggedIn !== '1') {
+      window.location.href = '/login?redirect=/trends';
+      return;
+    }
+    const label = btn.querySelector('.btn-label');
+    const original = label?.textContent || '';
+    btn.disabled = true;
+    if (label) label.textContent = btn.dataset.labelGenerating || '';
+    showMessage(btn.dataset.msgGenerating || '', 'info');
+
+    try {
+      const res = await fetch('/api/bp/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword: btn.dataset.keyword,
+          trendId: btn.dataset.trendId,
+          timeRange: btn.dataset.timeRange,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success && data?.data?.id) {
+        window.location.href = `/bp/${data.data.id}`;
+        return;
+      }
+      if (res.status === 401) {
+        window.location.href = '/login?redirect=/trends';
+        return;
+      }
+      showMessage(data?.error || btn.dataset.msgFailed || '', 'error');
+    } catch {
+      showMessage(btn.dataset.msgFailed || '', 'error');
+    } finally {
+      btn.disabled = false;
+      if (label) label.textContent = original;
+    }
+  });
+</script>
