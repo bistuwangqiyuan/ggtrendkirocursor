@@ -11,6 +11,9 @@ import {
   pickCanonicalByBusinessModel,
   parseWinRatePercent,
   WIN_RATE_OPTIMISM_THRESHOLD,
+  DEDUPE_WINDOW_DAYS,
+  isWithinDays,
+  recentKeywordNormSet,
 } from '../../src/lib/services/bp';
 import type { Trend } from '../../src/types';
 import { extractJsonObject } from '../../src/lib/services/llm';
@@ -265,5 +268,67 @@ describe('extractJsonObject', () => {
 
   test('returns null when no object present', () => {
     expect(extractJsonObject('no json here')).toBeNull();
+  });
+});
+
+describe('isWithinDays (7-day dedup boundary)', () => {
+  const now = new Date('2026-06-10T12:00:00Z');
+  const daysAgo = (n: number) => new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+
+  test('just under the window is within', () => {
+    const almost7 = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000 - 1000));
+    expect(isWithinDays(almost7, now, DEDUPE_WINDOW_DAYS)).toBe(true);
+  });
+
+  test('exactly N days is inclusive (within)', () => {
+    expect(isWithinDays(daysAgo(7), now, DEDUPE_WINDOW_DAYS)).toBe(true);
+  });
+
+  test('just over the window is outside', () => {
+    const over7 = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000 + 1000));
+    expect(isWithinDays(over7, now, DEDUPE_WINDOW_DAYS)).toBe(false);
+  });
+
+  test('future dates (negative elapsed) are not counted', () => {
+    expect(isWithinDays(daysAgo(-1), now, DEDUPE_WINDOW_DAYS)).toBe(false);
+  });
+
+  test('invalid date is not within', () => {
+    expect(isWithinDays(new Date('not-a-date'), now, DEDUPE_WINDOW_DAYS)).toBe(false);
+  });
+});
+
+describe('recentKeywordNormSet', () => {
+  const now = new Date('2026-06-10T12:00:00Z');
+  const daysAgo = (n: number) => new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+
+  test('recent keyword stays, old keyword drops out of the set', () => {
+    const rows = [
+      { keywordNorm: 'recent', createdAt: daysAgo(2) },
+      { keywordNorm: 'stale', createdAt: daysAgo(8) },
+    ];
+    const set = recentKeywordNormSet(rows, now, DEDUPE_WINDOW_DAYS);
+    expect(set.has('recent')).toBe(true);
+    expect(set.has('stale')).toBe(false);
+  });
+
+  test('keyword at exactly the boundary is retained', () => {
+    const set = recentKeywordNormSet([{ keywordNorm: 'edge', createdAt: daysAgo(7) }], now, DEDUPE_WINDOW_DAYS);
+    expect(set.has('edge')).toBe(true);
+  });
+
+  test('empty keyword norms are skipped', () => {
+    const set = recentKeywordNormSet([{ keywordNorm: '', createdAt: daysAgo(1) }], now, DEDUPE_WINDOW_DAYS);
+    expect(set.size).toBe(0);
+  });
+
+  test('defaults to the 7-day window when omitted', () => {
+    const rows = [
+      { keywordNorm: 'in', createdAt: daysAgo(6) },
+      { keywordNorm: 'out', createdAt: daysAgo(9) },
+    ];
+    const set = recentKeywordNormSet(rows, now);
+    expect(set.has('in')).toBe(true);
+    expect(set.has('out')).toBe(false);
   });
 });

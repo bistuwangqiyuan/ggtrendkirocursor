@@ -11,7 +11,7 @@ bp/
 ├── business-plan.html                      # 自包含 BP（内联 CSS + 内联 SVG 图表），可直接双击打开
 ├── render-pdf.mjs                          # Puppeteer 渲染脚本（HTML → A4 PDF，含页码）
 ├── qa-screenshot.mjs                       # 自检脚本（逐页截图 + 溢出检测）
-├── 谷歌热词AI-BP生成网站_商业计划书.pdf    # 最终高保真 PDF（29 页）
+├── 谷歌热词AI-BP生成网站_商业计划书.pdf    # 最终高保真 PDF（34 页）
 ├── README.md
 └── assets/
     ├── cover-hero.png                      # 封面 hero（AI 生成）

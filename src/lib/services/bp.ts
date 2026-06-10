@@ -250,8 +250,39 @@ function buildUserPrompt(trend: BpTrendSnapshot): string {
 }`;
 }
 
-/** Reuse window: a completed BP for the same keyword within this many hours is reused (manual path). */
-const REUSE_WINDOW_HOURS = 24;
+/**
+ * Deduplication window (days). A keyword is treated as "already done" only if it
+ * has a completed BP within this many days; after the window elapses the cron
+ * regenerates a fresh BP. The same window bounds the manual reuse path and the
+ * business-model dedup, so the weekly refresh produces genuinely new content.
+ */
+export const DEDUPE_WINDOW_DAYS = 7;
+
+/** True when `date` is within `days` of `now` (inclusive boundary at exactly N days). */
+export function isWithinDays(date: Date, now: Date, days: number): boolean {
+  const ms = now.getTime() - date.getTime();
+  if (!Number.isFinite(ms)) return false;
+  return ms <= days * 24 * 60 * 60 * 1000 && ms >= 0;
+}
+
+/**
+ * Pure helper: build the set of keyword_norms that are "recently completed"
+ * (within `windowDays`). Used by the cron skip-set so the 7-day rule is
+ * unit-testable independently of the database.
+ */
+export function recentKeywordNormSet(
+  rows: { keywordNorm: string; createdAt: Date }[],
+  now: Date,
+  windowDays = DEDUPE_WINDOW_DAYS
+): Set<string> {
+  const set = new Set<string>();
+  for (const r of rows) {
+    if (r.keywordNorm && isWithinDays(r.createdAt, now, windowDays)) {
+      set.add(r.keywordNorm);
+    }
+  }
+  return set;
+}
 
 /** Minimum composite hotword score (0-100) for scheduled BP generation. */
 export const MIN_TREND_SCORE = 60;
@@ -363,34 +394,48 @@ export class BpService {
     };
   }
 
-  /** Whether any completed BP exists for this keyword (permanent dedupe for cron). */
+  /** Whether a completed BP exists for this keyword within the dedupe window. */
   async hasCompletedBp(keywordNorm: string): Promise<boolean> {
     const row = await queryOne<{ exists: boolean }>(
       `SELECT EXISTS(
-         SELECT 1 FROM bp_reports WHERE keyword_norm = $1 AND status = 'completed'
+         SELECT 1 FROM bp_reports
+         WHERE keyword_norm = $1 AND status = 'completed'
+           AND created_at >= NOW() - make_interval(days => $2)
        ) AS exists`,
-      [keywordNorm]
+      [keywordNorm, DEDUPE_WINDOW_DAYS]
     );
     return !!row?.exists;
   }
 
-  /** All keyword_norm values that already have a completed BP. */
-  async getCompletedKeywordNorms(): Promise<Set<string>> {
-    const rows = await query<{ keyword_norm: string }>(
-      `SELECT DISTINCT keyword_norm FROM bp_reports
-       WHERE status = 'completed' AND keyword_norm IS NOT NULL`
+  /**
+   * Keyword_norm values with a completed BP within the dedupe window (7 days).
+   * Older keywords fall out of the set so the cron regenerates a fresh BP.
+   * Filtering is done via the pure `recentKeywordNormSet` helper (testable).
+   */
+  async getRecentlyCompletedKeywordNorms(windowDays = DEDUPE_WINDOW_DAYS): Promise<Set<string>> {
+    const rows = await query<{ keyword_norm: string; created_at: any }>(
+      `SELECT keyword_norm, created_at FROM bp_reports
+       WHERE status = 'completed' AND keyword_norm IS NOT NULL
+         AND created_at >= NOW() - make_interval(days => $1)`,
+      [windowDays]
     );
-    return new Set(rows.map((r) => r.keyword_norm));
+    const mapped = rows.map((r) => ({
+      keywordNorm: r.keyword_norm,
+      createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
+    }));
+    return recentKeywordNormSet(mapped, new Date(), windowDays);
   }
 
   /**
-   * Walk trends by search_volume desc; return the first without a completed BP
-   * whose composite score exceeds MIN_TREND_SCORE.
+   * Walk trends by search_volume desc; return the first whose composite score
+   * exceeds MIN_TREND_SCORE and which has no completed BP within the dedupe
+   * window (7 days). Keywords last generated more than 7 days ago are eligible
+   * again so their BP is refreshed.
    */
   async pickNextUngeneratedTrend(
     timeRange = '4h'
   ): Promise<{ snapshot: BpTrendSnapshot; trendScore: number } | null> {
-    const completed = await this.getCompletedKeywordNorms();
+    const completed = await this.getRecentlyCompletedKeywordNorms();
     let globalRank = 0;
     let effectiveTimeRange: string | undefined = timeRange;
 
@@ -437,8 +482,10 @@ export class BpService {
   }
 
   /**
-   * Find the earliest completed report whose business model matches `bmNorm`
-   * (excluding `excludeId`). Used to dedupe plans that describe the same model.
+   * Find the earliest completed report within the dedupe window (7 days) whose
+   * business model matches `bmNorm` (excluding `excludeId`). Bounding by the
+   * window means the weekly keyword refresh produces genuinely new content
+   * rather than re-pointing at a stale canonical from a previous week.
    * Only considers canonical reports (those that are not themselves duplicates).
    */
   async findCompletedByBusinessModel(bmNorm: string, excludeId?: string): Promise<BpReport | null> {
@@ -448,21 +495,22 @@ export class BpService {
        WHERE status = 'completed'
          AND business_model_norm = $1
          AND canonical_report_id IS NULL
+         AND created_at >= NOW() - make_interval(days => $3)
          AND ($2::uuid IS NULL OR id <> $2::uuid)
        ORDER BY created_at ASC LIMIT 1`,
-      [bmNorm, excludeId ?? null]
+      [bmNorm, excludeId ?? null, DEDUPE_WINDOW_DAYS]
     );
     return row ? mapReportRow(row) : null;
   }
 
-  /** Return a recent completed report for this keyword, if any (dedupe). */
+  /** Return a completed report for this keyword within the dedupe window (7 days), if any. */
   async findReusable(keywordNorm: string): Promise<BpReport | null> {
     const row = await queryOne<any>(
       `SELECT * FROM bp_reports
        WHERE keyword_norm = $1 AND status = 'completed'
-         AND created_at >= NOW() - make_interval(hours => $2)
+         AND created_at >= NOW() - make_interval(days => $2)
        ORDER BY created_at DESC LIMIT 1`,
-      [keywordNorm, REUSE_WINDOW_HOURS]
+      [keywordNorm, DEDUPE_WINDOW_DAYS]
     );
     return row ? mapReportRow(row) : null;
   }
@@ -487,8 +535,9 @@ export class BpService {
   }
 
   /**
-   * Scheduled entry point: clean stale rows, pick the next ungenerated hotword
-   * (score > MIN_TREND_SCORE, no completed BP), then generate one new BP.
+   * Scheduled entry point: clean stale rows, pick the next eligible hotword
+   * (score > MIN_TREND_SCORE, no completed BP within the last 7 days), then
+   * generate one new BP. Keywords roll back into eligibility after 7 days.
    */
   async runScheduledGeneration(): Promise<
     Result<

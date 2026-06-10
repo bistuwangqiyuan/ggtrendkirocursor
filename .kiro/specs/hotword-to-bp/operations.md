@@ -43,10 +43,10 @@
 - 行为：调用 `POST /api/bp/cron`（带 `Authorization: Bearer ${CRON_SECRET}`）→ `bpService.runScheduledGeneration()`：
   1. `resetStaleGenerating()` 把超过 15 分钟仍 `generating/pending` 的记录置为 `failed`；
   2. 按 `4h` 窗口、`search_volume` 降序扫描趋势（每页 50 条，最多 5 页）；
-  3. **热词永久去重**：跳过已有任意 `completed` BP 的热词（不再 24h 复用），自动顺延下一个不重复的热词；
+  3. **热词 7 天滚动去重**：跳过近 7 天内已有 `completed` BP 的热词，自动顺延下一个不重复的热词；超过 7 天的热词重新进入候选，定时任务会为其生成**全新**的 BP（每周刷新）；
   4. **评分筛选**：综合百分制分 > 60 才合格（`50%×增长速度% + 50%×搜索量对数归一化`，见 `computeTrendHotwordScore`）；
   5. 对首个合格且未生成 BP 的热词调用 LLM，`action=generated`；无合格热词则 `action=skipped`（200，非错误）。
-  6. **商业模式去重**：生成并校验后，按归一化 `businessModel`（`normalizeBusinessModel`：小写、压缩空白、去首尾标点）比对历史 `completed` 报告。若已存在相同商业模式的报告，则**不重复存储内容**，将本次记录标记为 `completed` 并通过 `canonical_report_id` 指向原报告，直接复用其商业计划书（详情/列表读取时自动解析指向）。
+  6. **商业模式去重（同样限定 7 天窗口）**：生成并校验后，按归一化 `businessModel`（`normalizeBusinessModel`：小写、压缩空白、去首尾标点）比对**近 7 天**的 `completed` 报告。若 7 天内已存在相同商业模式的报告，则**不重复存储内容**，将本次记录标记为 `completed` 并通过 `canonical_report_id` 指向原报告，直接复用其商业计划书（详情/列表读取时自动解析指向）；超过 7 天则不复用，保证每周刷新产出新内容。
 - 手动触发（验证用）：
   ```bash
   curl -X POST "https://<your-site>/api/bp/cron" \
@@ -110,17 +110,17 @@ BP 相关探针：
 
 ### C. 报告长期卡在 `generating`
 - 原因：Netlify 函数 26s 超时中断了同步生成。
-- 处置：下一次 cron 会自动 `resetStaleGenerating()` 置为 `failed` 并重试；也可手动调用 cron。缓解：优先用更快模型、缩短输出、依赖 24h 去重避免重复消耗。
+- 处置：下一次 cron 会自动 `resetStaleGenerating()` 置为 `failed` 并重试；也可手动调用 cron。缓解：优先用更快模型、缩短输出、依赖 7 天去重窗口避免重复消耗。
 
 ### D. 定时任务未执行
 - 检查：Netlify → Functions → `bp-scheduled` 是否存在且有调用记录；`CRON_SECRET` 是否已配置；时区为 UTC。
 
 ## 6. 成本与安全
 
-- **成本控制**：24h 去重 + `max_tokens` 限制 + 失败不重复落库；定时频率默认 6h。
+- **成本控制**：7 天去重窗口 + `max_tokens` 限制 + 失败不重复落库；定时频率默认 6h。
 - **安全**：cron 强制 `CRON_SECRET`；所有 DB 访问参数化查询；详情页对 LLM 文本默认转义（不使用 `set:html` 渲染不可信内容）；生成端点要求登录用户（cron 除外，靠密钥鉴权）。
 
 ## 7. 变更频率（如需调整）
 
 - 修改 [netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts) 中的 cron 表达式（如 `0 */12 * * *` 改为每 12 小时）。
-- 修改 [src/lib/services/bp.ts](../../../src/lib/services/bp.ts) 中 `REUSE_WINDOW_HOURS`（去重窗口）与 `resetStaleGenerating(maxAgeMinutes)`（卡死阈值）。
+- 修改 [src/lib/services/bp.ts](../../../src/lib/services/bp.ts) 中 `DEDUPE_WINDOW_DAYS`（去重窗口，默认 7 天，同时作用于热词去重、手动复用与商业模式去重）与 `resetStaleGenerating(maxAgeMinutes)`（卡死阈值）。
