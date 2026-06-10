@@ -13,13 +13,23 @@ import { clampBatchSize } from '../../src/lib/bpBatch';
  *   BP_BATCH_SIZE  number of BPs to attempt per run (default 6, clamped 1-10)
  *   CRON_SECRET    bearer secret required by /api/bp/cron
  */
-export const handler = async () => {
+export const handler = async (event: { headers?: Record<string, string | undefined> }) => {
   const secret = process.env.CRON_SECRET?.trim();
   const base = (process.env.URL || process.env.DEPLOY_URL || 'https://ggtrendkirocursor.netlify.app').replace(/\/$/, '');
 
   if (!secret) {
     console.error('[bp-batch] CRON_SECRET not set; skipping run');
     return { statusCode: 200, body: 'skipped: no CRON_SECRET' };
+  }
+
+  // This function is publicly reachable and spends LLM credits, so require the
+  // same bearer secret the scheduled trigger sends (fail closed on mismatch).
+  const headers = event?.headers || {};
+  const authHeader = headers.authorization || headers.Authorization || '';
+  const provided = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (provided !== secret) {
+    console.error('[bp-batch] unauthorized invocation rejected');
+    return { statusCode: 401, body: 'unauthorized' };
   }
 
   const batchSize = clampBatchSize(process.env.BP_BATCH_SIZE);
