@@ -67,6 +67,7 @@
   5. 对首个合格且未生成 BP 的热词调用 LLM，`action=generated`；无合格热词则 `action=skipped`（200，非错误）。
   6. **商业模式去重（同样限定 7 天窗口）**：生成并校验后，按归一化 `businessModel`（`normalizeBusinessModel`：小写、压缩空白、去首尾标点）比对**近 7 天**的 `completed` 报告。若 7 天内已存在相同商业模式的报告，则**不重复存储内容**，将本次记录标记为 `completed` 并通过 `canonical_report_id` 指向原报告，直接复用其商业计划书（详情/列表读取时自动解析指向）；超过 7 天则不复用，保证每周刷新产出新内容。
   7. **省 token：商业模式回避清单**：调用 LLM 前注入近 7 天已生成的去重商业模式清单（`getRecentBusinessModels` + `buildAvoidModelsLine`，约 +150-250 输入 token），引导模型另辟差异化方向，把「生成后才发现模式重复」的整次浪费调用转化为新内容。配合精简后的提示词，单份约 5k→4.3k token。
+  8. **全 AI 无人公司硬约束**：`SYSTEM_PROMPT` 与 `buildUserPrompt` 要求所选机会必须是可由全 AI 自动化运营的"无人公司"承载的在线服务（内容/获客/转化/客服/交付/计费/风控等环节近零人工），自动化程度计入 onlineability/feasibility，`businessModel`/`summary` 须逐环节说明无人化实现路径与近零人力成本结构；关键财务参数须可复算（注明公式与取值，便于 Python 验证）；须合法合规、符合社会公序良俗。
 - 手动触发（验证用）：
   ```bash
   curl -X POST "https://<your-site>/api/bp/cron" \

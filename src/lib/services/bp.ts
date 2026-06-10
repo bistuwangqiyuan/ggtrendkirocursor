@@ -227,9 +227,11 @@ const SYSTEM_PROMPT = `你是资深早期风投分析师与连续创业者。基
 
 【机会与评分】opportunities ≥5 个，各含 name、description、scores(market/roi/onlineability/feasibility/speed/moat，取值1-10，可一位小数)。description 须具体到产品形态、目标用户、获客与变现方式，忌空话。优先可完全线上化且高 ROI 者；selectedOpportunity 取综合最优（服务器会按固定权重复算校正，请如实评分）。
 
+【全 AI 无人公司（核心硬约束）】所选机会必须是可由"全 AI 自动化运营的无人公司"承载的在线服务：内容生产、获客/投放、转化、客服、交付、计费、风控等关键环节尽可能由 AI 与自动化流程闭环完成，人工参与趋近于零（理想为 0，至多保留极少数合规/监督角色）。须在 onlineability 与 feasibility 评分中**显式体现自动化/无人化程度**（越无人、越自动得分越高）；selectedOpportunity 与 businessModel 必须逐环节说明"如何无人化"（用什么 AI/自动化能力实现各环节），并据此给出"近零边际人力成本"的成本结构与单位经济模型。务必合法合规、符合社会公序良俗与平台政策，绝不依赖灰产、欺诈或违规自动化。
+
 【公允数据·反乐观谬误（极重要）】财务与回报须实事求是、贴合国内（中国）同阶段同类创业真实基准，严禁乐观谬误。锚点（供推理，结合本机会调整并给依据，勿照抄）：① 早期/种子阶段绝大多数最终回报为0或亏损，进入A轮比例约10-20%；② 以"真实现金退出"（并购/老股转让/IPO 且形成真实流动性）口径，种子轮单笔5年内盈利现金退出概率通常仅个位数至约10-15%，不得以"账面存活/纸面估值"冒充现金退出；③ 早期VC回报呈幂律——胜率低但盈亏比高，单项目种子轮期望收益倍数(EV/MOIC)通常约1.0-2.5x（已计入大概率归零）。须严格区分账面口径(book，偏乐观，仅参考)与风险调整/现金退出口径(cash-exit，已乘真实拿到钱概率，为决策依据)，二者不得混用；winRate 必须是"盈利现金退出"概率，不得用存活率冒充。
 
-【种子轮回报指标】seedReturn 须给出：bookRoiByYear(第1-5年账面ROI，5个百分比数字)、annualizedBook(账面年化)、winRate(盈利现金退出概率，如"约8%-12%")、profitLossRatio(盈亏比，如"约6:1")、expectedValueMOIC(已计归零概率的期望收益倍数，如"约1.4x")、riskAdjustedAnnualized(风险调整年化，通常远低于账面年化)、notes(口径与计算依据)。
+【种子轮回报指标】seedReturn 须给出：bookRoiByYear(第1-5年账面ROI，5个百分比数字)、annualizedBook(账面年化)、winRate(盈利现金退出概率，如"约8%-12%")、profitLossRatio(盈亏比，如"约6:1")、expectedValueMOIC(已计归零概率的期望收益倍数，如"约1.4x")、riskAdjustedAnnualized(风险调整年化，通常远低于账面年化)、notes(口径与计算依据)。所有关键财务/回报数据须**有理有据或给出可复算口径**：在 notes 与 market.notes 中写明关键公式与取值（如获客成本 CAC、转化率、客单价 ARPU、毛利率、回收期、年化与风险调整年化的折算方式），使其可用 Python 独立复算验证；无人化口径下人力成本应按近零计入。
 
 【执行摘要含回报数字】summary 正文须用文字写明种子轮第1/2/3/4/5年ROI、年化、胜率(盈利现金退出)、盈亏比，并强调为"成功现金退出"口径而非账面存活；并点明选定机会、市场空间与可执行关键路径。`;
 
@@ -248,14 +250,16 @@ function buildUserPrompt(trend: BpTrendSnapshot, avoidLine = ''): string {
   return `谷歌热搜第一名关键词："${trend.keyword}"
 分类：${trend.category || '未知'} | 搜索量：${trend.searchVolume} | 增长速度：${trend.growthRate} | 趋势窗口：${trend.timeRange} | 地区：${trend.region || '全球'}
 ${avoid}
-基于该关键词头脑风暴可完全线上化（纯网站/SaaS）的机会，遴选 ROI 最高者，产出公允可执行的计划书；概率与收益须贴合国内同阶段真实基准、避免乐观谬误。严格按以下 JSON 结构输出（字段名英文，内容中文）：
+基于该关键词头脑风暴可完全线上化（纯网站/SaaS）的机会，遴选 ROI 最高者，产出公允可执行的计划书；概率与收益须贴合国内同阶段真实基准、避免乐观谬误。
+**核心要求：所选机会必须是全 AI 自动化运营的"无人公司"模式（各关键环节近零人工）**，并在 businessModel 与 summary 中清楚说明各环节的无人化实现路径与近零人力成本结构；关键财务参数须可复算（注明公式与取值，便于用 Python 验证）；须合法合规、符合社会公序良俗。
+严格按以下 JSON 结构输出（字段名英文，内容中文）：
 {
   "title": "",
   "summary": "（执行摘要：含选定机会、市场空间、关键可执行路径；并明确写出种子轮第1-5年ROI、年化、胜率(现金退出)、盈亏比）",
   "selectedOpportunity": "",
   "opportunities": [ { "name": "", "description": "", "scores": { "market": 0, "roi": 0, "onlineability": 0, "feasibility": 0, "speed": 0, "moat": 0 } } ],
-  "market": { "tam": "", "sam": "", "som": "", "notes": "" },
-  "businessModel": "",
+  "market": { "tam": "", "sam": "", "som": "", "notes": "（注明 CAC/转化率/ARPU/毛利率/回收期等关键参数与公式，便于 Python 复算）" },
+  "businessModel": "（无人化运营：逐环节说明内容/获客/转化/客服/交付/计费/风控如何由 AI 自动化闭环、近零人力成本结构）",
   "financials": { "years": [ { "year": 1, "revenue": "", "ebitda": "" } ] },
   "seedReturn": { "bookRoiByYear": [0,0,0,0,0], "annualizedBook": "", "winRate": "", "profitLossRatio": "", "expectedValueMOIC": "", "riskAdjustedAnnualized": "", "notes": "" }
 }`;
