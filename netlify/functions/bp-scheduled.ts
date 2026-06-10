@@ -1,11 +1,13 @@
 import { schedule } from '@netlify/functions';
 
 /**
- * Scheduled BP auto-generation. Runs every 6 hours (UTC) and calls the
- * in-app cron endpoint, which generates a Business Plan for the current
- * next eligible ungenerated hotword (score > 60, skip duplicates).
+ * Scheduled BP auto-generation. Runs every 6 hours (UTC) and fires the
+ * `bp-batch-background` function (15-min budget), which loops and generates
+ * several BPs per run (BP_BATCH_SIZE, default 6) for the next eligible
+ * ungenerated hotwords (score > 60, skip duplicates within the 7-day window).
  *
- * Requires the CRON_SECRET environment variable to authorize the call.
+ * This trigger only kicks off the background job and returns immediately, so it
+ * stays well within the scheduled-function time limit. Requires CRON_SECRET.
  */
 export const handler = schedule('0 */6 * * *', async () => {
   const secret = process.env.CRON_SECRET?.trim();
@@ -18,10 +20,11 @@ export const handler = schedule('0 */6 * * *', async () => {
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
+  const timer = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const res = await fetch(`${base}/api/bp/cron`, {
+    // Background functions return 202 immediately; the batch keeps running.
+    const res = await fetch(`${base}/.netlify/functions/bp-batch-background`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${secret}`,
@@ -30,12 +33,11 @@ export const handler = schedule('0 */6 * * *', async () => {
       },
       signal: controller.signal,
     });
-    const text = await res.text();
-    console.log(`[bp-scheduled] cron responded ${res.status}: ${text.slice(0, 300)}`);
-    return { statusCode: 200, body: `cron status ${res.status}` };
+    console.log(`[bp-scheduled] triggered bp-batch-background -> ${res.status}`);
+    return { statusCode: 200, body: `batch triggered ${res.status}` };
   } catch (err) {
-    console.error('[bp-scheduled] failed to invoke cron:', (err as Error).message);
-    return { statusCode: 200, body: 'error invoking cron' };
+    console.error('[bp-scheduled] failed to trigger batch:', (err as Error).message);
+    return { statusCode: 200, body: 'error triggering batch' };
   } finally {
     clearTimeout(timer);
   }

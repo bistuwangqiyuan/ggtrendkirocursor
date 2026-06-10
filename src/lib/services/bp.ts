@@ -221,40 +221,34 @@ export function pickCanonicalByBusinessModel(
   return matches.length > 0 ? matches[0].id : null;
 }
 
-const SYSTEM_PROMPT = `你是一位资深的早期风险投资分析师与连续创业者。基于给定的"谷歌热搜关键词"，头脑风暴**可完全线上化（纯网站/SaaS，无需线下重资产）**的商业机会，进行严谨评分与遴选，遴选其中**投入产出比（ROI）最高且可完全线上化**的机会，并产出一份投资人级别、数据公允、可溯源、可执行的结构化商业计划书。
+const SYSTEM_PROMPT = `你是资深早期风投分析师与连续创业者。基于给定"谷歌热搜关键词"，头脑风暴**可完全线上化（纯网站/SaaS，无线下重资产）**的商业机会，严谨评分并遴选其中**ROI 最高且可完全线上化**者，产出投资人级、数据公允、可溯源、可执行的结构化商业计划书。
 
-【输出格式】
-1. 必须只输出一个 JSON 对象，不要任何额外文字或 Markdown 代码块。
-2. 字段名保持英文，文本内容用中文。
+【输出】仅输出一个 JSON 对象，无任何额外文字或 Markdown 代码块；字段名用英文，内容用中文。
 
-【机会与评分】
-3. opportunities 至少 5 个，每个含 name、description 及 scores（market/roi/onlineability/feasibility/speed/moat，取值 1-10 整数或一位小数）。description 需具体到产品形态、目标用户、获客方式、变现方式，避免空话。
-4. 优先遴选可完全线上化、且 ROI 高的机会；最终 selectedOpportunity 必须是综合最优者（服务器会按固定权重重新计算并校正，请如实评分）。
+【机会与评分】opportunities ≥5 个，各含 name、description、scores(market/roi/onlineability/feasibility/speed/moat，取值1-10，可一位小数)。description 须具体到产品形态、目标用户、获客与变现方式，忌空话。优先可完全线上化且高 ROI 者；selectedOpportunity 取综合最优（服务器会按固定权重复算校正，请如实评分）。
 
-【公允数据 · 反乐观谬误（极重要）】
-5. 所有财务与回报数据必须**实事求是、公允**，符合**国内（中国）同阶段同类创业**的真实基准概率，严禁乐观谬误。校准锚点（用于推理，不要照抄，须结合本机会具体调整并给出依据）：
-   - 早期/种子阶段创业**绝大多数最终回报为 0 或亏损**；能走到下一轮（A 轮）的比例通常约 10-20%。
-   - **以"真实现金退出"（被并购/老股转让/IPO 且形成真实流动性）口径衡量，种子轮单笔投资 5 年内实现盈利现金退出的概率通常仅为个位数到约 10-15%**，绝不能用"账面存活/纸面估值上涨"冒充现金退出。
-   - 早期 VC 回报呈幂律分布：胜率低、但盈亏比高（极少数赢家可达数十倍）。单一项目种子轮的期望收益倍数（EV/MOIC）通常约 1.0-2.5x（已计入大概率归零），并非每个项目都能赚钱。
-6. 必须严格区分两套口径：
-   - 账面口径（book）：基于业务存活/账面估值，偏乐观，仅供参考。
-   - 风险调整/现金退出口径（cash-exit / risk-adjusted）：已乘以"真实拿到钱的概率"，是决策依据。
-   两者不得混用，winRate 必须是"盈利现金退出"的概率，不得用存活率冒充。
+【公允数据·反乐观谬误（极重要）】财务与回报须实事求是、贴合国内（中国）同阶段同类创业真实基准，严禁乐观谬误。锚点（供推理，结合本机会调整并给依据，勿照抄）：① 早期/种子阶段绝大多数最终回报为0或亏损，进入A轮比例约10-20%；② 以"真实现金退出"（并购/老股转让/IPO 且形成真实流动性）口径，种子轮单笔5年内盈利现金退出概率通常仅个位数至约10-15%，不得以"账面存活/纸面估值"冒充现金退出；③ 早期VC回报呈幂律——胜率低但盈亏比高，单项目种子轮期望收益倍数(EV/MOIC)通常约1.0-2.5x（已计入大概率归零）。须严格区分账面口径(book，偏乐观，仅参考)与风险调整/现金退出口径(cash-exit，已乘真实拿到钱概率，为决策依据)，二者不得混用；winRate 必须是"盈利现金退出"概率，不得用存活率冒充。
 
-【种子轮回报指标】
-7. seedReturn 必须给出：bookRoiByYear（第1-5年账面ROI，百分比数字数组，5个）、annualizedBook（账面年化）、winRate（盈利现金退出的概率，如"约8%-12%"）、profitLossRatio（盈亏比，如"约6:1"）、expectedValueMOIC（已计入归零概率的期望收益倍数EV，如"约1.4x"）、riskAdjustedAnnualized（风险调整年化，通常远低于账面年化）、notes（口径与计算依据说明）。
+【种子轮回报指标】seedReturn 须给出：bookRoiByYear(第1-5年账面ROI，5个百分比数字)、annualizedBook(账面年化)、winRate(盈利现金退出概率，如"约8%-12%")、profitLossRatio(盈亏比，如"约6:1")、expectedValueMOIC(已计归零概率的期望收益倍数，如"约1.4x")、riskAdjustedAnnualized(风险调整年化，通常远低于账面年化)、notes(口径与计算依据)。
 
-【执行摘要必须包含回报数字】
-8. summary（执行摘要）正文中必须用文字明确写出：种子轮资金第1/2/3/4/5年的投资收益率（ROI）、年化收益、胜率（盈利现金退出的概率）、盈亏比，并强调这些是"成功拿到钱（现金退出）口径"而非账面存活口径。摘要还需点明选定机会、市场空间与可执行的关键路径。`;
+【执行摘要含回报数字】summary 正文须用文字写明种子轮第1/2/3/4/5年ROI、年化、胜率(盈利现金退出)、盈亏比，并强调为"成功现金退出"口径而非账面存活；并点明选定机会、市场空间与可执行关键路径。`;
 
-function buildUserPrompt(trend: BpTrendSnapshot): string {
+/**
+ * Build the optional "avoid these recent business models" instruction line.
+ * Pure + exported for unit testing. Caps the list to keep input tokens low.
+ */
+export function buildAvoidModelsLine(models: string[], max = 20): string {
+  const cleaned = [...new Set(models.map((m) => (m || '').trim()).filter(Boolean))].slice(0, max);
+  if (cleaned.length === 0) return '';
+  return `请避免与以下近期已生成的商业模式实质重复（务必另辟差异化新方向）：${cleaned.join('；')}。`;
+}
+
+function buildUserPrompt(trend: BpTrendSnapshot, avoidLine = ''): string {
+  const avoid = avoidLine ? `\n${avoidLine}\n` : '';
   return `谷歌热搜第一名关键词："${trend.keyword}"
 分类：${trend.category || '未知'} | 搜索量：${trend.searchVolume} | 增长速度：${trend.growthRate} | 趋势窗口：${trend.timeRange} | 地区：${trend.region || '全球'}
-
-请基于该关键词，头脑风暴可完全线上化（纯网站/SaaS）的商业机会，遴选 ROI 最高者，产出公允、可执行的商业计划书。
-特别要求：summary 正文必须用文字写明"种子轮资金第1/2/3/4/5年投资收益率、年化收益、胜率（盈利现金退出概率）、盈亏比"，且明确这是"成功现金退出"口径而非账面存活口径；所有概率与收益必须符合国内同阶段真实基准，避免乐观谬误。
-
-请严格按以下 JSON 结构输出（字段名保持英文，文本内容用中文）：
+${avoid}
+基于该关键词头脑风暴可完全线上化（纯网站/SaaS）的机会，遴选 ROI 最高者，产出公允可执行的计划书；概率与收益须贴合国内同阶段真实基准、避免乐观谬误。严格按以下 JSON 结构输出（字段名英文，内容中文）：
 {
   "title": "",
   "summary": "（执行摘要：含选定机会、市场空间、关键可执行路径；并明确写出种子轮第1-5年ROI、年化、胜率(现金退出)、盈亏比）",
@@ -520,6 +514,24 @@ export class BpService {
     return row ? mapReportRow(row) : null;
   }
 
+  /**
+   * Distinct business-model norms generated within the dedupe window (7 days),
+   * used to steer the LLM away from re-proposing models that already exist.
+   * Converting would-be collisions into new content avoids wasting whole calls.
+   */
+  async getRecentBusinessModels(limit = 20, windowDays = DEDUPE_WINDOW_DAYS): Promise<string[]> {
+    const rows = await query<{ business_model_norm: string }>(
+      `SELECT DISTINCT business_model_norm FROM bp_reports
+       WHERE status = 'completed'
+         AND business_model_norm IS NOT NULL AND business_model_norm <> ''
+         AND created_at >= NOW() - make_interval(days => $1)
+       ORDER BY business_model_norm
+       LIMIT $2`,
+      [windowDays, limit]
+    );
+    return rows.map((r) => r.business_model_norm).filter(Boolean);
+  }
+
   /** Return a completed report for this keyword within the dedupe window (7 days), if any. */
   async findReusable(keywordNorm: string): Promise<BpReport | null> {
     const row = await queryOne<any>(
@@ -637,10 +649,15 @@ export class BpService {
 
     const reportId: string = placeholder.id;
 
+    // Steer the model away from recently-used business models so collisions
+    // (which would otherwise waste a full LLM call) become new library content.
+    const avoidModels = await this.getRecentBusinessModels();
+    const avoidLine = buildAvoidModelsLine(avoidModels);
+
     try {
       const llm = await generateJson<any>({
         systemPrompt: SYSTEM_PROMPT,
-        userPrompt: buildUserPrompt(trend),
+        userPrompt: buildUserPrompt(trend, avoidLine),
         temperature: 0.7,
         maxTokens: 4000,
       });

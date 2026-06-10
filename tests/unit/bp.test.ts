@@ -15,6 +15,7 @@ import {
   DEDUPE_WINDOW_DAYS,
   isWithinDays,
   recentKeywordNormSet,
+  buildAvoidModelsLine,
 } from '../../src/lib/services/bp';
 import type { Trend } from '../../src/types';
 import { extractJsonObject } from '../../src/lib/services/llm';
@@ -143,6 +144,29 @@ describe('parseWinRatePercent', () => {
   test('threshold is a sane percentage', () => {
     expect(WIN_RATE_OPTIMISM_THRESHOLD).toBeGreaterThan(0);
     expect(WIN_RATE_OPTIMISM_THRESHOLD).toBeLessThan(100);
+  });
+});
+
+describe('buildAvoidModelsLine', () => {
+  test('returns empty string when there are no models', () => {
+    expect(buildAvoidModelsLine([])).toBe('');
+    expect(buildAvoidModelsLine(['', '   '])).toBe('');
+  });
+
+  test('joins distinct trimmed models into one instruction line', () => {
+    const line = buildAvoidModelsLine(['saas 订阅', ' saas 订阅 ', '内容平台']);
+    expect(line).toContain('saas 订阅');
+    expect(line).toContain('内容平台');
+    // de-duplicated: the model appears once
+    expect(line.match(/saas 订阅/g)?.length).toBe(1);
+    expect(line.endsWith('。')).toBe(true);
+  });
+
+  test('caps the number of listed models', () => {
+    const many = Array.from({ length: 50 }, (_, i) => `model${i}`);
+    const line = buildAvoidModelsLine(many, 20);
+    expect(line.includes('model19')).toBe(true);
+    expect(line.includes('model20')).toBe(false);
   });
 });
 

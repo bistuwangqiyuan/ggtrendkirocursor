@@ -209,6 +209,18 @@ async function run() {
     record('R13', 'trends data formatting', 'BLOCKED', 'DB down (Neon quota)');
   }
 
+  // ---- Req COL: trends RSS collector endpoint is auth-gated (fail closed) ----
+  // Must never collect without a valid CRON_SECRET. 401 (secret set) or 503
+  // (secret unset) are both acceptable; a 200 here would be a security bug.
+  const collectNoAuth = await http('/api/trends/collect', { method: 'POST' });
+  expect(collectNoAuth.status === 401 || collectNoAuth.status === 503,
+    'R-COL1', 'POST /api/trends/collect rejects unauthenticated calls',
+    `status=${collectNoAuth.status}`, `status=${collectNoAuth.status}`);
+  const collectBadAuth = await http('/api/trends/collect', { method: 'POST', headers: { Authorization: 'Bearer wrong-secret' } });
+  expect(collectBadAuth.status === 401 || collectBadAuth.status === 503,
+    'R-COL1', 'POST /api/trends/collect rejects a bad secret',
+    `status=${collectBadAuth.status}`, `status=${collectBadAuth.status}`);
+
   // ---- Req 1/12: auth round-trip (DB dependent) ----
   if (DB_UP) {
     const uniq = Date.now();
@@ -394,8 +406,32 @@ async function run() {
       !authCookie ? 'no auth cookie (login blocked)' : 'DB down (Neon quota)');
   }
 
-  // R-BP7/8/9: authenticated cron run (only when E2E_CRON_SECRET is provided).
+  // R-COL2: authenticated collector run (only with E2E_CRON_SECRET). The RSS
+  // collector spends ZERO LLM tokens, so it is safe to actually trigger. After
+  // it runs, fresh rows should exist within the 48h collection window.
   const E2E_CRON_SECRET = process.env.E2E_CRON_SECRET;
+  if (E2E_CRON_SECRET && DB_UP) {
+    const collect = await http('/api/trends/collect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${E2E_CRON_SECRET}` },
+    });
+    const collectJson = jsonOf(collect.body);
+    expect(collect.status === 200 && collectJson?.success === true && typeof collectJson?.inserted === 'number',
+      'R-COL2', 'authenticated collector run succeeds',
+      `inserted=${collectJson?.inserted} skipped=${collectJson?.skipped}`,
+      `status=${collect.status}`);
+
+    const fresh = await http('/api/trends/list?collectedWithin=48h&pageSize=100');
+    const freshJson = jsonOf(fresh.body);
+    expect(fresh.status === 200 && (freshJson?.data?.trends?.length || 0) > 0,
+      'R-COL2', 'collected rows are visible within 48h window',
+      `count=${freshJson?.data?.trends?.length}`, `count=${freshJson?.data?.trends?.length}`);
+  } else {
+    const reason = !E2E_CRON_SECRET ? 'E2E_CRON_SECRET not set' : 'DB down (Neon quota)';
+    record('R-COL2', 'authenticated collector run succeeds', 'BLOCKED', reason);
+  }
+
+  // R-BP7/8/9: authenticated cron run (only when E2E_CRON_SECRET is provided).
   if (E2E_CRON_SECRET && DB_UP) {
     const cron = await http('/api/bp/cron', {
       method: 'POST',

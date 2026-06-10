@@ -1,2 +1,2 @@
 // Bumped on each deploy so a live /api/health poll can confirm the new build is live.
-export const APP_VERSION = '2026.06.10-bp-risksort-1';
+export const APP_VERSION = '2026.06.11-bp-scale-1';
