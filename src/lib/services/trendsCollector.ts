@@ -19,8 +19,12 @@ export const DEFAULT_GEOS = ['US', 'GB', 'CA', 'AU', 'IN', 'SG'];
 /** Collected rows are tagged with this category. */
 export const COLLECTOR_CATEGORY = 'trending';
 
-/** time_range stored for freshly trending items (matches google_trends long form). */
-export const COLLECTOR_TIME_RANGE = 'past_4_hours';
+/**
+ * time_range stored for freshly trending items. The live google_trends table
+ * enforces a CHECK constraint allowing only the short forms ('4h'/'24h'/'48h');
+ * '4h' also matches the BP picker's default scan window.
+ */
+export const COLLECTOR_TIME_RANGE = '4h';
 
 /** Don't re-insert the same keyword+region collected within this many hours. */
 export const COLLECTOR_DEDUPE_HOURS = 24;
