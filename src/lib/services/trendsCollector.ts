@@ -1,4 +1,4 @@
-import { query, getTrendsTableName, getTimestampColumnName } from '../db/client';
+import { query, getClient, getTrendsTableName, getTimestampColumnName } from '../db/client';
 
 /**
  * Google Trends "Daily Trending Searches" RSS collector.
@@ -175,6 +175,8 @@ async function fetchRss(geo: string): Promise<string | null> {
 export interface CollectSummary {
   inserted: number;
   skipped: number;
+  table: string;
+  timestampColumn: string;
   geos: Record<string, { fetched: number; inserted: number; skipped: number }>;
   errors: string[];
 }
@@ -189,7 +191,14 @@ export class TrendsCollector {
     const tsCol = await getTimestampColumnName(table);
     const tsRef = tsCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
 
-    const summary: CollectSummary = { inserted: 0, skipped: 0, geos: {}, errors: [] };
+    const summary: CollectSummary = {
+      inserted: 0,
+      skipped: 0,
+      table,
+      timestampColumn: tsCol,
+      geos: {},
+      errors: [],
+    };
 
     for (const geo of geos) {
       const geoStat = { fetched: 0, inserted: 0, skipped: 0 };
@@ -251,12 +260,18 @@ export class TrendsCollector {
       const insertSql = `INSERT INTO "${table}"
         (id, keyword, search_volume, growth_rate, category, time_range, region, ${tsRef}, created_at)
         VALUES ${valuesSql.join(',')}`;
+      // Use a raw client so INSERT errors surface (the shared query() helper
+      // swallows errors and returns [], which would mask a failed insert).
+      const client = await getClient();
       try {
-        await query(insertSql, params);
-        geoStat.inserted = fresh.length;
-        summary.inserted += fresh.length;
+        const res = await client.query(insertSql, params);
+        const n = res.rowCount ?? fresh.length;
+        geoStat.inserted = n;
+        summary.inserted += n;
       } catch (err) {
         summary.errors.push(`${geo}: insert failed: ${(err as Error).message}`);
+      } finally {
+        client.release();
       }
       summary.skipped += geoStat.skipped;
     }
