@@ -368,6 +368,37 @@ function mapReportRow(row: any): BpReport {
 }
 
 export class BpService {
+  /**
+   * Ops diagnostic (no generation): report how the scheduled picker sees the
+   * world right now — the size of the 7-day completed skip-set, what it would
+   * pick, and whether that pick is (incorrectly) already in the skip-set.
+   */
+  async debugPickDiagnostics(timeRange = '4h'): Promise<{
+    completedCount: number;
+    picked: { keyword: string; norm: string; trendScore: number; inSkipSet: boolean; reusableId: string | null } | null;
+    sampleNorms: string[];
+  }> {
+    const completed = await this.getRecentlyCompletedKeywordNorms();
+    const picked = await this.pickNextUngeneratedTrend(timeRange);
+    let pickedInfo: any = null;
+    if (picked) {
+      const norm = normalizeKeyword(picked.snapshot.keyword);
+      const reusable = await this.findReusable(norm);
+      pickedInfo = {
+        keyword: picked.snapshot.keyword,
+        norm,
+        trendScore: picked.trendScore,
+        inSkipSet: completed.has(norm),
+        reusableId: reusable ? reusable.id : null,
+      };
+    }
+    return {
+      completedCount: completed.size,
+      picked: pickedInfo,
+      sampleNorms: [...completed].slice(0, 8),
+    };
+  }
+
   /** Resolve the source trend: explicit keyword/trendId, else the #1 by search volume. */
   async resolveSourceTrend(input: GenerateBpInput): Promise<BpTrendSnapshot | null> {
     const timeRange = input.timeRange || '4h';

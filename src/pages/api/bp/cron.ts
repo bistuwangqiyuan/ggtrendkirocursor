@@ -10,7 +10,7 @@ export const prerender = false;
  * required, but a valid secret is mandatory so the endpoint cannot be abused
  * to spend LLM credits.
  */
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, url }) => {
   const secret = process.env.CRON_SECRET?.trim();
 
   // Without a configured secret the endpoint is disabled (fail closed).
@@ -22,6 +22,16 @@ export const POST: APIRoute = async ({ request }) => {
   const provided = auth.replace(/^Bearer\s+/i, '').trim();
   if (!provided || provided !== secret) {
     return json({ success: false, error: '未授权' }, 401);
+  }
+
+  // Ops dry-run: report the picker's view without spending LLM credits.
+  if (url.searchParams.get('dryrun') === '1') {
+    try {
+      const diag = await bpService.debugPickDiagnostics('4h');
+      return json({ success: true, dryrun: true, ...diag }, 200);
+    } catch (e) {
+      return json({ success: false, dryrun: true, error: (e as Error).message }, 500);
+    }
   }
 
   if (!isLlmConfigured()) {
