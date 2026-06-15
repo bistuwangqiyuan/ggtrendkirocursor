@@ -425,20 +425,26 @@ export class BpService {
   /**
    * Keyword_norm values with a completed BP within the dedupe window (7 days).
    * Older keywords fall out of the set so the cron regenerates a fresh BP.
-   * Filtering is done via the pure `recentKeywordNormSet` helper (testable).
+   * Windowing is delegated to the DB clock (NOW()) for consistency with the
+   * reuse queries; the pure `recentKeywordNormSet` helper remains unit-tested.
    */
   async getRecentlyCompletedKeywordNorms(windowDays = DEDUPE_WINDOW_DAYS): Promise<Set<string>> {
-    const rows = await query<{ keyword_norm: string; created_at: any }>(
-      `SELECT keyword_norm, created_at FROM bp_reports
+    // Trust the SQL window (DB NOW()) as the single source of truth — the same
+    // clock findReusable / hasCompletedBp / findCompletedByBusinessModel use.
+    // A previous JS-side re-filter (isWithinDays against new Date()) could
+    // disagree with the DB clock for rows near the 7-day boundary: findReusable
+    // would still reuse such a keyword while the picker failed to skip it,
+    // causing a reuse-loop where the batch keeps re-picking the same keyword
+    // instead of advancing to genuinely-new hotwords.
+    const rows = await query<{ keyword_norm: string }>(
+      `SELECT DISTINCT keyword_norm FROM bp_reports
        WHERE status = 'completed' AND keyword_norm IS NOT NULL
          AND created_at >= NOW() - make_interval(days => $1)`,
       [windowDays]
     );
-    const mapped = rows.map((r) => ({
-      keywordNorm: r.keyword_norm,
-      createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
-    }));
-    return recentKeywordNormSet(mapped, new Date(), windowDays);
+    const set = new Set<string>();
+    for (const r of rows) if (r.keyword_norm) set.add(r.keyword_norm);
+    return set;
   }
 
   /**

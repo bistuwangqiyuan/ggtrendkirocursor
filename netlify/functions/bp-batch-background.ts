@@ -36,7 +36,14 @@ export const handler = async (event: { headers?: Record<string, string | undefin
   let generated = 0;
   let skipped = 0;
   let failed = 0;
+  let reused = 0;
   let consecutiveFailures = 0;
+  // Report ids already produced this run. findReusable returns an EXISTING id
+  // (same-keyword reuse); business-model dedup and fresh generations each yield
+  // a NEW id. A repeated id therefore means the picker can't advance to a new
+  // hotword (pool of genuinely-new keywords exhausted) -> stop early instead of
+  // spending the remaining iterations re-emitting the same report.
+  const seenReportIds = new Set<string>();
 
   for (let i = 0; i < batchSize; i++) {
     const controller = new AbortController();
@@ -59,6 +66,13 @@ export const handler = async (event: { headers?: Record<string, string | undefin
       if (res.ok && body?.action === 'generated') {
         generated++;
         consecutiveFailures = 0;
+        const rid: string | undefined = body?.reportId;
+        if (rid && seenReportIds.has(rid)) {
+          reused++;
+          console.log('[bp-batch] repeated report id (reuse-loop / new-keyword pool exhausted); stopping batch early');
+          break;
+        }
+        if (rid) seenReportIds.add(rid);
       } else if (res.ok && body?.action === 'skipped') {
         // Keyword pool exhausted (no eligible trend); stop early.
         skipped++;
@@ -67,9 +81,11 @@ export const handler = async (event: { headers?: Record<string, string | undefin
       } else {
         failed++;
         consecutiveFailures++;
-        // Two failures in a row usually means LLM/all-endpoints down; bail out.
-        if (consecutiveFailures >= 2) {
-          console.error('[bp-batch] 2 consecutive failures; stopping batch early');
+        // Several failures in a row usually means LLM/all-endpoints down; bail
+        // out. Tolerate transient single timeouts so one hiccup doesn't cut a
+        // 10-BP run short.
+        if (consecutiveFailures >= 3) {
+          console.error('[bp-batch] 3 consecutive failures; stopping batch early');
           break;
         }
       }
@@ -77,7 +93,7 @@ export const handler = async (event: { headers?: Record<string, string | undefin
       failed++;
       consecutiveFailures++;
       console.error(`[bp-batch] ${i + 1}/${batchSize} invoke error:`, (err as Error).message);
-      if (consecutiveFailures >= 2) break;
+      if (consecutiveFailures >= 3) break;
     } finally {
       clearTimeout(timer);
     }
@@ -86,7 +102,7 @@ export const handler = async (event: { headers?: Record<string, string | undefin
     if (i < batchSize - 1) await new Promise((r) => setTimeout(r, 1500));
   }
 
-  const summary = `generated=${generated} skipped=${skipped} failed=${failed} of batchSize=${batchSize}`;
+  const summary = `generated=${generated} reused=${reused} skipped=${skipped} failed=${failed} of batchSize=${batchSize}`;
   console.log(`[bp-batch] done: ${summary}`);
   return { statusCode: 200, body: summary };
 };
