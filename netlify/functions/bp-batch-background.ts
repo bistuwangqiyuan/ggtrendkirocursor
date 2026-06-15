@@ -10,7 +10,7 @@ import { clampBatchSize } from '../../src/lib/bpBatch';
  * returns 202 to the caller immediately; this body keeps running.
  *
  * Tunables:
- *   BP_BATCH_SIZE  number of BPs to attempt per run (default 6, clamped 1-10)
+ *   BP_BATCH_SIZE  number of BPs to attempt per run (default 10, clamped 1-10)
  *   CRON_SECRET    bearer secret required by /api/bp/cron
  */
 export const handler = async (event: { headers?: Record<string, string | undefined> }) => {

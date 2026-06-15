@@ -3,7 +3,7 @@ import { schedule } from '@netlify/functions';
 /**
  * Scheduled BP auto-generation. Runs every 6 hours (UTC) and fires the
  * `bp-batch-background` function (15-min budget), which loops and generates
- * several BPs per run (BP_BATCH_SIZE, default 6) for the next eligible
+ * several BPs per run (BP_BATCH_SIZE, default 10) for the next eligible
  * ungenerated hotwords (score > 60, skip duplicates within the 7-day window).
  *
  * This trigger only kicks off the background job and returns immediately, so it

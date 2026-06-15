@@ -13,7 +13,7 @@
 | `LLM_API_ENDPOINTS` | 二选一 | — | 多端点 JSON 数组，配置后**优先**于单端点，失败自动切换 |
 | `LLM_TIMEOUT_MS` | 否 | `45000` | 单次 LLM 请求超时（毫秒） |
 | `CRON_SECRET` | 是（启用定时） | — | 定时任务鉴权密钥，建议 32+ 位随机串（采集与批量生成共用） |
-| `BP_BATCH_SIZE` | 否 | `6` | 每次定时批量生成的 BP 数量（自动钳制到 1-10）。4 次/天 × 6 = 24 份/天（≈6×） |
+| `BP_BATCH_SIZE` | 否 | `10` | 每次定时批量生成的 BP 数量（自动钳制到 1-10）。4 次/天 × 10 = 40 份/天（≈10×） |
 | `TRENDS_TABLE` | 否 | 自动探测 | 强制指定趋势表名（默认在 `google_trends` / `trends_trending_now` 间按行数自动选择） |
 
 > 二选一：`LLM_API_KEY` 与 `LLM_API_ENDPOINTS` 至少配置其一，否则 BP 生成端点返回 503（fail-closed，不做模板回退）。
@@ -58,7 +58,7 @@
 ## 3b. 定时批量自动生成
 
 - 实现：[netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts)，`schedule('0 */6 * * *', ...)`，UTC 每 6 小时整点。该触发器**仅异步拉起**后台批量函数并立即返回（不占用定时函数时长）。
-- 后台批量：[netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts)（`-background` 后缀 → 15 分钟时长上限）循环 `BP_BATCH_SIZE`（默认 6，钳制 1-10）次调用 `POST /api/bp/cron`，**每次生成 1 份 BP**（各自在 26s 同步上限内完成）；遇 `action=skipped`（词池耗尽）或连续 2 次失败则提前结束，调用间隔 1.5s。
+- 后台批量：[netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts)（`-background` 后缀 → 15 分钟时长上限）循环 `BP_BATCH_SIZE`（默认 10，钳制 1-10）次调用 `POST /api/bp/cron`，**每次生成 1 份 BP**（各自在 26s 同步上限内完成）；遇 `action=skipped`（词池耗尽）或连续 2 次失败则提前结束，调用间隔 1.5s。
 - 单次 `POST /api/bp/cron` → `bpService.runScheduledGeneration()`：
   1. `resetStaleGenerating()` 把超过 15 分钟仍 `generating/pending` 的记录置为 `failed`；
   2. 按 `4h` 窗口、`search_volume` 降序扫描趋势（每页 50 条，最多 5 页）；
@@ -140,7 +140,7 @@ BP 相关探针：
 
 ## 6. 成本与安全
 
-- **成本控制**：7 天去重窗口 + `max_tokens` 限制 + 失败不重复落库；精简提示词 + 商业模式回避清单减少无效调用；关键词采集 0 token；定时频率默认 6h。批量产量由 `BP_BATCH_SIZE`（默认 6 → 约 24 份/天）控制。
+- **成本控制**：7 天去重窗口 + `max_tokens` 限制 + 失败不重复落库；精简提示词 + 商业模式回避清单减少无效调用；关键词采集 0 token；定时频率默认 6h。批量产量由 `BP_BATCH_SIZE`（默认 10 → 约 40 份/天）控制。
 - **安全**：cron 强制 `CRON_SECRET`；所有 DB 访问参数化查询；详情页对 LLM 文本默认转义（不使用 `set:html` 渲染不可信内容）；生成端点要求登录用户（cron 除外，靠密钥鉴权）。
 
 ## 7. 变更频率（如需调整）

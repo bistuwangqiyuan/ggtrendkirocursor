@@ -1,5 +1,5 @@
 /** Default number of BPs generated per scheduled batch run. */
-export const DEFAULT_BP_BATCH_SIZE = 6;
+export const DEFAULT_BP_BATCH_SIZE = 10;
 
 /** Hard ceiling so a misconfigured env var can't blow the function budget. */
 export const MAX_BP_BATCH_SIZE = 10;
