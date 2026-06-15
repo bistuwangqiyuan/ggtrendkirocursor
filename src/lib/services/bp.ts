@@ -399,9 +399,29 @@ export class BpService {
     };
   }
 
-  /** Resolve the source trend: explicit keyword/trendId, else the #1 by search volume. */
+  /** Resolve the source trend: exact trendId if given, else keyword/#1 by search volume. */
   async resolveSourceTrend(input: GenerateBpInput): Promise<BpTrendSnapshot | null> {
     const timeRange = input.timeRange || '4h';
+
+    // Prefer the exact trend the scheduler picked. A fuzzy keyword search can
+    // "upgrade" to a higher-volume substring match (e.g. "netflix" ->
+    // "netflix series (4h)"), which may already have a recent BP and cause an
+    // unintended same-keyword reuse loop. Honour the explicit id when present.
+    if (input.trendId) {
+      const byId = await trendsService.getTrendById(input.trendId);
+      if (byId) {
+        return {
+          sourceTrendId: byId.id,
+          keyword: byId.keyword,
+          searchVolume: byId.searchVolume,
+          growthRate: byId.growthRate,
+          category: byId.category,
+          timeRange: byId.timeRange || timeRange,
+          region: byId.region || '',
+          rank: 1,
+        };
+      }
+    }
 
     const res = await trendsService.getTrends({
       timeRange,

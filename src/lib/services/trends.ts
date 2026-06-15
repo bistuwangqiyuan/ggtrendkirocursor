@@ -146,6 +146,49 @@ export class TrendsService {
     }
   }
 
+  /**
+   * Fetch a single trend by its exact id. Used by the scheduled BP generator so
+   * it operates on the precise trend the picker selected, rather than re-running
+   * a fuzzy keyword search (which could "upgrade" to a higher-volume substring
+   * match and trigger an unintended reuse).
+   */
+  async getTrendById(id: string): Promise<Trend | null> {
+    try {
+      const tableName = await getTrendsTableName();
+      const timestampCol = await getTimestampColumnName(tableName);
+      const tsSelect = timestampCol === 'timestamp' ? '"timestamp" as "timestamp"' : 'trend_timestamp as "timestamp"';
+      const sql = `
+        SELECT id, keyword,
+               search_volume as "searchVolume",
+               growth_rate as "growthRate",
+               category,
+               time_range as "timeRange",
+               region,
+               ${tsSelect},
+               created_at as "createdAt"
+        FROM "${tableName}"
+        WHERE id = $1
+        LIMIT 1
+      `;
+      const row = await queryOne<any>(sql, [id]);
+      if (!row) return null;
+      return {
+        id: row.id,
+        keyword: row.keyword,
+        searchVolume: typeof row.searchVolume === 'number' ? row.searchVolume : Number(row.searchVolume) || 0,
+        growthRate: typeof row.growthRate === 'number' ? row.growthRate : parseFloat(row.growthRate) || 0,
+        category: row.category ?? '',
+        timeRange: row.timeRange ?? '',
+        region: row.region ?? '',
+        timestamp: row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp),
+        createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt ?? 0),
+      } as Trend;
+    } catch (error) {
+      console.error('getTrendById error:', (error as Error).message);
+      return null;
+    }
+  }
+
   async getCategories(): Promise<Result<string[], DatabaseError>> {
     try {
       const tableName = await getTrendsTableName();
