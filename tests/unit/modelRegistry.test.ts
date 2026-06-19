@@ -36,6 +36,14 @@ describe('extractModelVersion', () => {
     expect(extractModelVersion('gpt-4o-2024-08-06')).toEqual({ major: 4, minor: 0 });
     expect(extractModelVersion('deepseek-chat')).toEqual({ major: 0, minor: 0 });
   });
+
+  test('does not treat dated snapshot tags as a version number', () => {
+    // 1201 / 2604 are MMDD snapshot tags, not version 1201/2604.
+    expect(extractModelVersion('qwen-max-1201')).toEqual({ major: 0, minor: 0 });
+    expect(extractModelVersion('mistral-medium-2604')).toEqual({ major: 0, minor: 0 });
+    expect(extractModelVersion('claude-3-5-sonnet-20241022')).toEqual({ major: 3, minor: 5 });
+    expect(extractModelVersion('glm-4-0520')).toEqual({ major: 4, minor: 0 });
+  });
 });
 
 describe('scoreModel: generation dominates, then tier, then minor', () => {
@@ -74,6 +82,17 @@ describe('pickBestModel', () => {
   test('picks newest qwen generation', () => {
     const ids = ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-max', 'qwen2.5-72b-instruct'];
     expect(pickBestModel(ids, 'qwen', 'qwen-plus')).toBe('qwen3-max');
+  });
+
+  test('newer generation beats a dated flagship snapshot', () => {
+    // qwen-max-1201 must NOT be read as version 1201 and outrank qwen3-max.
+    const ids = ['qwen-max-1201', 'qwen3-max', 'qwen-plus'];
+    expect(pickBestModel(ids, 'qwen', 'qwen-turbo')).toBe('qwen3-max');
+  });
+
+  test('prefers the clean alias over an equivalent dated snapshot', () => {
+    const ids = ['qwen-max', 'qwen-max-1201'];
+    expect(pickBestModel(ids, 'qwen', 'qwen-turbo')).toBe('qwen-max');
   });
 
   test('returns the configured model when the listing is empty', () => {
