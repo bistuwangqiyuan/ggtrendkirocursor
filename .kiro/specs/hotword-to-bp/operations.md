@@ -12,6 +12,9 @@
 | `LLM_MODEL` | 否 | `qwen-plus` | 单端点：模型名 |
 | `LLM_API_ENDPOINTS` | 二选一 | — | 多端点 JSON 数组，配置后**优先**于单端点，失败自动切换 |
 | `LLM_TIMEOUT_MS` | 否 | `45000` | 单次 LLM 请求超时（毫秒） |
+| `LLM_MODEL_AUTOUPGRADE` | 否 | `true` | 自动升级到供应商同系列最新/最优模型（如 `glm-4`→`glm-5.2`）。设 `false`/`0`/`off` 关闭 |
+| `LLM_MODELS_CACHE_TTL_MS` | 否 | `43200000`（12h） | 自动选型探测结果缓存时长 |
+| `LLM_PROVIDER_RANK` | 否 | 内置排名 | 跨供应商优先级覆盖（JSON：`{"glm":99,"qwen":80}`），数值越大越优先尝试 |
 | `CRON_SECRET` | 是（启用定时） | — | 定时任务鉴权密钥，建议 32+ 位随机串（采集与批量生成共用） |
 | `BP_BATCH_SIZE` | 否 | `10` | 每次定时批量生成的 BP 数量（自动钳制到 1-10）。4 次/天 × 10 = 40 份/天（≈10×） |
 | `TRENDS_TABLE` | 否 | 自动探测 | 强制指定趋势表名（默认在 `google_trends` / `trends_trending_now` 间按行数自动选择） |
@@ -23,6 +26,14 @@
 ```json
 [{"name":"dashscope","base":"https://dashscope.aliyuncs.com/compatible-mode/v1","key":"sk-xxx","model":"qwen-plus"},{"name":"openai","base":"https://api.openai.com/v1","key":"sk-yyy","model":"gpt-4o-mini"}]
 ```
+
+### 模型自动切换与自动升级
+
+- **自动升级**：每次调用前，从各供应商 OpenAI 兼容的 `GET {base}/models` 拉取在线模型清单，在「同系列」中按「代次→小版本→档位」启发式择优（如新出 `glm-5.2` 时，`glm-4` 端点自动升级到 `glm-5.2`；`qwen3-max` 优于 `qwen-plus`）。结果按 `LLM_MODELS_CACHE_TTL_MS` 缓存（默认 12h），探测失败回退到 `model` 配置值，且**永不低于**已配置模型。
+- **自动切换（排名优先）**：多端点按 `LLM_PROVIDER_RANK`（含内置默认）排序，优先尝试排名最高且健康的端点；失败仍自动切换到其余端点（沿用冷却/失效逻辑）。
+- **每端点可选字段**：`family`（覆盖系列识别，如 `"glm"`）、`autoUpgrade:false` 或 `pin:true`（锁定该端点模型，不自动升级）。
+- **排除项**：自动选型只在通用对话模型中择优，跳过 embedding/vision/image/audio/realtime/coder/math 等专用变体（已配置的 `model` 除外，作为下限）。
+- **查看当前选型**：`GET /api/llm/health?resolve=1`（探测并返回各端点 `family`/`rank`/`resolvedModel`，不暴露密钥）。
 
 ## 2. 首次部署清单
 

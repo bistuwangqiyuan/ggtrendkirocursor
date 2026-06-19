@@ -11,6 +11,13 @@
  *   LLM_TIMEOUT_MS (default 45000)
  */
 
+import {
+  resolveBestModel,
+  detectModelFamily,
+  providerRank,
+  getCachedResolvedModel,
+} from './modelRegistry';
+
 const DEFAULT_BASE = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 const DEFAULT_MODEL = 'qwen-plus';
 const DEFAULT_TIMEOUT_MS = 45000;
@@ -41,6 +48,11 @@ export interface LlmEndpoint {
   base: string;
   apiKey: string;
   model: string;
+  /** Optional family override (e.g. 'glm', 'qwen') for auto-upgrade detection. */
+  family?: string;
+  /** Set false (or pin=true) to disable auto-upgrade for this endpoint. */
+  autoUpgrade?: boolean;
+  pin?: boolean;
 }
 
 export interface LlmJsonResult<T> {
@@ -80,12 +92,17 @@ export function parseLlmEndpoints(): LlmEndpoint[] {
             const apiKey = String(e?.key ?? e?.apiKey ?? '').trim();
             if (!apiKey) return null;
             const base = String(e?.base ?? e?.apiBase ?? DEFAULT_BASE).trim().replace(/\/$/, '');
-            return {
+            const ep: LlmEndpoint = {
               name: String(e?.name ?? `endpoint-${i + 1}`).trim() || `endpoint-${i + 1}`,
               base: base || DEFAULT_BASE,
               apiKey,
               model: String(e?.model ?? process.env.LLM_MODEL ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL,
-            } satisfies LlmEndpoint;
+            };
+            const family = String(e?.family ?? '').trim();
+            if (family) ep.family = family;
+            if (e?.autoUpgrade === false) ep.autoUpgrade = false;
+            if (e?.pin === true) ep.pin = true;
+            return ep;
           })
           .filter((e): e is LlmEndpoint => e !== null);
         if (endpoints.length > 0) return endpoints;
@@ -106,19 +123,36 @@ export function parseLlmEndpoints(): LlmEndpoint[] {
   }];
 }
 
-/** Order endpoints: preferred first, then others; skip cooled-down entries. */
+/**
+ * Order endpoints for an attempt and drop cooled-down ones.
+ *
+ * Default (no `ranks`): preferred-first rotation (legacy behaviour).
+ *
+ * With `ranks` (one score per endpoint index): try the highest-ranked endpoint
+ * first so we always prefer the best model, using the preferred-first rotation
+ * distance only as a tiebreak among equal ranks. This keeps full failover —
+ * lower-ranked endpoints are still attempted if better ones fail.
+ */
 export function orderEndpointsForAttempt(
   endpoints: LlmEndpoint[],
   preferred: number,
   cooldown: Map<number, number>,
-  now = Date.now()
+  now = Date.now(),
+  ranks?: number[]
 ): { endpoint: LlmEndpoint; index: number }[] {
   if (endpoints.length === 0) return [];
   const safePreferred = ((preferred % endpoints.length) + endpoints.length) % endpoints.length;
+  const rotationDistance = (idx: number) => (idx - safePreferred + endpoints.length) % endpoints.length;
+
   const order: number[] = [];
-  for (let i = 0; i < endpoints.length; i++) {
-    order.push((safePreferred + i) % endpoints.length);
+  for (let i = 0; i < endpoints.length; i++) order.push(i);
+
+  if (ranks && ranks.length === endpoints.length) {
+    order.sort((a, b) => (ranks[b] - ranks[a]) || (rotationDistance(a) - rotationDistance(b)));
+  } else {
+    order.sort((a, b) => rotationDistance(a) - rotationDistance(b));
   }
+
   return order
     .filter((idx) => (cooldown.get(idx) ?? 0) <= now)
     .map((idx) => ({ endpoint: endpoints[idx], index: idx }));
@@ -228,7 +262,13 @@ async function tryEndpointOnce<T>(
   opts: ChatOptions,
   timeoutMs: number
 ): Promise<LlmJsonResult<T>> {
-  const { content, model, tokensUsed } = await chatOnce(endpoint, opts, timeoutMs);
+  // Auto-upgrade to the best available model in this provider's family (cached;
+  // never downgrades below the configured model). Falls back transparently.
+  const upgradedModel = await resolveBestModel(endpoint);
+  const effectiveEndpoint = upgradedModel && upgradedModel !== endpoint.model
+    ? { ...endpoint, model: upgradedModel }
+    : endpoint;
+  const { content, model, tokensUsed } = await chatOnce(effectiveEndpoint, opts, timeoutMs);
   const jsonStr = extractJsonObject(content) ?? content;
   try {
     const data = JSON.parse(jsonStr) as T;
@@ -250,7 +290,10 @@ export async function generateJson<T = any>(opts: ChatOptions): Promise<LlmJsonR
   }
 
   const timeoutMs = getTimeoutMs();
-  const ordered = orderEndpointsForAttempt(endpoints, preferredEndpointIndex, endpointCooldownUntil);
+  // Rank endpoints by curated provider quality so the best model is tried first,
+  // with full failover to the rest.
+  const ranks = endpoints.map((e) => providerRank(e.family || detectModelFamily(e.model, e.base)));
+  const ordered = orderEndpointsForAttempt(endpoints, preferredEndpointIndex, endpointCooldownUntil, Date.now(), ranks);
   if (ordered.length === 0) {
     // All cooled down — try full list anyway
     ordered.push(...endpoints.map((endpoint, index) => ({ endpoint, index })));
@@ -294,9 +337,23 @@ export function resetLlmFailoverState(): void {
   endpointCooldownUntil.clear();
 }
 
+/**
+ * Probe every configured provider's /models endpoint to warm the resolved-model
+ * cache (so diagnostics show the auto-upgraded model). Never throws.
+ */
+export async function warmResolvedModels(): Promise<void> {
+  const endpoints = parseLlmEndpoints();
+  await Promise.all(endpoints.map((e) => resolveBestModel(e).catch(() => e.model)));
+}
+
 export interface LlmEndpointStatus {
   name: string;
+  /** Configured model from env. */
   model: string;
+  /** Auto-upgraded model currently in use (from cache; null until first probe). */
+  resolvedModel: string | null;
+  family: string;
+  rank: number;
   base: string;
   preferred: boolean;
   cooledDown: boolean;
@@ -321,9 +378,13 @@ export function getLlmEndpointStatus(now = Date.now()): {
     count: endpoints.length,
     endpoints: endpoints.map((e, i) => {
       const until = endpointCooldownUntil.get(i) ?? 0;
+      const family = e.family || detectModelFamily(e.model, e.base);
       return {
         name: e.name,
         model: e.model,
+        resolvedModel: getCachedResolvedModel(e, now),
+        family,
+        rank: providerRank(family),
         base: e.base,
         preferred: i === safePreferred,
         cooledDown: until > now,

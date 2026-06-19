@@ -92,6 +92,24 @@ describe('orderEndpointsForAttempt', () => {
     const ordered = orderEndpointsForAttempt(endpoints, 1, cooldown);
     expect(ordered.map((o) => o.index)).toEqual([2, 0]);
   });
+
+  test('rank-first ordering tries the highest-ranked endpoint first', () => {
+    // ranks: e0=10, e1=30, e2=20 -> order by rank desc: 1, 2, 0
+    const ordered = orderEndpointsForAttempt(endpoints, 0, new Map(), Date.now(), [10, 30, 20]);
+    expect(ordered.map((o) => o.index)).toEqual([1, 2, 0]);
+  });
+
+  test('rank-first uses preferred-rotation only as a tiebreak among equal ranks', () => {
+    // all equal rank -> falls back to preferred-first rotation (preferred=2)
+    const ordered = orderEndpointsForAttempt(endpoints, 2, new Map(), Date.now(), [5, 5, 5]);
+    expect(ordered.map((o) => o.index)).toEqual([2, 0, 1]);
+  });
+
+  test('rank-first still drops cooled-down endpoints', () => {
+    const cooldown = new Map([[1, Date.now() + 60_000]]);
+    const ordered = orderEndpointsForAttempt(endpoints, 0, cooldown, Date.now(), [10, 30, 20]);
+    expect(ordered.map((o) => o.index)).toEqual([2, 0]);
+  });
 });
 
 describe('isSwitchableLlmError', () => {
