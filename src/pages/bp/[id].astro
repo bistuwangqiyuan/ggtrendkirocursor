@@ -1,6 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { bpService } from '../../lib/services/bp';
+import { isDbDown } from '../../lib/db/client';
 import { getTranslations } from '../../lib/i18n';
 import { formatNumber, formatDateTime } from '../../lib/utils/format';
 
@@ -11,8 +12,11 @@ const t = getTranslations(locale);
 
 const { id } = Astro.params;
 const result = await bpService.getById(id || '');
+const degraded = isDbDown();
 
-if (!result.success && result.error.code === 'NOT_FOUND') {
+// During an outage, don't hard-404 a report that may well exist — render a
+// graceful degraded notice instead. Only 404 a genuine miss while the DB is up.
+if (!degraded && !result.success && result.error.code === 'NOT_FOUND') {
   return new Response(null, { status: 404 });
 }
 
@@ -54,7 +58,13 @@ const selectedOpp = opportunities.find((o) => o.isSelected);
       )}
     </div>
 
-    {!report && (
+    {!report && degraded && (
+      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-6 py-12 text-center text-amber-300" data-testid="degraded-notice">
+        {t.common.serviceUnavailable}
+      </div>
+    )}
+
+    {!report && !degraded && (
       <div class="rounded-lg border border-red-500/20 bg-red-500/10 px-6 py-12 text-center text-red-400">
         {t.bp.failed}
       </div>

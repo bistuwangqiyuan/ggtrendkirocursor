@@ -1,5 +1,6 @@
 import { defineMiddleware } from 'astro:middleware';
 import { authService } from './lib/services/auth';
+import { isDbDown } from './lib/db/client';
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { cookies, locals, request } = context;
@@ -7,7 +8,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // 1. Handle Locale
   let locale: 'zh' | 'en' = 'zh'; // Default to zh as per requirement
   const localeCookie = cookies.get('locale')?.value;
-  
+
   if (localeCookie === 'en' || localeCookie === 'zh') {
     locale = localeCookie;
   } else {
@@ -31,25 +32,31 @@ export const onRequest = defineMiddleware(async (context, next) => {
       locale = 'zh';
     }
   }
-  
+
   locals.locale = locale;
 
   // 2. Handle Authentication
   const token = cookies.get('session_token')?.value;
-  
-  if (token) {
+
+  // During a DB outage, skip session validation entirely and proceed as
+  // anonymous for this request WITHOUT touching the cookie. Otherwise a
+  // transient outage would log every user out (validateSession can't reach the
+  // DB -> looks like an invalid token -> cookie deleted).
+  if (token && !isDbDown()) {
     const result = await authService.validateSession(token);
     if (result.success) {
       locals.user = result.data;
-      
+
       // If user has a saved locale preference, use it
       if (locals.user.locale && locals.user.locale !== locale) {
         locals.locale = locals.user.locale;
         // Update cookie to match user preference
         cookies.set('locale', locals.user.locale, { path: '/', maxAge: 60 * 60 * 24 * 365 });
       }
-    } else {
-      // Invalid token (expired or wrong), clean it up
+    } else if (!isDbDown()) {
+      // Only clear a genuinely invalid/expired token. If the breaker tripped
+      // while validating (DB went down mid-request), keep the cookie so the
+      // session survives the outage.
       cookies.delete('session_token', { path: '/' });
     }
   }

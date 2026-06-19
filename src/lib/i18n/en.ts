@@ -11,6 +11,7 @@ export const en = {
     lastUpdated: 'Last updated',
     menuOpen: 'Open menu',
     menuClose: 'Close menu',
+    serviceUnavailable: 'The data service is temporarily unavailable. Please try again shortly.',
     metaDescription: 'Trend Now — Google Trends hotword mining, AI business analysis, and automated business plan generation for online opportunities.',
     metaKeywords: 'Google Trends, hotword analysis, AI business plan, startup opportunities, trend data, business plan generator',
   },

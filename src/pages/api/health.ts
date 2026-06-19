@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { pool } from '../../lib/db/client';
+import { pool, isDbDown } from '../../lib/db/client';
 import { APP_VERSION } from '../../version';
 
 export const GET: APIRoute = async () => {
@@ -61,6 +61,7 @@ export const GET: APIRoute = async () => {
     },
     database: {
       connected: dbConnected,
+      dbDown: isDbDown(),
       tableCount,
       tables,
       error: dbError

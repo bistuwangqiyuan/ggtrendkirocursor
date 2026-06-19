@@ -1,2 +1,2 @@
 // Bumped on each deploy so a live /api/health poll can confirm the new build is live.
-export const APP_VERSION = '2026.06.16-bp-batch10-4';
+export const APP_VERSION = '2026.06.19-db-resilience-1';

@@ -4,6 +4,7 @@ import TrendsTable from '../components/trends/TrendsTable.astro';
 import { TrendsFilters } from '../components/trends/TrendsFilters';
 import { Pagination } from '../components/trends/Pagination';
 import { trendsService } from '../lib/services/trends';
+import { isDbDown } from '../lib/db/client';
 import { getTranslations } from '../lib/i18n';
 import type { TrendsQueryParams } from '../types/index';
 
@@ -44,7 +45,7 @@ const trendsData = trendsResult.success
   ? trendsResult.data
   : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
 const categories = categoriesResult.success ? categoriesResult.data : [];
-const error = !trendsResult.success ? trendsResult.error : null;
+const degraded = isDbDown() || !trendsResult.success;
 const isLoggedIn = !!Astro.locals.user;
 const topTrend = trendsData.trends[0];
 
@@ -60,8 +61,8 @@ const timeLabel = usedFallback
       <div class={`text-sm ${usedFallback ? 'text-amber-400/90' : 'text-gray-400'}`}>{timeLabel}</div>
     </div>
 
-    {error && (
-      <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg">{t.auth.errors.generic}</div>
+    {degraded && (
+      <div class="bg-amber-500/10 border border-amber-500/20 text-amber-300 px-4 py-3 rounded-lg" data-testid="degraded-notice">{t.common.serviceUnavailable}</div>
     )}
 
     {topTrend && (
