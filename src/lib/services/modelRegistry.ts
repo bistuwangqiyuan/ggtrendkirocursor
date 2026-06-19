@@ -99,7 +99,8 @@ export function extractModelVersion(id: string): { major: number; minor: number 
   const noDate = (id || '')
     .toLowerCase()
     .replace(/\b20\d{2}[-_]?\d{2}[-_]?\d{2}\b/g, ' ') // full date: 2026-04-01 / 20260401
-    .replace(/[-_]\d{4,8}\b/g, ' '); // snapshot tag: -1201 / -2604 / -250601 (never a real version)
+    .replace(/[-_]\d{4,8}\b/g, ' ') // snapshot tag: -1201 / -2604 / -250601 (never a real version)
+    .replace(/\b\d+(?:\.\d+)?\s*[bmk]\b/g, ' '); // param size / context: 72b, 7b, 1m, 128k (not a version)
   const m = noDate.match(/(\d+)(?:[._-](\d+))?/);
   if (!m) return { major: 0, minor: 0 };
   const major = parseInt(m[1], 10) || 0;

@@ -44,6 +44,13 @@ describe('extractModelVersion', () => {
     expect(extractModelVersion('claude-3-5-sonnet-20241022')).toEqual({ major: 3, minor: 5 });
     expect(extractModelVersion('glm-4-0520')).toEqual({ major: 4, minor: 0 });
   });
+
+  test('does not treat parameter sizes / context windows as a version', () => {
+    // 72b is a parameter count, 128k a context window -- neither is version 72/128.
+    expect(extractModelVersion('qwen-72b-chat')).toEqual({ major: 0, minor: 0 });
+    expect(extractModelVersion('qwen2.5-72b-instruct')).toEqual({ major: 2, minor: 5 });
+    expect(extractModelVersion('moonshot-v1-128k')).toEqual({ major: 1, minor: 0 });
+  });
 });
 
 describe('scoreModel: generation dominates, then tier, then minor', () => {
@@ -92,6 +99,12 @@ describe('pickBestModel', () => {
 
   test('prefers the clean alias over an equivalent dated snapshot', () => {
     const ids = ['qwen-max', 'qwen-max-1201'];
+    expect(pickBestModel(ids, 'qwen', 'qwen-turbo')).toBe('qwen-max');
+  });
+
+  test('an old large-parameter model does not beat the current flagship', () => {
+    // qwen-72b-chat must not be read as version 72 and outrank qwen-max.
+    const ids = ['qwen-72b-chat', 'qwen-max', 'qwen-plus'];
     expect(pickBestModel(ids, 'qwen', 'qwen-turbo')).toBe('qwen-max');
   });
 
