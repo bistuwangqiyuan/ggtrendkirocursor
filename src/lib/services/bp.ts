@@ -942,7 +942,7 @@ export class BpService {
         userPrompt: buildUserPrompt(trend, avoidLine),
         temperature: 0.7,
         maxTokens: 4000,
-        timeoutMs: opts?.llmTimeoutMs,
+        deadlineMs: opts?.llmTimeoutMs,
       });
 
       const content = validateAndNormalizeBpContent(llm.data);

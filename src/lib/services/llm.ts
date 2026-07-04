@@ -69,13 +69,19 @@ interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
   /**
-   * Per-call timeout override (ms). Callers running inside Netlify's 26s
-   * synchronous function budget should pass a tight value (e.g. 18000) so the
-   * failure is caught and recorded instead of the whole function being killed;
-   * background functions (15-min budget) can use the full default.
+   * TOTAL time budget (ms) across all endpoints/retries. Callers running
+   * inside Netlify's 26s synchronous function budget should pass a tight
+   * value (e.g. 18000) so failures are caught and recorded inside the
+   * function instead of the function being killed mid-write; each attempt's
+   * timeout is capped by the remaining budget, and no new attempt starts
+   * once the budget is nearly spent. Background functions (15-min budget)
+   * omit this and use the full per-attempt default.
    */
-  timeoutMs?: number;
+  deadlineMs?: number;
 }
+
+/** Don't start another LLM attempt with less than this much budget left. */
+const MIN_ATTEMPT_BUDGET_MS = 3000;
 
 /** Last successful endpoint index (in-memory; warm serverless instances reuse it). */
 let preferredEndpointIndex = 0;
@@ -296,7 +302,8 @@ export async function generateJson<T = any>(opts: ChatOptions): Promise<LlmJsonR
     throw new LlmError('LLM_NOT_CONFIGURED', 'No LLM API configured (set LLM_API_KEY or LLM_API_ENDPOINTS)');
   }
 
-  const timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : getTimeoutMs();
+  const defaultTimeoutMs = getTimeoutMs();
+  const deadlineAt = opts.deadlineMs && opts.deadlineMs > 0 ? Date.now() + opts.deadlineMs : null;
   // Rank endpoints by curated provider quality so the best model is tried first,
   // with full failover to the rest.
   const ranks = endpoints.map((e) => providerRank(e.family || detectModelFamily(e.model, e.base)));
@@ -308,8 +315,18 @@ export async function generateJson<T = any>(opts: ChatOptions): Promise<LlmJsonR
 
   const errors: string[] = [];
 
+  outer:
   for (const { endpoint, index } of ordered) {
     for (let attempt = 0; attempt < 2; attempt++) {
+      let timeoutMs = defaultTimeoutMs;
+      if (deadlineAt !== null) {
+        const remaining = deadlineAt - Date.now();
+        if (remaining < MIN_ATTEMPT_BUDGET_MS) {
+          errors.push(`deadline budget exhausted (${opts.deadlineMs}ms total)`);
+          break outer;
+        }
+        timeoutMs = Math.min(defaultTimeoutMs, remaining);
+      }
       try {
         return await tryEndpointOnce<T>(endpoint, index, opts, timeoutMs);
       } catch (err) {
