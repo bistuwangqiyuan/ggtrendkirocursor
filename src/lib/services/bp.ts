@@ -1141,7 +1141,7 @@ export class BpService {
     return { success: true, data: report };
     } catch (error) {
       console.error('bpService.getById error:', (error as Error).message);
-      return { success: false, error: { code: 'DB_ERROR', message: '无法读取 BP 详情' } };
+      return { success: false, error: { code: 'DB_ERROR', message: `无法读取 BP 详情: ${(error as Error).message}` } };
     }
   }
 
