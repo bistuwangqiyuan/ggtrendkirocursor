@@ -15,7 +15,13 @@ import {
   DEDUPE_WINDOW_DAYS,
   isWithinDays,
   recentKeywordNormSet,
+  failedKeywordNormSet,
+  FAILURE_SKIP_MIN_COUNT,
+  FAILURE_SKIP_WINDOW_HOURS,
   buildAvoidModelsLine,
+  parseWinRateRange,
+  recomputeSeedReturn,
+  buildSeedCalibrationNote,
 } from '../../src/lib/services/bp';
 import type { Trend } from '../../src/types';
 import { extractJsonObject } from '../../src/lib/services/llm';
@@ -377,4 +383,166 @@ describe('recentKeywordNormSet', () => {
     expect(set.has('in')).toBe(true);
     expect(set.has('out')).toBe(false);
   });
+});
+
+describe('failedKeywordNormSet (failure circuit breaker)', () => {
+  const now = new Date('2026-07-03T12:00:00Z');
+  const hoursAgo = (n: number) => new Date(now.getTime() - n * 60 * 60 * 1000);
+
+  test('keyword with >= min failures within the window is circuit-broken', () => {
+    const rows = [
+      { keywordNorm: 'bad', createdAt: hoursAgo(1) },
+      { keywordNorm: 'bad', createdAt: hoursAgo(6) },
+    ];
+    const set = failedKeywordNormSet(rows, now);
+    expect(set.has('bad')).toBe(true);
+  });
+
+  test('a single failure does not trip the breaker (tolerates transient errors)', () => {
+    const set = failedKeywordNormSet([{ keywordNorm: 'once', createdAt: hoursAgo(2) }], now);
+    expect(set.has('once')).toBe(false);
+    expect(FAILURE_SKIP_MIN_COUNT).toBe(2);
+  });
+
+  test('failures outside the window are ignored (keyword becomes eligible again)', () => {
+    const rows = [
+      { keywordNorm: 'old', createdAt: hoursAgo(FAILURE_SKIP_WINDOW_HOURS + 1) },
+      { keywordNorm: 'old', createdAt: hoursAgo(FAILURE_SKIP_WINDOW_HOURS + 2) },
+    ];
+    const set = failedKeywordNormSet(rows, now);
+    expect(set.has('old')).toBe(false);
+  });
+
+  test('mixed in/out-of-window failures only count the in-window ones', () => {
+    const rows = [
+      { keywordNorm: 'mixed', createdAt: hoursAgo(1) },
+      { keywordNorm: 'mixed', createdAt: hoursAgo(FAILURE_SKIP_WINDOW_HOURS + 5) },
+    ];
+    // Only 1 failure inside the window -> not circuit-broken.
+    expect(failedKeywordNormSet(rows, now).has('mixed')).toBe(false);
+  });
+
+  test('future timestamps and empty norms are skipped', () => {
+    const rows = [
+      { keywordNorm: 'future', createdAt: hoursAgo(-1) },
+      { keywordNorm: 'future', createdAt: hoursAgo(-2) },
+      { keywordNorm: '', createdAt: hoursAgo(1) },
+    ];
+    expect(failedKeywordNormSet(rows, now).size).toBe(0);
+  });
+
+  test('independent keywords are counted separately', () => {
+    const rows = [
+      { keywordNorm: 'a', createdAt: hoursAgo(1) },
+      { keywordNorm: 'a', createdAt: hoursAgo(2) },
+      { keywordNorm: 'b', createdAt: hoursAgo(3) },
+    ];
+    const set = failedKeywordNormSet(rows, now);
+    expect(set.has('a')).toBe(true);
+    expect(set.has('b')).toBe(false);
+  });
+});
+
+describe('parseWinRateRange', () => {
+  test('parses a percent range and returns lo/hi/mid', () => {
+    expect(parseWinRateRange('约8%-12%')).toEqual({ lo: 8, hi: 12, mid: 10 });
+  });
+
+  test('single value collapses to itself', () => {
+    expect(parseWinRateRange('10%')).toEqual({ lo: 10, hi: 10, mid: 10 });
+  });
+
+  test('non-string / no numbers -> null', () => {
+    expect(parseWinRateRange(undefined)).toBeNull();
+    expect(parseWinRateRange('无')).toBeNull();
+  });
+});
+
+describe('recomputeSeedReturn (deterministic basis)', () => {
+  test('recomputes annualized book and the EV / risk-adjusted intervals', () => {
+    // Year-5 book ROI 100% -> M=2.0; annualized = 2^(1/5)-1 ≈ 14.87%.
+    // p=10% -> EV in [0.2, 0.2+0.9=1.1]; risk-adj in [0.2^(1/5)-1, 1.1^(1/5)-1]
+    //        ≈ [-27.52%, +1.92%].
+    const rc = recomputeSeedReturn({ bookRoiByYear: [20, 40, 60, 80, 100], winRate: '约10%' })!;
+    expect(rc.bookMultiple).toBe(2);
+    expect(rc.annualizedBookPct).toBeCloseTo(14.87, 1);
+    expect(rc.winRateMidPct).toBe(10);
+    expect(rc.evMoicLo).toBeCloseTo(0.2, 5);
+    expect(rc.evMoicHi).toBeCloseTo(1.1, 5);
+    expect(rc.riskAdjustedAnnualizedLoPct).toBeCloseTo(-27.52, 1);
+    expect(rc.riskAdjustedAnnualizedHiPct).toBeCloseTo(1.92, 1);
+  });
+
+  test('win-rate range uses the midpoint', () => {
+    const rc = recomputeSeedReturn({ bookRoiByYear: [0, 0, 0, 0, 400], winRate: '约8%-12%' })!;
+    expect(rc.bookMultiple).toBe(5);
+    expect(rc.evMoicLo).toBeCloseTo(0.5, 5);
+    expect(rc.evMoicHi).toBeCloseTo(1.4, 5);
+  });
+
+  test('returns null on missing inputs', () => {
+    expect(recomputeSeedReturn({ bookRoiByYear: [1, 2], winRate: '10%' })).toBeNull();
+    expect(recomputeSeedReturn({ bookRoiByYear: [0, 0, 0, 0, 100], winRate: 'n/a' })).toBeNull();
+  });
+
+  test('non-positive book multiple returns null (total loss beyond -100%)', () => {
+    expect(recomputeSeedReturn({ bookRoiByYear: [0, 0, 0, 0, -100], winRate: '10%' })).toBeNull();
+  });
+});
+
+describe('buildSeedCalibrationNote', () => {
+  test('silent when reported metrics fall inside the recomputed intervals', () => {
+    // M=2 -> annualized 14.87%; p=10% -> EV in [0.2, 1.1]; risk-adj in [-27.52%, 1.92%].
+    const note = buildSeedCalibrationNote({
+      bookRoiByYear: [20, 40, 60, 80, 100],
+      annualizedBook: '约15%',
+      winRate: '约10%',
+      expectedValueMOIC: '约0.8x',
+      riskAdjustedAnnualized: '约-5%',
+    });
+    expect(note).toBe('');
+  });
+
+  test('flags the real-world inconsistency found in production data', () => {
+    // Live sample: annualized 30% with bookRoiByYear ending at 100% and
+    // risk-adjusted 10% at p=10-15% — both inconsistent with the formulas.
+    const note = buildSeedCalibrationNote({
+      bookRoiByYear: [20, 40, 60, 80, 100],
+      annualizedBook: '30%',
+      winRate: '约10%-15%',
+      expectedValueMOIC: '约1.5x',
+      riskAdjustedAnnualized: '约10%',
+    });
+    expect(note).toContain('【复算校准】');
+    expect(note).toContain('账面年化自报 30%');
+    expect(note).toContain('verify_bp_math.py');
+  });
+
+  test('validateAndNormalizeBpContent appends the calibration note to seed notes', () => {
+    const raw = validRawForCalibration();
+    const content = validateAndNormalizeBpContent(raw);
+    expect(content.seedReturn.notes).toContain('【复算校准】');
+  });
+
+  function validRawForCalibration() {
+    const fullScores = { market: 5, roi: 5, onlineability: 5, feasibility: 5, speed: 5, moat: 5 };
+    return {
+      title: 'T',
+      summary: 'S',
+      selectedOpportunity: 'x',
+      opportunities: ['A', 'B', 'C', 'D', 'E'].map((name) => ({ name, description: name, scores: fullScores })),
+      market: { tam: '1', sam: '1', som: '1' },
+      businessModel: 'm',
+      financials: { years: [] },
+      seedReturn: {
+        bookRoiByYear: [20, 40, 60, 80, 100],
+        annualizedBook: '30%', // inconsistent on purpose (should be ≈14.87%)
+        winRate: '10%',
+        profitLossRatio: '5:1',
+        expectedValueMOIC: '1.5x',
+        riskAdjustedAnnualized: '10%',
+        notes: 'base note',
+      },
+    };
+  }
 });

@@ -19,31 +19,30 @@ export function Pagination({ basePath = '/trends', currentPage, totalPages, tota
     window.location.href = `${basePath}?${params.toString()}`;
   };
 
-  const startItem = (currentPage - 1) * pageSize + 1;
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const endItem = Math.min(currentPage * pageSize, totalItems);
 
   return (
-    <div class="flex flex-col sm:flex-row justify-between items-center mt-6 gap-4">
-      <div class="text-sm text-gray-400">
-        {t.showing} <span class="font-medium text-white">{startItem}</span> {t.to} <span class="font-medium text-white">{endItem}</span> {t.of} <span class="font-medium text-white">{totalItems}</span> {t.results}
+    <div className="flex flex-col sm:flex-row justify-between items-center mt-6 gap-4">
+      <div className="text-sm text-gray-400">
+        {t.showing} <span className="font-medium text-white">{startItem}</span> {t.to} <span className="font-medium text-white">{endItem}</span> {t.of} <span className="font-medium text-white">{totalItems}</span> {t.results}
       </div>
-      
-      <div class="flex items-center gap-2">
+
+      <div className="flex items-center gap-2">
         <button
           onClick={() => handlePageChange(currentPage - 1)}
           disabled={currentPage <= 1}
-          class="px-3 py-1 rounded border border-gray-700 bg-gray-800 text-sm font-medium text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="px-3 py-1 rounded border border-gray-700 bg-gray-800 text-sm font-medium text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {t.prev}
         </button>
-        
-        <div class="flex items-center gap-1">
-          {/* Simplified pagination: Just Show Current / Total */}
-          <span class="px-3 py-1 rounded border border-blue-500 bg-blue-600 text-white text-sm font-medium">
+
+        <div className="flex items-center gap-1">
+          <span className="px-3 py-1 rounded border border-blue-500 bg-blue-600 text-white text-sm font-medium">
             {currentPage}
           </span>
-          <span class="text-gray-500">/</span>
-          <span class="px-3 py-1 text-gray-400 text-sm">
+          <span className="text-gray-500">/</span>
+          <span className="px-3 py-1 text-gray-400 text-sm">
             {totalPages}
           </span>
         </div>
@@ -51,7 +50,7 @@ export function Pagination({ basePath = '/trends', currentPage, totalPages, tota
         <button
           onClick={() => handlePageChange(currentPage + 1)}
           disabled={currentPage >= totalPages}
-          class="px-3 py-1 rounded border border-gray-700 bg-gray-800 text-sm font-medium text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="px-3 py-1 rounded border border-gray-700 bg-gray-800 text-sm font-medium text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {t.next}
         </button>
@@ -59,4 +58,3 @@ export function Pagination({ basePath = '/trends', currentPage, totalPages, tota
     </div>
   );
 }
-

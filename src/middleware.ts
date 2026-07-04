@@ -47,11 +47,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
     if (result.success) {
       locals.user = result.data;
 
-      // If user has a saved locale preference, use it
-      if (locals.user.locale && locals.user.locale !== locale) {
-        locals.locale = locals.user.locale;
-        // Update cookie to match user preference
-        cookies.set('locale', locals.user.locale, { path: '/', maxAge: 60 * 60 * 24 * 365 });
+      // Apply the saved locale preference ONLY when this browser has no explicit
+      // cookie yet (e.g. first visit on a new device). When a cookie exists it
+      // represents the user's most recent choice — the switch endpoint keeps
+      // users.locale in sync — so overriding it here would make language
+      // switching impossible for logged-in users (the old behaviour).
+      const hasExplicitCookie = localeCookie === 'en' || localeCookie === 'zh';
+      const saved = locals.user.locale;
+      if (!hasExplicitCookie && (saved === 'en' || saved === 'zh') && saved !== locale) {
+        locals.locale = saved;
+        cookies.set('locale', saved, { path: '/', maxAge: 60 * 60 * 24 * 365, sameSite: 'lax' });
       }
     } else if (!isDbDown()) {
       // Only clear a genuinely invalid/expired token. If the breaker tripped

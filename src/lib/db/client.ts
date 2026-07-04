@@ -150,7 +150,10 @@ export async function query<T = any>(text: string, params?: any[]): Promise<T[]>
       error: (error as Error).message,
       stack: (error as Error).stack?.split('\n').slice(0, 3).join('\n')
     });
-    return [];
+    // Real errors propagate to the caller. Swallowing them here (returning [])
+    // used to make writes look successful (e.g. newsletter INSERTs into a
+    // missing table returned 201) and silently disabled BP dedup checks.
+    throw error;
   }
 }
 

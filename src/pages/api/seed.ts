@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { pool } from '../../lib/db/client';
+import { authorizeAdminRequest } from '../../lib/utils/adminAuth';
 import { uniqueNamesGenerator, adjectives, colors, animals } from 'unique-names-generator';
 
 const CATEGORIES = [
@@ -24,9 +25,9 @@ function getRandomFloat(min: number, max: number) {
 }
 
 export const POST: APIRoute = async ({ request }) => {
-  const url = new URL(request.url);
-  if (url.searchParams.get('secret') !== 'trendnow-seed') {
-      return new Response('Unauthorized', { status: 401 });
+  const auth = authorizeAdminRequest(request);
+  if (!auth.ok) {
+    return new Response(auth.message, { status: auth.status });
   }
 
   try {

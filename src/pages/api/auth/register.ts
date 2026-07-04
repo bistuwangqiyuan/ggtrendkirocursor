@@ -1,7 +1,12 @@
 import type { APIRoute } from 'astro';
 import { authService } from '../../../lib/services/auth';
+import { rateLimit, rateLimitResponse, clientIpFromRequest } from '../../../lib/utils/rateLimit';
 
 export const POST: APIRoute = async ({ request }) => {
+  // Abuse baseline: 5 registrations per IP per minute.
+  const rl = rateLimit(`register:${clientIpFromRequest(request)}`, 5, 60_000);
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   try {
     const body = await request.json();
     const { username, email, password } = body;

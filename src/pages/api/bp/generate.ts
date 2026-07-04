@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
-import { bpService } from '../../../lib/services/bp';
+import { bpService, SYNC_LLM_TIMEOUT_MS } from '../../../lib/services/bp';
 import { isLlmConfigured } from '../../../lib/services/llm';
+import { rateLimit, rateLimitResponse } from '../../../lib/utils/rateLimit';
 
 export const prerender = false;
 
@@ -12,6 +13,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  // LLM spend guards: 3 generations per user per minute, 20 per user per day.
+  const perMinute = rateLimit(`bpgen-m:${locals.user.id}`, 3, 60_000);
+  if (!perMinute.allowed) return rateLimitResponse(perMinute);
+  const perDay = rateLimit(`bpgen-d:${locals.user.id}`, 20, 24 * 60 * 60 * 1000);
+  if (!perDay.allowed) return rateLimitResponse(perDay, '已达到今日生成上限，请明天再试');
 
   if (!isLlmConfigured()) {
     return new Response(JSON.stringify({ success: false, error: 'AI 服务未配置（缺少 LLM_API_KEY）' }), {
@@ -33,7 +40,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       trendId: typeof body.trendId === 'string' ? body.trendId.slice(0, 100) : undefined,
       timeRange: typeof body.timeRange === 'string' ? body.timeRange.slice(0, 20) : undefined,
       userId: locals.user.id,
-    });
+    }, { llmTimeoutMs: SYNC_LLM_TIMEOUT_MS });
 
     if (!result.success) {
       const code = result.error.code;

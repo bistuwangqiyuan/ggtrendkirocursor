@@ -84,6 +84,126 @@ export type BpListSortBy = 'createdAt' | 'riskAdjusted';
 export type BpListSortOrder = 'asc' | 'desc';
 
 /**
+ * Parse a win-rate string into a {lo, hi, mid} percent range.
+ * "约8%-12%" -> {lo:8, hi:12, mid:10}; "10%" -> {lo:10, hi:10, mid:10}.
+ */
+export function parseWinRateRange(s: unknown): { lo: number; hi: number; mid: number } | null {
+  if (typeof s !== 'string') return null;
+  const matches = s.match(/\d+(?:\.\d+)?/g);
+  if (!matches) return null;
+  const nums = matches.map(Number).filter((n) => Number.isFinite(n));
+  if (nums.length === 0) return null;
+  const lo = Math.min(...nums);
+  const hi = Math.max(...nums);
+  return { lo, hi, mid: (lo + hi) / 2 };
+}
+
+/**
+ * Deterministic seed-return recomputation from the raw inputs the LLM reports.
+ * Declared basis (also stated in the appended note so results are reproducible
+ * with scripts/verify_bp_math.py):
+ *   book multiple M      = 1 + bookRoiByYear[4] / 100      (year-5 cumulative book ROI)
+ *   annualized book      = M^(1/5) - 1                     (point value, unambiguous)
+ *   EV MOIC interval     = [p*M, p*M + (1-p)]              (p = mid win rate as cash-exit
+ *                            probability; lower bound assumes total loss on the losing
+ *                            branch, upper bound assumes principal is recovered)
+ *   risk-adj. annualized = [EV_lo^(1/5)-1, EV_hi^(1/5)-1]  (annualizing the EV interval)
+ * The interval form encodes the genuine ambiguity in loss-recovery assumptions
+ * instead of pretending a single convention is the truth.
+ * Pure; returns null when required inputs are missing/unparsable.
+ */
+export function recomputeSeedReturn(seed: {
+  bookRoiByYear: number[];
+  winRate: unknown;
+}): {
+  bookMultiple: number;
+  annualizedBookPct: number;
+  winRateMidPct: number;
+  evMoicLo: number;
+  evMoicHi: number;
+  riskAdjustedAnnualizedLoPct: number;
+  riskAdjustedAnnualizedHiPct: number;
+} | null {
+  if (!Array.isArray(seed.bookRoiByYear) || seed.bookRoiByYear.length < 5) return null;
+  const roi5 = Number(seed.bookRoiByYear[4]);
+  if (!Number.isFinite(roi5)) return null;
+  const range = parseWinRateRange(seed.winRate);
+  if (!range) return null;
+
+  const bookMultiple = 1 + roi5 / 100;
+  if (bookMultiple <= 0) return null;
+  const annualizedBookPct = (Math.pow(bookMultiple, 1 / 5) - 1) * 100;
+  const p = range.mid / 100;
+  const evMoicLo = p * bookMultiple;
+  const evMoicHi = p * bookMultiple + (1 - p);
+  const annualizePct = (ev: number) => (ev > 0 ? (Math.pow(ev, 1 / 5) - 1) * 100 : -100);
+
+  return {
+    bookMultiple: round2(bookMultiple),
+    annualizedBookPct: round2(annualizedBookPct),
+    winRateMidPct: round2(range.mid),
+    evMoicLo: round2(evMoicLo),
+    evMoicHi: round2(evMoicHi),
+    riskAdjustedAnnualizedLoPct: round2(annualizePct(evMoicLo)),
+    riskAdjustedAnnualizedHiPct: round2(annualizePct(evMoicHi)),
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Slack applied before flagging: point-value tolerance for annualized book
+ * (percentage points) and margins added around the EV / risk-adjusted
+ * intervals (MOIC units / percentage points).
+ */
+export const SEED_RECOMPUTE_TOLERANCE = { annualizedPct: 5, moic: 0.1, riskAdjustedPct: 2 };
+
+/**
+ * Compare the LLM's self-reported seed metrics against the deterministic
+ * recomputation and, when they fall outside the recomputed value/interval
+ * (plus tolerance), build a calibration note stating the formulas and both
+ * sets of numbers. Returns '' when the numbers agree (or can't be recomputed).
+ * Pure.
+ */
+export function buildSeedCalibrationNote(seed: {
+  bookRoiByYear: number[];
+  annualizedBook: unknown;
+  winRate: unknown;
+  expectedValueMOIC: unknown;
+  riskAdjustedAnnualized: unknown;
+}): string {
+  const rc = recomputeSeedReturn(seed);
+  if (!rc) return '';
+
+  const reportedAnnualized = parseSignedPercent(String(seed.annualizedBook ?? ''));
+  const reportedMoic = parseSignedPercent(String(seed.expectedValueMOIC ?? ''));
+  const reportedRiskAdj = parseSignedPercent(String(seed.riskAdjustedAnnualized ?? ''));
+
+  const issues: string[] = [];
+  if (reportedAnnualized !== null && Math.abs(reportedAnnualized - rc.annualizedBookPct) > SEED_RECOMPUTE_TOLERANCE.annualizedPct) {
+    issues.push(`账面年化自报 ${reportedAnnualized}%、按第5年账面ROI复算为 ${rc.annualizedBookPct}%（公式 (1+ROI5/100)^(1/5)-1，ROI5=${seed.bookRoiByYear[4]}%）`);
+  }
+  if (
+    reportedMoic !== null &&
+    (reportedMoic < rc.evMoicLo - SEED_RECOMPUTE_TOLERANCE.moic || reportedMoic > rc.evMoicHi + SEED_RECOMPUTE_TOLERANCE.moic)
+  ) {
+    issues.push(`期望收益倍数自报 ${reportedMoic}x、按胜率中值复算应落在 ${rc.evMoicLo}x（亏损归零）~ ${rc.evMoicHi}x（亏损保本）区间（p=${rc.winRateMidPct}%，M=${rc.bookMultiple}x）`);
+  }
+  if (
+    reportedRiskAdj !== null &&
+    (reportedRiskAdj < rc.riskAdjustedAnnualizedLoPct - SEED_RECOMPUTE_TOLERANCE.riskAdjustedPct ||
+      reportedRiskAdj > rc.riskAdjustedAnnualizedHiPct + SEED_RECOMPUTE_TOLERANCE.riskAdjustedPct)
+  ) {
+    issues.push(`风险调整年化自报 ${reportedRiskAdj}%、按 EV^(1/5)-1 复算应落在 ${rc.riskAdjustedAnnualizedLoPct}% ~ ${rc.riskAdjustedAnnualizedHiPct}% 区间`);
+  }
+
+  if (issues.length === 0) return '';
+  return `【复算校准】服务器按确定性公式独立复算（口径：M=1+第5年账面ROI/100；年化=M^(1/5)-1；EV区间=[p×M, p×M+(1-p)]（下界亏损归零、上界亏损保本）；风险调整年化=EV^(1/5)-1；可用 scripts/verify_bp_math.py 复现）：${issues.join('；')}。两组数值不一致时应以复算口径审慎解读。`;
+}
+
+/**
  * Validate the raw LLM JSON against the BP contract and normalize it:
  * - recompute every weighted score (do not trust the model's self-report)
  * - rank opportunities by weighted score and mark the top one as selected
@@ -148,6 +268,21 @@ export function validateAndNormalizeBpContent(raw: any): BpContent {
   if (winRatePct !== null && winRatePct > WIN_RATE_OPTIMISM_THRESHOLD) {
     const flag = `【风险校准提示】所填胜率（${winRateStr}）按"盈利现金退出"口径偏高，国内种子阶段单笔投资 5 年内实现盈利现金退出的概率通常仅为个位数到约 10-15%，请按现金退出口径审慎解读，勿以账面存活冒充现金退出。`;
     seedNotes = seedNotes ? `${seedNotes} ${flag}` : flag;
+  }
+
+  // Deterministic recomputation guardrail: when the model's self-reported
+  // metrics disagree with the declared formulas beyond tolerance, append a
+  // calibration note stating both sets of numbers (reproducible via
+  // scripts/verify_bp_math.py). Never hard-fails generation.
+  const calibration = buildSeedCalibrationNote({
+    bookRoiByYear: seed.bookRoiByYear.slice(0, 5).map((n: any) => Number(n) || 0),
+    annualizedBook: seed.annualizedBook,
+    winRate: seed.winRate,
+    expectedValueMOIC: seed.expectedValueMOIC,
+    riskAdjustedAnnualized: seed.riskAdjustedAnnualized,
+  });
+  if (calibration) {
+    seedNotes = seedNotes ? `${seedNotes} ${calibration}` : calibration;
   }
 
   const market = raw.market ?? {};
@@ -299,11 +434,61 @@ export function recentKeywordNormSet(
   return set;
 }
 
+/** Failure circuit breaker: skip keywords that failed at least this many times... */
+export const FAILURE_SKIP_MIN_COUNT = 2;
+/** ...within this window (hours). Keeps one bad keyword from wedging the picker. */
+export const FAILURE_SKIP_WINDOW_HOURS = 24;
+
+/**
+ * Pure helper: keyword_norms with >= `minCount` failed reports within
+ * `windowHours` of `now`. These are circuit-broken out of the picker so a
+ * keyword that keeps failing (LLM timeouts, bad content) can't be re-picked
+ * forever while eligible keywords starve behind it.
+ */
+export function failedKeywordNormSet(
+  rows: { keywordNorm: string; createdAt: Date }[],
+  now: Date,
+  windowHours = FAILURE_SKIP_WINDOW_HOURS,
+  minCount = FAILURE_SKIP_MIN_COUNT
+): Set<string> {
+  const windowMs = windowHours * 60 * 60 * 1000;
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.keywordNorm) continue;
+    const age = now.getTime() - r.createdAt.getTime();
+    if (!Number.isFinite(age) || age < 0 || age > windowMs) continue;
+    counts.set(r.keywordNorm, (counts.get(r.keywordNorm) ?? 0) + 1);
+  }
+  const set = new Set<string>();
+  for (const [norm, count] of counts) {
+    if (count >= minCount) set.add(norm);
+  }
+  return set;
+}
+
 /** Minimum composite hotword score (0-100) for scheduled BP generation. */
 export const MIN_TREND_SCORE = 60;
 
 const SCHEDULED_SCAN_PAGE_SIZE = 50;
 const SCHEDULED_SCAN_MAX_PAGES = 5;
+
+/**
+ * LLM timeout for generation triggered from SYNCHRONOUS Netlify functions
+ * (26s hard budget). Tight enough that a slow LLM fails inside the function,
+ * gets its real error recorded on the report, and leaves budget for the DB
+ * writes — instead of the function being killed with the row stuck at
+ * 'generating'. Background functions (15-min budget) use the full default.
+ */
+export const SYNC_LLM_TIMEOUT_MS = 18_000;
+
+/**
+ * Scheduled picker only considers trends COLLECTED within this window. This
+ * mechanically disqualifies stale one-off seed rows (fabricated multi-million
+ * search volumes from 2026-06-05) that would otherwise outrank every real
+ * RSS-collected hotword forever. Non-destructive: old rows stay in the table,
+ * they just can't be picked.
+ */
+export const SCHEDULED_FRESHNESS_WINDOW: '48h' = '48h';
 
 /** Composite 0-100 score: 50% growth_rate (%) + 50% log-normalized search volume. */
 export function computeTrendHotwordScore(t: { searchVolume: number; growthRate: number }): number {
@@ -375,10 +560,12 @@ export class BpService {
    */
   async debugPickDiagnostics(timeRange = '4h'): Promise<{
     completedCount: number;
+    failedSkipCount: number;
     picked: { keyword: string; norm: string; trendScore: number; inSkipSet: boolean; reusableId: string | null } | null;
     sampleNorms: string[];
   }> {
     const completed = await this.getRecentlyCompletedKeywordNorms();
+    const failedSkip = await this.getRecentlyFailedKeywordNorms();
     const picked = await this.pickNextUngeneratedTrend(timeRange);
     let pickedInfo: any = null;
     if (picked) {
@@ -394,6 +581,7 @@ export class BpService {
     }
     return {
       completedCount: completed.size,
+      failedSkipCount: failedSkip.size,
       picked: pickedInfo,
       sampleNorms: [...completed].slice(0, 8),
     };
@@ -499,21 +687,52 @@ export class BpService {
   }
 
   /**
+   * Circuit-broken keywords: keyword_norms with >= FAILURE_SKIP_MIN_COUNT failed
+   * reports in the last FAILURE_SKIP_WINDOW_HOURS. The picker skips these so one
+   * keyword that keeps failing (e.g. LLM timeouts) can't wedge the pipeline into
+   * an infinite retry loop while fresh keywords starve behind it.
+   */
+  async getRecentlyFailedKeywordNorms(
+    windowHours = FAILURE_SKIP_WINDOW_HOURS,
+    minCount = FAILURE_SKIP_MIN_COUNT
+  ): Promise<Set<string>> {
+    const rows = await query<{ keyword_norm: string }>(
+      `SELECT keyword_norm FROM bp_reports
+       WHERE status = 'failed' AND keyword_norm IS NOT NULL
+         AND created_at >= NOW() - make_interval(hours => $1)
+       GROUP BY keyword_norm
+       HAVING COUNT(*) >= $2`,
+      [windowHours, minCount]
+    );
+    const set = new Set<string>();
+    for (const r of rows) if (r.keyword_norm) set.add(r.keyword_norm);
+    return set;
+  }
+
+  /**
    * Walk trends by search_volume desc; return the first whose composite score
    * exceeds MIN_TREND_SCORE and which has no completed BP within the dedupe
    * window (7 days). Keywords last generated more than 7 days ago are eligible
    * again so their BP is refreshed.
+   *
+   * Only trends COLLECTED within SCHEDULED_FRESHNESS_WINDOW are scanned, and
+   * keywords that recently failed repeatedly are circuit-broken out.
    */
   async pickNextUngeneratedTrend(
     timeRange = '4h'
   ): Promise<{ snapshot: BpTrendSnapshot; trendScore: number } | null> {
-    const completed = await this.getRecentlyCompletedKeywordNorms();
+    const [completed, recentlyFailed] = await Promise.all([
+      this.getRecentlyCompletedKeywordNorms(),
+      this.getRecentlyFailedKeywordNorms(),
+    ]);
+    const skip = new Set<string>([...completed, ...recentlyFailed]);
     let globalRank = 0;
     let effectiveTimeRange: string | undefined = timeRange;
 
     for (let page = 1; page <= SCHEDULED_SCAN_MAX_PAGES; page++) {
       const res = await trendsService.getTrends({
         timeRange: effectiveTimeRange,
+        collectedWithin: SCHEDULED_FRESHNESS_WINDOW,
         sortBy: 'search_volume',
         sortOrder: 'desc',
         page,
@@ -528,7 +747,7 @@ export class BpService {
 
       if (!res.success || res.data.trends.length === 0) break;
 
-      const picked = pickFirstEligibleTrend(res.data.trends, completed, MIN_TREND_SCORE, globalRank + 1);
+      const picked = pickFirstEligibleTrend(res.data.trends, skip, MIN_TREND_SCORE, globalRank + 1);
       if (picked) {
         const { trend, trendScore, rank } = picked;
         return {
@@ -629,7 +848,7 @@ export class BpService {
    * (score > MIN_TREND_SCORE, no completed BP within the last 7 days), then
    * generate one new BP. Keywords roll back into eligibility after 7 days.
    */
-  async runScheduledGeneration(): Promise<
+  async runScheduledGeneration(opts?: { llmTimeoutMs?: number }): Promise<
     Result<
       | { action: 'generated'; report: BpReport; trendScore: number; rank: number }
       | { action: 'skipped'; reason: string },
@@ -655,7 +874,7 @@ export class BpService {
       keyword: snapshot.keyword,
       trendId: snapshot.sourceTrendId,
       timeRange: '4h',
-    });
+    }, opts);
     if (!result.success) return result;
     return {
       success: true,
@@ -667,7 +886,7 @@ export class BpService {
    * Full orchestration: resolve trend -> dedupe -> placeholder -> LLM -> validate
    * -> persist report + opportunities. Returns the final (completed/failed) report.
    */
-  async generate(input: GenerateBpInput): Promise<Result<BpReport, BpError>> {
+  async generate(input: GenerateBpInput, opts?: { llmTimeoutMs?: number }): Promise<Result<BpReport, BpError>> {
     if (!isLlmConfigured()) {
       return { success: false, error: { code: 'LLM_NOT_CONFIGURED', message: 'AI 服务未配置（缺少 LLM_API_KEY）' } };
     }
@@ -712,7 +931,9 @@ export class BpService {
 
     // Steer the model away from recently-used business models so collisions
     // (which would otherwise waste a full LLM call) become new library content.
-    const avoidModels = await this.getRecentBusinessModels();
+    // Non-essential: if the lookup fails, proceed without the avoid-list rather
+    // than leaving the placeholder stuck at 'generating'.
+    const avoidModels = await this.getRecentBusinessModels().catch(() => [] as string[]);
     const avoidLine = buildAvoidModelsLine(avoidModels);
 
     try {
@@ -721,6 +942,7 @@ export class BpService {
         userPrompt: buildUserPrompt(trend, avoidLine),
         temperature: 0.7,
         maxTokens: 4000,
+        timeoutMs: opts?.llmTimeoutMs,
       });
 
       const content = validateAndNormalizeBpContent(llm.data);
@@ -849,6 +1071,7 @@ export class BpService {
     if (!/^[0-9a-fA-F-]{36}$/.test(id)) {
       return { success: false, error: { code: 'NOT_FOUND', message: 'BP 不存在' } };
     }
+    try {
     const row = await queryOne<any>(`SELECT * FROM bp_reports WHERE id = $1`, [id]);
     if (!row) return { success: false, error: { code: 'NOT_FOUND', message: 'BP 不存在' } };
 
@@ -916,6 +1139,10 @@ export class BpService {
       report.opportunities = [];
     }
     return { success: true, data: report };
+    } catch (error) {
+      console.error('bpService.getById error:', (error as Error).message);
+      return { success: false, error: { code: 'DB_ERROR', message: '无法读取 BP 详情' } };
+    }
   }
 
   /**
@@ -929,6 +1156,7 @@ export class BpService {
     sortBy: BpListSortBy = 'createdAt',
     sortOrder: BpListSortOrder = 'desc'
   ): Promise<Result<PaginatedBpReports, BpError>> {
+    try {
     const safePage = Math.max(1, page);
     const safeSize = Math.min(100, Math.max(1, pageSize));
     const offset = (safePage - 1) * safeSize;
@@ -939,9 +1167,12 @@ export class BpService {
 
     const dir = sortOrder === 'asc' ? 'ASC' : 'DESC';
     // Whitelist-built ORDER BY (no user input is interpolated directly).
+    // Failed placeholder rows sort behind real reports so a burst of failures
+    // can't bury the library's actual content (rows are kept for traceability).
+    const failedLast = `CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END ASC`;
     const orderBy = sortBy === 'riskAdjusted'
-      ? `risk_adjusted_num ${dir} NULLS LAST, r.created_at DESC`
-      : `r.created_at ${dir}`;
+      ? `${failedLast}, risk_adjusted_num ${dir} NULLS LAST, r.created_at DESC`
+      : `${failedLast}, r.created_at ${dir}`;
 
     // Duplicate reports store no content; resolve via the canonical report.
     // risk_adjusted_num extracts the first signed number ("约6.5%" -> 6.5) for sorting.
@@ -972,6 +1203,10 @@ export class BpService {
       success: true,
       data: { reports, pagination: { currentPage: safePage, totalPages, totalItems, pageSize: safeSize } },
     };
+    } catch (error) {
+      console.error('bpService.list error:', (error as Error).message);
+      return { success: false, error: { code: 'DB_ERROR', message: '无法读取 BP 列表' } };
+    }
   }
 }
 

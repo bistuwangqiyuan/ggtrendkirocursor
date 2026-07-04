@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { bpService } from '../../../lib/services/bp';
+import { bpService, SYNC_LLM_TIMEOUT_MS } from '../../../lib/services/bp';
 import { isLlmConfigured } from '../../../lib/services/llm';
 
 export const prerender = false;
@@ -39,7 +39,8 @@ export const POST: APIRoute = async ({ request, url }) => {
   }
 
   try {
-    const result = await bpService.runScheduledGeneration();
+    // Tight LLM budget: this endpoint runs inside a 26s synchronous function.
+    const result = await bpService.runScheduledGeneration({ llmTimeoutMs: SYNC_LLM_TIMEOUT_MS });
 
     if (!result.success) {
       const code = result.error.code;

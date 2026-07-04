@@ -39,27 +39,36 @@ const navItems = [
     <div class="flex items-center bg-gray-800/80 rounded-full p-0.5 border border-gray-700/50">
       <button
         type="button"
-        class={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'zh' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-        onclick="document.cookie='locale=zh; path=/; max-age=31536000'; window.location.reload()"
+        class={`locale-switch px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'zh' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+        data-locale="zh"
         aria-label="中文"
+        aria-pressed={locale === 'zh' ? 'true' : 'false'}
       >中</button>
       <button
         type="button"
-        class={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-        onclick="document.cookie='locale=en; path=/; max-age=31536000'; window.location.reload()"
+        class={`locale-switch px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${locale === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+        data-locale="en"
         aria-label="English"
+        aria-pressed={locale === 'en' ? 'true' : 'false'}
       >EN</button>
     </div>
 
     <!-- Auth (desktop) -->
     <div class="hidden sm:flex items-center gap-3">
       {user ? (
-        <div class="relative group">
-          <button type="button" class="flex items-center gap-1.5 text-sm font-medium text-gray-300 hover:text-white">
+        <div class="relative">
+          <button
+            type="button"
+            id="user-menu-btn"
+            class="flex items-center gap-1.5 text-sm font-medium text-gray-300 hover:text-white"
+            aria-expanded="false"
+            aria-haspopup="true"
+            aria-controls="user-menu"
+          >
             {user.username}
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </button>
-          <div class="absolute right-0 mt-2 w-44 bg-gray-900 border border-gray-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+          <div id="user-menu" class="hidden absolute right-0 mt-2 w-44 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
             <button id="logout-btn" type="button" class="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-white rounded-lg">
               {t.nav.logout}
             </button>
@@ -146,4 +155,44 @@ const navItems = [
   }
   document.getElementById('logout-btn')?.addEventListener('click', logout);
   document.getElementById('mobile-logout-btn')?.addEventListener('click', logout);
+
+  // Click-to-open user menu (hover-only menus are unreachable by keyboard/touch).
+  const userMenuBtn = document.getElementById('user-menu-btn');
+  const userMenu = document.getElementById('user-menu');
+  userMenuBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = userMenu?.classList.toggle('hidden') === false;
+    userMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.addEventListener('click', (e) => {
+    if (userMenu && !userMenu.classList.contains('hidden') && !userMenu.contains(e.target as Node)) {
+      userMenu.classList.add('hidden');
+      userMenuBtn?.setAttribute('aria-expanded', 'false');
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && userMenu && !userMenu.classList.contains('hidden')) {
+      userMenu.classList.add('hidden');
+      userMenuBtn?.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  // Language switch: persist to the server (updates users.locale for logged-in
+  // users) and fall back to a plain cookie if the API is unreachable.
+  document.querySelectorAll<HTMLButtonElement>('.locale-switch').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const locale = el.dataset.locale;
+      if (locale !== 'zh' && locale !== 'en') return;
+      try {
+        await fetch('/api/auth/locale', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locale }),
+        });
+      } catch {
+        document.cookie = `locale=${locale}; path=/; max-age=31536000`;
+      }
+      window.location.reload();
+    });
+  });
 </script>

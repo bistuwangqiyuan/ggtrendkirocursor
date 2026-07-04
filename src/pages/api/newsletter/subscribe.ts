@@ -1,8 +1,13 @@
 import type { APIRoute } from 'astro';
 import { queryOne, query } from '../../../lib/db/client';
 import { isValidNewsletterEmail } from '../../../lib/validators/newsletter';
+import { rateLimit, rateLimitResponse, clientIpFromRequest } from '../../../lib/utils/rateLimit';
 
 export const POST: APIRoute = async ({ request }) => {
+  // Spam baseline: 5 subscription attempts per IP per minute.
+  const rl = rateLimit(`newsletter:${clientIpFromRequest(request)}`, 5, 60_000);
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   try {
     const body = await request.json().catch(() => ({}));
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';

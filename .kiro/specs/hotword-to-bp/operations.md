@@ -44,9 +44,9 @@
    curl https://<your-site>/api/health
    # 期望: status=ok, database.connected=true, version=<最新>
    ```
-4. 建表（幂等）：
+4. 建表（幂等；密钥为环境变量 `ADMIN_SECRET`，未配置时回退 `CRON_SECRET`，两者皆无则端点禁用）：
    ```bash
-   curl -X POST "https://<your-site>/api/db-init?secret=trendnow-seed" -H "Origin: https://<your-site>"
+   curl -X POST "https://<your-site>/api/db-init?secret=$ADMIN_SECRET" -H "Origin: https://<your-site>"
    ```
 5. 校验 `bp_reports` / `bp_opportunities` 已存在且 schema 正确（见 §5 故障 B）。
 
@@ -137,10 +137,10 @@ BP 相关探针：
 - 原因：历史遗留表结构（`plan_id/scores/roi_score`）与现版本不兼容。
 - 处置（**破坏性重建，仅在两表数据可丢弃时**）：
   ```bash
-  curl -X POST "https://<your-site>/api/db-init?secret=trendnow-seed&migrate=bp" -H "Origin: https://<your-site>"
+  curl -X POST "https://<your-site>/api/db-init?secret=$ADMIN_SECRET&migrate=bp" -H "Origin: https://<your-site>"
   ```
   重建后 `bp_opportunities` 列应为：`id, report_id, name, description, score_market, score_roi, score_onlineability, score_feasibility, score_speed, score_moat, weighted_score, is_selected, rank, created_at`。
-- `bp_reports` 新增列 `business_model_norm`、`canonical_report_id`（商业模式去重用）为**附加式**变更：普通 `POST /api/db-init?secret=trendnow-seed` 即通过 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 自动补齐，无需破坏性重建。
+- `bp_reports` 新增列 `business_model_norm`、`canonical_report_id`（商业模式去重用）为**附加式**变更：普通 `POST /api/db-init?secret=$ADMIN_SECRET` 即通过 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 自动补齐，无需破坏性重建。
 
 ### C. 报告长期卡在 `generating`
 - 原因：Netlify 函数 26s 超时中断了同步生成。

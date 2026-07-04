@@ -1,7 +1,12 @@
 import type { APIRoute } from 'astro';
 import { authService } from '../../../lib/services/auth';
+import { rateLimit, rateLimitResponse, clientIpFromRequest } from '../../../lib/utils/rateLimit';
 
 export const POST: APIRoute = async ({ request, cookies, clientAddress }) => {
+  // Brute-force baseline: 10 login attempts per IP per minute.
+  const rl = rateLimit(`login:${clientIpFromRequest(request)}`, 10, 60_000);
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   try {
     const body = await request.json();
     const { email, password } = body;

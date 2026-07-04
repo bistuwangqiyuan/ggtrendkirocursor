@@ -129,7 +129,7 @@ async function run() {
   expect(robots.status === 200 && /sitemap/i.test(robots.body), 'R5', 'robots.txt served with sitemap', `status=${robots.status}`, `status=${robots.status}`);
   const sitemap = await http('/sitemap.xml');
   expect(sitemap.status === 200 && sitemap.body.includes('<urlset'), 'R5', 'sitemap.xml served', `status=${sitemap.status}`, `status=${sitemap.status}`);
-  const ogImg = await http('/og-image.svg');
+  const ogImg = await http('/og-image.png');
   expect(ogImg.status === 200, 'R5', 'og:image asset resolves (not 404)', `status=${ogImg.status}`, `status=${ogImg.status}`);
 
   // ---- Req 11: /error page renders ----
@@ -220,6 +220,18 @@ async function run() {
   expect(collectBadAuth.status === 401 || collectBadAuth.status === 503,
     'R-COL1', 'POST /api/trends/collect rejects a bad secret',
     `status=${collectBadAuth.status}`, `status=${collectBadAuth.status}`);
+
+  // ---- Req SEC: ops endpoints no longer accept the retired hard-coded secret ----
+  // /api/db-init and /api/seed must reject the old published literal. 401
+  // (env secret set) or 503 (fail-closed, no secret configured) are acceptable.
+  const dbInitOldSecret = await http('/api/db-init?secret=trendnow-seed', { method: 'POST' });
+  expect(dbInitOldSecret.status === 401 || dbInitOldSecret.status === 503,
+    'R-SEC1', 'POST /api/db-init rejects the retired hard-coded secret',
+    `status=${dbInitOldSecret.status}`, `status=${dbInitOldSecret.status}`);
+  const seedOldSecret = await http('/api/seed?secret=trendnow-seed', { method: 'POST' });
+  expect(seedOldSecret.status === 401 || seedOldSecret.status === 503,
+    'R-SEC1', 'POST /api/seed rejects the retired hard-coded secret',
+    `status=${seedOldSecret.status}`, `status=${seedOldSecret.status}`);
 
   // ---- Req 1/12: auth round-trip (DB dependent) ----
   if (DB_UP) {

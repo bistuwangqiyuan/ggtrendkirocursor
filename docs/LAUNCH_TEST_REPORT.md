@@ -150,12 +150,12 @@
 2. DB 恢复后暴露出两类真实代码/数据缺陷，均已修复（见第 3 节第 5、6 项）：趋势接口 500（表选择 + 时间范围匹配）、鉴权/反馈表结构不兼容（经 `/api/db-init?...&migrate=auth` 迁移对齐）。
 3. 重跑 `pnpm test:e2e`：原 8 个 BLOCKED 项全部转为实测 PASS，最终 **42 PASS / 0 FAIL / 0 BLOCKED**。
 
-**运维备查 — 数据初始化/迁移端点（均需带同源 `Origin` 头以通过 CSRF）**：
-1. 表结构诊断/迁移：`POST /api/db-init?secret=trendnow-seed`（只读诊断，回显各表真实列）；`POST /api/db-init?secret=trendnow-seed&migrate=auth`（重建鉴权/反馈表至应用 schema，不影响趋势数据表）。
-2. 灌入示例趋势数据：`POST /api/seed?secret=trendnow-seed`。
+**运维备查 — 数据初始化/迁移端点（均需带同源 `Origin` 头以通过 CSRF；密钥为 Netlify 环境变量 `ADMIN_SECRET`，历史上的硬编码密钥已废除）**：
+1. 表结构诊断/迁移：`POST /api/db-init?secret=$ADMIN_SECRET`（只读诊断，回显各表真实列）；`POST /api/db-init?secret=$ADMIN_SECRET&migrate=auth`（重建鉴权/反馈表至应用 schema，不影响趋势数据表）。
+2. 灌入示例趋势数据：`POST /api/seed?secret=$ADMIN_SECRET`。
 
 > 示例 PowerShell（携带 Origin 头）：
-> `Invoke-WebRequest -Uri "https://ggtrendkirocursor.netlify.app/api/db-init?secret=trendnow-seed&migrate=auth" -Method POST -Headers @{ Origin = "https://ggtrendkirocursor.netlify.app" } -UseBasicParsing`
+> `Invoke-WebRequest -Uri "https://ggtrendkirocursor.netlify.app/api/db-init?secret=$env:ADMIN_SECRET&migrate=auth" -Method POST -Headers @{ Origin = "https://ggtrendkirocursor.netlify.app" } -UseBasicParsing`
 
 ---
 

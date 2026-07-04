@@ -39,9 +39,15 @@ const scoreRows: { key: string; label: string }[] = [
 
 const pageTitle = content?.title || report?.keyword || t.bp.title;
 const selectedOpp = opportunities.find((o) => o.isSelected);
+// Per-report meta description (fallback to the site default via Layout).
+const pageDescription = content?.summary
+  ? String(content.summary).slice(0, 160)
+  : report?.keyword
+    ? `${report.keyword} — ${t.bp.subtitle}`
+    : undefined;
 ---
 
-<Layout title={pageTitle}>
+<Layout title={pageTitle} description={pageDescription}>
   <div class="bp-page" data-report-id={report?.id} data-status={report?.status}>
     <!-- Toolbar (hidden when printing) -->
     <div class="no-print mb-6 flex items-center justify-between">

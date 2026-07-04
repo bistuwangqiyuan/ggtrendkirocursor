@@ -68,6 +68,13 @@ interface ChatOptions {
   userPrompt: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Per-call timeout override (ms). Callers running inside Netlify's 26s
+   * synchronous function budget should pass a tight value (e.g. 18000) so the
+   * failure is caught and recorded instead of the whole function being killed;
+   * background functions (15-min budget) can use the full default.
+   */
+  timeoutMs?: number;
 }
 
 /** Last successful endpoint index (in-memory; warm serverless instances reuse it). */
@@ -289,7 +296,7 @@ export async function generateJson<T = any>(opts: ChatOptions): Promise<LlmJsonR
     throw new LlmError('LLM_NOT_CONFIGURED', 'No LLM API configured (set LLM_API_KEY or LLM_API_ENDPOINTS)');
   }
 
-  const timeoutMs = getTimeoutMs();
+  const timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : getTimeoutMs();
   // Rank endpoints by curated provider quality so the best model is tried first,
   // with full failover to the rest.
   const ranks = endpoints.map((e) => providerRank(e.family || detectModelFamily(e.model, e.base)));

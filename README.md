@@ -12,7 +12,9 @@ Trend Now is a real-time Google Trends data visualization platform built with As
 - **SEO Optimized**: Server-Side Rendering (SSR), semantic HTML, and structured data.
 - **Feedback System**: Integrated user feedback submission.
 - **AI Business Plans**: Turn the #1 trending keyword into a structured, investor-grade business plan via an LLM (opportunity brainstorm -> six-dimension scoring -> selection -> BP), persisted to the database and viewable on-site at `/bp`.
-- **Scheduled Auto-Generation**: A Netlify Scheduled Function generates one new BP every 6 hours by scanning top trends, skipping keywords that already have a completed BP, and picking the next hotword with a composite score above 60.
+- **Scheduled Auto-Generation**: A Netlify Scheduled Function kicks off a background batch (15-min budget, generation runs in-process) every 6 hours. It scans trends **collected within the last 48h**, skips keywords with a completed BP in the last 7 days, circuit-breaks keywords that failed twice in the last 24h, and picks hotwords with a composite score above 60.
+- **Verifiable Financials**: Seed-round return metrics are recomputed server-side with declared formulas; deviations get a calibration note. Any report can be independently re-verified with `python scripts/verify_bp_math.py --id <report-id>`.
+- **Abuse Protection**: Ops endpoints require an environment secret (`ADMIN_SECRET`), and write endpoints (login/register/feedback/newsletter/BP generation) are rate limited.
 - **LLM Auto-Failover**: Configure multiple OpenAI-compatible endpoints; the service switches to the next one automatically on timeout / HTTP / auth errors.
 - **Performance**: Low latency, partial hydration with Astro Islands.
 
@@ -58,6 +60,11 @@ LLM_TIMEOUT_MS=45000
 # Secret that authorizes scheduled BP generation (POST /api/bp/cron).
 # Use a long random value. Required for the every-6h scheduled function to run.
 CRON_SECRET=your-long-random-secret
+
+# Secret for the destructive ops endpoints (/api/db-init, /api/seed).
+# Falls back to CRON_SECRET when unset; with neither set the endpoints are
+# disabled (fail closed, 503).
+ADMIN_SECRET=your-admin-secret
 ```
 
 Notes:
@@ -119,14 +126,16 @@ On-site pages: `/bp` (list) and `/bp/[id]` (detail, with generating-state pollin
 
 ### Database provisioning (one-time, after deploy)
 
-The BP feature needs the `bp_reports` and `bp_opportunities` tables. They are created idempotently by the init endpoint:
+The BP feature needs the `bp_reports` and `bp_opportunities` tables. They are created idempotently by the init endpoint.
+
+The ops endpoints (`/api/db-init`, `/api/seed`) are guarded by the `ADMIN_SECRET` environment variable (falling back to `CRON_SECRET`); set it in the Netlify dashboard. With neither configured the endpoints are disabled (fail closed, 503).
 
 ```bash
 # Create tables if missing (idempotent)
-curl -X POST "https://<your-site>/api/db-init?secret=trendnow-seed" -H "Origin: https://<your-site>"
+curl -X POST "https://<your-site>/api/db-init?secret=$ADMIN_SECRET" -H "Origin: https://<your-site>"
 
 # If a legacy/incompatible bp_opportunities schema exists, rebuild both tables (DESTRUCTIVE):
-curl -X POST "https://<your-site>/api/db-init?secret=trendnow-seed&migrate=bp" -H "Origin: https://<your-site>"
+curl -X POST "https://<your-site>/api/db-init?secret=$ADMIN_SECRET&migrate=bp" -H "Origin: https://<your-site>"
 ```
 
 ### Scheduled auto-generation

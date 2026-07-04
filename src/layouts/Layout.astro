@@ -15,7 +15,8 @@ interface Props {
 const {
   title,
   description,
-  image = '/og-image.svg',
+  // PNG, not SVG: Facebook/Twitter/WeChat crawlers ignore SVG og:images.
+  image = '/og-image.png',
 } = Astro.props;
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
@@ -57,7 +58,9 @@ const structuredData = [
     applicationCategory: 'BusinessApplication',
     operatingSystem: 'Web',
     description: metaDescription,
-    offers: { '@type': 'Offer', price: '0', priceCurrency: 'CNY' },
+    // No `offers`: paid tiers are a published preview without a live payment
+    // channel, so asserting any price (0 or ¥99) in structured data would
+    // contradict either the pricing page or reality.
   },
 ];
 ---

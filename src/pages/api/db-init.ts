@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { pool } from '../../lib/db/client';
+import { authorizeAdminRequest } from '../../lib/utils/adminAuth';
 
 // Base (idempotent) schema. Safe to run repeatedly; CREATE ... IF NOT EXISTS.
 const BASE_STATEMENTS = [
@@ -237,8 +238,9 @@ function detectMismatches(before: Record<string, string[]>): Record<string, stri
 
 export const POST: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
-  if (url.searchParams.get('secret') !== 'trendnow-seed') {
-    return new Response('Unauthorized', { status: 401 });
+  const auth = authorizeAdminRequest(request);
+  if (!auth.ok) {
+    return new Response(auth.message, { status: auth.status });
   }
 
   const migrateParam = url.searchParams.get('migrate'); // 'auth' | 'bp' | null

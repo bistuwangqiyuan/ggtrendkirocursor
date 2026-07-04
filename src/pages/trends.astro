@@ -14,7 +14,12 @@ const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
 
 const urlTimeRange = Astro.url.searchParams.get('timeRange') || '';
-const collectedWithin = Astro.url.searchParams.get('collectedWithin') || '';
+// Data honesty: default to showing only trends COLLECTED within the last 48h
+// (real RSS-harvested hotwords), so stale one-off seed rows are never presented
+// as "live" data. Users can opt out explicitly with collectedWithin=all.
+const collectedWithinParam = Astro.url.searchParams.get('collectedWithin') || '';
+const collectedWithin = collectedWithinParam || '48h';
+const effectiveCollectedWithin = collectedWithin === 'all' ? undefined : collectedWithin;
 const keyword = Astro.url.searchParams.get('keyword') || '';
 const category = Astro.url.searchParams.get('category') || '';
 const page = parseInt(Astro.url.searchParams.get('page') || '1', 10);
@@ -22,7 +27,7 @@ const pageSize = 20;
 
 const params: TrendsQueryParams = {
   timeRange: urlTimeRange || undefined,
-  collectedWithin: collectedWithin || undefined,
+  collectedWithin: effectiveCollectedWithin,
   keyword: keyword || undefined,
   category: category || undefined,
   page,

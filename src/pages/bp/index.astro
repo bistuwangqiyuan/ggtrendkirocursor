@@ -37,9 +37,28 @@ const sortIndicator = (col: BpListSortBy) =>
   sortBy === col ? (sortOrder === 'desc' ? ' ▼' : ' ▲') : '';
 
 const pageHref = (p: number) => `/bp?sort=${sortBy}&order=${sortOrder}&page=${p}`;
+
+// Windowed page list: first / last / current ±2, with null as an ellipsis
+// marker — an unbounded row of page links grows forever as reports accumulate.
+function pageWindow(current: number, total: number): (number | null)[] {
+  const pages = new Set<number>([1, total]);
+  for (let p = current - 2; p <= current + 2; p++) {
+    if (p >= 1 && p <= total) pages.add(p);
+  }
+  const sorted = [...pages].sort((a, b) => a - b);
+  const out: (number | null)[] = [];
+  let prev = 0;
+  for (const p of sorted) {
+    if (prev && p - prev > 1) out.push(null);
+    out.push(p);
+    prev = p;
+  }
+  return out;
+}
+const pages = pageWindow(data.pagination.currentPage, data.pagination.totalPages);
 ---
 
-<Layout title={t.bp.listTitle}>
+<Layout title={t.bp.listTitle} description={t.bp.subtitle}>
   <div class="space-y-6">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -101,13 +120,23 @@ const pageHref = (p: number) => `/bp?sort=${sortBy}&order=${sortOrder}&page=${p}
     )}
 
     {data.pagination.totalPages > 1 && (
-      <div class="flex items-center justify-center gap-2">
-        {Array.from({ length: data.pagination.totalPages }, (_, i) => i + 1).map((p) => (
-          <a
-            href={pageHref(p)}
-            class={`rounded-md px-3 py-1.5 text-sm no-underline ${p === data.pagination.currentPage ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
-          >{p}</a>
-        ))}
+      <div class="flex items-center justify-center gap-2 flex-wrap">
+        {data.pagination.currentPage > 1 && (
+          <a href={pageHref(data.pagination.currentPage - 1)} class="rounded-md px-3 py-1.5 text-sm no-underline bg-gray-800 text-gray-300 hover:bg-gray-700">‹</a>
+        )}
+        {pages.map((p) =>
+          p === null ? (
+            <span class="px-1.5 text-gray-600 select-none">…</span>
+          ) : (
+            <a
+              href={pageHref(p)}
+              class={`rounded-md px-3 py-1.5 text-sm no-underline ${p === data.pagination.currentPage ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            >{p}</a>
+          )
+        )}
+        {data.pagination.currentPage < data.pagination.totalPages && (
+          <a href={pageHref(data.pagination.currentPage + 1)} class="rounded-md px-3 py-1.5 text-sm no-underline bg-gray-800 text-gray-300 hover:bg-gray-700">›</a>
+        )}
       </div>
     )}
   </div>
