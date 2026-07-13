@@ -159,7 +159,48 @@
 
 ---
 
-## 7. 备注 (Notes)
+## 7. 2026-07-13 复盘：BP 流水线停产 24 天的发现—根因—修复—验证
+
+> 本轮为系统性提升与测试专项，版本 `2026.07.13-pipeline-restoration-1`。
+
+### 发现（实测核实）
+
+- 生产站最后一份 completed BP 停在 **2026-06-19**；7-04 起 3 条报告卡死在 `generating`（均为种子词 "AI breakthrough (4h)"），此后零产出。
+- 合成种子数据（约 150 万搜索量的假热词）霸榜 trends 默认排序，并被 BP 选词器反复选中。
+- `/api/bp/list` 的 `status` 与 `limit` 参数实测不生效。
+- 质量缺口：无覆盖率报告；e2e 有 7 项 BLOCKED（未配 `E2E_CRON_SECRET`）；线下投资人 BP 的核心数字无复现脚本。
+
+### 根因（按证据链定位，非猜测）
+
+1. **部署配置缺陷（主要矛盾）**：`netlify.toml` 曾把 `pg` 标记为 `external_node_modules`，但 `pg` 运行时依赖的 `pg-types` 等包不随函数产物发布 → `bp-batch-background` 自 7-04 起每次调度都在模块初始化即崩溃（`Cannot find module 'pg-types'`），日志实证。**修复**：将 `pg` 打包进函数产物，仅 `pg-native` 保持 external。
+2. **LLM 超时配置与模型自动升级冲突**：`LLM_TIMEOUT_MS=22000`，但模型注册表自动升级到的 reasoning 档模型（qwen3.7-max）实测完整 BP 生成需 **110~125 秒**（`scripts/diag-llm-latency.mjs` / `diag-resolved-model.ts` 可复现）→ 6-19 后所有生成尝试超时。**修复**：端点固定为 qwen-turbo/qwen-flash 档并将超时提升至 150s；批量函数增加 11 分钟时间预算护栏，杜绝 15 分钟硬限拦腰截断留下 `generating` 僵尸行。
+3. **数据库 varchar(300) 溢出**：reasoning 模型的冗长 `businessModel` 文本在归一化后仍超 300 字符，completed 落库 UPDATE 失败（LLM token 已消耗）。**修复**：`normalizeBusinessModel` 截断至列宽，补单元测试。
+4. **共享库表名冲突**：同一 Neon 库的姊妹应用周期性重建 `bp_opportunities` 为其私有 schema，摧毁本应用数据。**修复**：迁移至应用独占的 `bp_report_opportunities` 表。
+5. **种子数据污染**：`/api/seed` 灌入的合成行未与真实采集数据隔离。**处置**：备份至 `backups/` 后从生产库删除（含 3 条卡死报告）。
+
+### 修复与防复发
+
+- `/api/bp/list` 支持 `status` 白名单过滤与 `limit` 别名（参数化查询，白名单构造防注入），补 4 项单元测试（合计 **145 项全过**）。
+- vitest 覆盖率基线建立：`src/lib` 语句覆盖 **42.35%**（`pnpm test:coverage`），核心纯逻辑（校验器、bpBatch、i18n 字典）100%。
+- 删除与 pnpm 并存的多余 `package-lock.json`。
+
+### 验证（可检验标准全部达成）
+
+- **流水线恢复**：部署后手动触发生产批量生成，**40 分钟内新增 10+ 份基于真实热词的 completed BP**（storm vs titans、wimbledon final、matt damon 等）；报告详情含 5 个排名机会与内嵌复算校准注记；`scripts/verify_bp_math.py` 确认服务器复算区间已在报告内如实披露 LLM 自报偏差。
+- **e2e 全绿**：配置 `E2E_CRON_SECRET` 重跑 live smoke，7 项 BLOCKED 全部解锁，**87 PASS / 0 FAIL / 0 BLOCKED**（`tests/e2e/last-run.md`），含真实 cron 触发生成 → 落库 → SSR 渲染全链路。
+- **数据可证补齐**：新增 `scripts/verify_deck_math.py` 复现线下投资人 BP 全部 59 项核心数字——复算发现敏感性二维表 5 个非基准单元格与其声明的方法论不符（偏差 1.5%~8%），已按复算值修正 HTML，现 **59/59 PASS**。
+- **商业产出**：发布《线上商业机会分析报告》（`docs/ONLINE_BUSINESS_OPPORTUNITIES_REPORT.md`），基于 248 份 completed BP 的提交快照，全部数字可由 `scripts/analyze_bp_opportunities.py` 一键复现。
+
+### 遗留风险（如实声明）
+
+- Mistral 端点密钥 401 失效（三端点之二正常，failover 覆盖），需要更换密钥方可恢复三路冗余。
+- 共享 Neon 库的姊妹应用仍可能制造其它表名冲突，根治需库级隔离（独立 database/schema）。
+- LLM 自报回报指标系统性偏乐观（91.5% 超出复算区间），已用内嵌校准注记缓解；治本需把复算约束加入生成 prompt 或作为硬过滤。
+- 本轮清理的种子数据若被 `/api/seed` 重新灌入会复发污染；该端点已要求 `ADMIN_SECRET`，但建议后续为种子行加 `traffic_source` 标记做结构性隔离。
+
+---
+
+## 8. 备注 (Notes)
 
 - 本地 Windows 环境下 `astro build` 在 Netlify 适配器的 `astro:build:done` 钩子会因 `EPERM: symlink` 失败，这是 Windows 创建符号链接的权限限制，**不影响 Netlify (Linux) 的实际构建**；客户端与服务端打包在本地均成功完成。
 - 鉴权表迁移为一次性破坏性重建（`DROP + CREATE`）。因迁移前线上鉴权链路完全不可用（无有效用户/会话），不存在需保留的真实数据；趋势数据表 `google_trends`/`trends_trending_now` 全程未触碰。

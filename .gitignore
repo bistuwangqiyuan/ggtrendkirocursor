@@ -40,3 +40,4 @@ tmp-*
 
 # Production data backups (contain DB rows; keep local only)
 backups/
+coverage/
