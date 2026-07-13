@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { bpService } from '../../../lib/services/bp';
+import { bpService, parseBpStatusParam } from '../../../lib/services/bp';
 import type { BpListSortBy, BpListSortOrder } from '../../../lib/services/bp';
 
 export const prerender = false;
@@ -7,9 +7,13 @@ export const prerender = false;
 export const GET: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
   const page = parseInt(url.searchParams.get('page') || '1', 10);
-  const pageSize = parseInt(url.searchParams.get('pageSize') || '20', 10);
+  // `limit` is accepted as an alias for `pageSize` (principle of least surprise
+  // for API consumers; both were observed in the wild).
+  const rawSize = url.searchParams.get('pageSize') ?? url.searchParams.get('limit') ?? '20';
+  const pageSize = parseInt(rawSize, 10);
   const sortParam = url.searchParams.get('sort');
   const orderParam = url.searchParams.get('order');
+  const status = parseBpStatusParam(url.searchParams.get('status'));
 
   const sortBy: BpListSortBy = sortParam === 'riskAdjusted' ? 'riskAdjusted' : 'createdAt';
   const sortOrder: BpListSortOrder = orderParam === 'asc' ? 'asc' : 'desc';
@@ -18,7 +22,8 @@ export const GET: APIRoute = async ({ request }) => {
     Number.isFinite(page) ? page : 1,
     Number.isFinite(pageSize) ? pageSize : 20,
     sortBy,
-    sortOrder
+    sortOrder,
+    status
   );
 
   if (!result.success) {

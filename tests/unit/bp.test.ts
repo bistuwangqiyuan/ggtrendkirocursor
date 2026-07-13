@@ -8,6 +8,8 @@ import {
   pickFirstEligibleTrend,
   MIN_TREND_SCORE,
   normalizeBusinessModel,
+  BUSINESS_MODEL_NORM_MAX_LENGTH,
+  parseBpStatusParam,
   pickCanonicalByBusinessModel,
   parseWinRatePercent,
   parseSignedPercent,
@@ -279,6 +281,38 @@ describe('normalizeBusinessModel', () => {
     expect(normalizeBusinessModel(undefined)).toBe('');
     expect(normalizeBusinessModel(null)).toBe('');
     expect(normalizeBusinessModel('   ')).toBe('');
+  });
+
+  test('caps output at the DB column length (varchar(300))', () => {
+    // Reasoning-tier models emit multi-paragraph businessModel prose; an
+    // uncapped norm broke the completed-report UPDATE in production
+    // ("value too long for type character varying(300)", 2026-07-13).
+    const long = '全AI无人化运营闭环。'.repeat(100);
+    const norm = normalizeBusinessModel(long);
+    expect(norm.length).toBeLessThanOrEqual(BUSINESS_MODEL_NORM_MAX_LENGTH);
+    expect(norm.length).toBe(BUSINESS_MODEL_NORM_MAX_LENGTH);
+  });
+
+  test('equal long models still normalize equal after capping', () => {
+    const long = 'x'.repeat(500);
+    expect(normalizeBusinessModel(long)).toBe(normalizeBusinessModel(`  ${long}  `));
+  });
+});
+
+describe('parseBpStatusParam', () => {
+  test('accepts whitelisted statuses', () => {
+    expect(parseBpStatusParam('completed')).toBe('completed');
+    expect(parseBpStatusParam('failed')).toBe('failed');
+    expect(parseBpStatusParam('generating')).toBe('generating');
+    expect(parseBpStatusParam('pending')).toBe('pending');
+  });
+
+  test('rejects anything not whitelisted (SQL-injection-proof by construction)', () => {
+    expect(parseBpStatusParam('COMPLETED')).toBeUndefined();
+    expect(parseBpStatusParam("completed' OR 1=1 --")).toBeUndefined();
+    expect(parseBpStatusParam('')).toBeUndefined();
+    expect(parseBpStatusParam(null)).toBeUndefined();
+    expect(parseBpStatusParam(undefined)).toBeUndefined();
   });
 });
 

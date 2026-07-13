@@ -37,3 +37,6 @@ bp/assets/qa/
 # local scratch / secrets (never commit)
 tmp-*
 *.secret.txt
+
+# Production data backups (contain DB rows; keep local only)
+backups/

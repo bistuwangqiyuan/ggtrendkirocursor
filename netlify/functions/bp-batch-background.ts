@@ -20,7 +20,19 @@ import { isLlmConfigured } from '../../src/lib/services/llm';
  *   BP_BATCH_SIZE  number of BPs to attempt per run (default 10, clamped 1-10)
  *   CRON_SECRET    bearer secret required to invoke this function
  */
+
+/**
+ * Stop starting new generations once this much of the 15-min budget is spent.
+ * Reasoning-tier models (auto-upgraded, e.g. qwen3.7-max) take ~2min per BP,
+ * so a 10-BP batch can overrun the budget; an iteration started after this
+ * cutoff risks being killed mid-DB-write and leaving a row stuck at
+ * 'generating' — the exact failure mode this function exists to avoid.
+ * 11 min leaves >= one full LLM timeout (150s) plus write headroom.
+ */
+const BATCH_TIME_BUDGET_MS = 11 * 60 * 1000;
+
 export const handler = async (event: { headers?: Record<string, string | undefined> }) => {
+  const startedAt = Date.now();
   const secret = process.env.CRON_SECRET?.trim();
 
   if (!secret) {
@@ -57,6 +69,10 @@ export const handler = async (event: { headers?: Record<string, string | undefin
   const seenReportIds = new Set<string>();
 
   for (let i = 0; i < batchSize; i++) {
+    if (Date.now() - startedAt > BATCH_TIME_BUDGET_MS) {
+      console.log(`[bp-batch] time budget spent after ${i} iteration(s); stopping batch early`);
+      break;
+    }
     try {
       // Full default LLM timeout is fine here (15-min budget).
       const result = await bpService.runScheduledGeneration();

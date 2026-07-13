@@ -83,6 +83,15 @@ export function parseSignedPercent(s: unknown): number | null {
 export type BpListSortBy = 'createdAt' | 'riskAdjusted';
 export type BpListSortOrder = 'asc' | 'desc';
 
+/** Whitelisted status filter values for the report list. */
+export const BP_REPORT_STATUSES = ['pending', 'generating', 'completed', 'failed'] as const;
+export type BpReportStatus = (typeof BP_REPORT_STATUSES)[number];
+
+/** Parse an untrusted status query param; returns undefined when not whitelisted. */
+export function parseBpStatusParam(raw: unknown): BpReportStatus | undefined {
+  return BP_REPORT_STATUSES.includes(raw as BpReportStatus) ? (raw as BpReportStatus) : undefined;
+}
+
 /**
  * Parse a win-rate string into a {lo, hi, mid} percent range.
  * "约8%-12%" -> {lo:8, hi:12, mid:10}; "10%" -> {lo:10, hi:10, mid:10}.
@@ -326,9 +335,19 @@ function normalizeKeyword(k: string): string {
 }
 
 /**
+ * Max length of a normalized business model, matching the DB column
+ * (bp_reports.business_model_norm varchar(300)). Reasoning-tier models return
+ * multi-paragraph businessModel prose; without this cap the UPDATE fails with
+ * "value too long for type character varying(300)" and the whole generation is
+ * lost AFTER the LLM tokens were spent.
+ */
+export const BUSINESS_MODEL_NORM_MAX_LENGTH = 300;
+
+/**
  * Normalize a free-text business model for dedup comparison: lowercase, collapse
- * whitespace, and strip leading/trailing punctuation. Two plans whose normalized
- * business models are equal are treated as the same model.
+ * whitespace, strip leading/trailing punctuation, and cap at the DB column
+ * length. Two plans whose normalized business models are equal are treated as
+ * the same model (a 300-char prefix is more than distinctive enough for dedup).
  */
 export function normalizeBusinessModel(s: unknown): string {
   if (typeof s !== 'string') return '';
@@ -336,7 +355,8 @@ export function normalizeBusinessModel(s: unknown): string {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .replace(/^[\s\p{P}\p{S}]+|[\s\p{P}\p{S}]+$/gu, '')
-    .trim();
+    .trim()
+    .slice(0, BUSINESS_MODEL_NORM_MAX_LENGTH);
 }
 
 /**
@@ -1058,8 +1078,14 @@ export class BpService {
         new Date()
       );
     });
+    // NOTE: table is bp_report_opportunities, NOT bp_opportunities. The shared
+    // Neon database also hosts a sibling app whose sync job periodically
+    // drops & recreates `bp_opportunities` with an incompatible legacy schema
+    // (plan_id/scores jsonb, observed 2026-07-13); writing to a table that app
+    // owns caused every generation to fail after its resync. Our own table
+    // name keeps the two apps from clobbering each other.
     await query(
-      `INSERT INTO bp_opportunities
+      `INSERT INTO bp_report_opportunities
         (report_id, name, description, score_market, score_roi, score_onlineability, score_feasibility, score_speed, score_moat, weighted_score, is_selected, rank, created_at)
        VALUES ${valuesSql.join(',')}`,
       params
@@ -1093,7 +1119,7 @@ export class BpService {
     }
 
     const oppRows = await query<any>(
-      `SELECT * FROM bp_opportunities WHERE report_id = $1 ORDER BY rank ASC`,
+      `SELECT * FROM bp_report_opportunities WHERE report_id = $1 ORDER BY rank ASC`,
       [contentSourceId]
     );
     if (oppRows.length > 0) {
@@ -1149,19 +1175,24 @@ export class BpService {
    * Paginated list of reports (without the large content JSON).
    * Exposes the risk-adjusted annualized return (resolved through
    * canonical_report_id for dedup pointers) and supports sorting by it.
+   * `status` (whitelisted) optionally filters to one report status.
    */
   async list(
     page = 1,
     pageSize = 20,
     sortBy: BpListSortBy = 'createdAt',
-    sortOrder: BpListSortOrder = 'desc'
+    sortOrder: BpListSortOrder = 'desc',
+    status?: BpReportStatus
   ): Promise<Result<PaginatedBpReports, BpError>> {
     try {
     const safePage = Math.max(1, page);
     const safeSize = Math.min(100, Math.max(1, pageSize));
     const offset = (safePage - 1) * safeSize;
 
-    const countRow = await queryOne<{ total: string }>(`SELECT COUNT(*) as total FROM bp_reports`);
+    const statusFilter = status ? `WHERE r.status = $3` : '';
+    const countRow = status
+      ? await queryOne<{ total: string }>(`SELECT COUNT(*) as total FROM bp_reports r WHERE r.status = $1`, [status])
+      : await queryOne<{ total: string }>(`SELECT COUNT(*) as total FROM bp_reports`);
     const totalItems = parseInt(countRow?.total || '0', 10);
     const totalPages = Math.max(1, Math.ceil(totalItems / safeSize));
 
@@ -1185,8 +1216,9 @@ export class BpService {
               ), '')::numeric AS risk_adjusted_num
        FROM bp_reports r
        LEFT JOIN bp_reports c ON r.canonical_report_id = c.id
+       ${statusFilter}
        ORDER BY ${orderBy} LIMIT $1 OFFSET $2`,
-      [safeSize, offset]
+      status ? [safeSize, offset, status] : [safeSize, offset]
     );
 
     const reports: BpReportListItem[] = rows.map((r) => ({

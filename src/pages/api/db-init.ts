@@ -70,7 +70,10 @@ const BASE_STATEMENTS = [
   )`,
   `ALTER TABLE bp_reports ADD COLUMN IF NOT EXISTS business_model_norm VARCHAR(300)`,
   `ALTER TABLE bp_reports ADD COLUMN IF NOT EXISTS canonical_report_id UUID`,
-  `CREATE TABLE IF NOT EXISTS bp_opportunities (
+  // NOTE: named bp_report_opportunities (NOT bp_opportunities) — a sibling app
+  // sharing this Neon database periodically recreates `bp_opportunities` with
+  // its own legacy schema (plan_id/scores jsonb), which clobbered our data.
+  `CREATE TABLE IF NOT EXISTS bp_report_opportunities (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     report_id UUID NOT NULL REFERENCES bp_reports(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -91,7 +94,7 @@ const BASE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_business_model_norm ON bp_reports(business_model_norm)`,
-  `CREATE INDEX IF NOT EXISTS idx_bp_opportunities_report_id ON bp_opportunities(report_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_report_opportunities_report_id ON bp_report_opportunities(report_id)`,
   `CREATE TABLE IF NOT EXISTS newsletter_subscribers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -106,7 +109,7 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   sessions: ['id', 'user_id', 'token', 'expires_at', 'created_at', 'ip_address', 'user_agent'],
   feedback: ['id', 'user_id', 'name', 'email', 'subject', 'message', 'status', 'created_at'],
   bp_reports: ['id', 'keyword', 'keyword_norm', 'source_trend_id', 'search_volume', 'growth_rate', 'category', 'time_range', 'region', 'rank', 'status', 'title', 'summary', 'selected_opportunity', 'content_json', 'business_model_norm', 'canonical_report_id', 'model', 'tokens_used', 'error', 'user_id', 'created_at', 'updated_at'],
-  bp_opportunities: ['id', 'report_id', 'name', 'description', 'score_market', 'score_roi', 'score_onlineability', 'score_feasibility', 'score_speed', 'score_moat', 'weighted_score', 'is_selected', 'rank', 'created_at'],
+  bp_report_opportunities: ['id', 'report_id', 'name', 'description', 'score_market', 'score_roi', 'score_onlineability', 'score_feasibility', 'score_speed', 'score_moat', 'weighted_score', 'is_selected', 'rank', 'created_at'],
   newsletter_subscribers: ['id', 'email', 'created_at'],
 };
 
@@ -157,9 +160,11 @@ const RECREATE_STATEMENTS = [
 ];
 
 // Destructive recreate of the BP feature tables (drops child before parent).
+// Only OUR tables are dropped — bp_opportunities belongs to a sibling app
+// sharing this database and must not be touched.
 const RECREATE_BP_STATEMENTS = [
   `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
-  `DROP TABLE IF EXISTS bp_opportunities CASCADE`,
+  `DROP TABLE IF EXISTS bp_report_opportunities CASCADE`,
   `DROP TABLE IF EXISTS bp_reports CASCADE`,
   `CREATE TABLE bp_reports (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -186,7 +191,7 @@ const RECREATE_BP_STATEMENTS = [
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
   )`,
-  `CREATE TABLE bp_opportunities (
+  `CREATE TABLE bp_report_opportunities (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     report_id UUID NOT NULL REFERENCES bp_reports(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -207,7 +212,7 @@ const RECREATE_BP_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_bp_reports_business_model_norm ON bp_reports(business_model_norm)`,
-  `CREATE INDEX IF NOT EXISTS idx_bp_opportunities_report_id ON bp_opportunities(report_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_report_opportunities_report_id ON bp_report_opportunities(report_id)`,
 ];
 
 async function inspectColumns(client: any): Promise<Record<string, string[]>> {

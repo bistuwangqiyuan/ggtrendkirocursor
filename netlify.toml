@@ -4,11 +4,17 @@
 
 [functions]
   node_bundler = "esbuild"
-  included_files = ["node_modules/pg/**"]
-  # pg ships an optional native binding (pg-native) behind a dynamic require
-  # that esbuild cannot resolve; keep pg external (its files are shipped via
-  # included_files above) so bp-batch-background can import the DB client.
-  external_node_modules = ["pg", "pg-native"]
+  # Bundle pg (and its runtime deps pg-types/pg-pool/pg-protocol/...) INTO each
+  # function. Only the optional native binding pg-native stays external — its
+  # dynamic require is what esbuild can't resolve, and pg falls back to the
+  # pure-JS client when the module is absent.
+  #
+  # Do NOT mark pg itself external: an external pg still require()s pg-types &
+  # co. at runtime, and those packages don't ship with the function bundle.
+  # That exact misconfiguration crashed bp-batch-background at module init
+  # ("Cannot find module 'pg-types'") on every scheduled run from 2026-07-04
+  # to 2026-07-13 and silently halted all BP generation.
+  external_node_modules = ["pg-native"]
 
 # Give the SSR/API function the maximum synchronous timeout so LLM-backed BP
 # generation has the best chance to finish before Netlify cuts the request.

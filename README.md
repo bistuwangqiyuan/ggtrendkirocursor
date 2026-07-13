@@ -119,7 +119,7 @@ The BP feature converts the #1 trending keyword into a structured business plan.
 | --- | --- | --- |
 | `POST /api/bp/generate` | Logged-in user | Generate a BP for a keyword / the top trend |
 | `POST /api/bp/cron` | `Authorization: Bearer ${CRON_SECRET}` | Scheduled trigger (no user session) |
-| `GET /api/bp/list` | Public | Paginated list of generated BPs |
+| `GET /api/bp/list` | Public | Paginated list of generated BPs (`page`, `pageSize`/`limit`, `sort`, `order`, `status`) |
 | `GET /api/bp/[id]` | Public | A single BP report + opportunities |
 
 On-site pages: `/bp` (list) and `/bp/[id]` (detail, with generating-state polling).
