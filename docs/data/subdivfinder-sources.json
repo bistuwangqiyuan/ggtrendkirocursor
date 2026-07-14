@@ -1,0 +1,152 @@
+{
+ "description": "SubDivFinder BP（docs/data/subdivfinder-bp-original.md）逐项核查的事实与出处快照。verdict 取值：CONFIRMED（证实）/ REFUTED（证伪）/ PARTIAL（部分属实）/ UNVERIFIABLE（无法独立核实）。所有出处于 accessed 日期由 WebSearch 检索并人工比对。",
+ "compiledAt": "2026-07-14",
+ "claims": [
+  {
+   "id": "C1",
+   "topic": "市场·首购族占比",
+   "bpClaim": "首次购房者占全美购房者的 43%，即约 210 万人/年",
+   "verdict": "REFUTED",
+   "evidence": "NAR《2025 Profile of Home Buyers and Sellers》（2025-11-04 发布，覆盖 2024-07~2025-06 交易）：首购族占比 21%，为 1981 年有统计以来最低；2008 年前的历史常态约 40%。2025 年成屋销售 406.1 万套（NAR，1995 年以来最低）+ 新房销售 67.9 万套（Census/HUD）≈ 474 万宗交易，首购族 ≈ 474 万 × 21% ≈ 99.5 万人/年。BP 的 43% 接近 2008 年前的历史常态而非现状，人数被高估约 2.1 倍。",
+   "sources": [
+    {"name": "NAR 新闻稿：First-Time Home Buyer Share Falls to Historic Low of 21%", "url": "https://www.nar.realtor/press-releases/first-time-home-buyer-share-falls-to-historic-low-of-21-median-age-rises-to-40", "accessed": "2026-07-14"},
+    {"name": "Realtor.com Research：2025 existing-home sales 4.061M", "url": "https://www.realtor.com/research/existing-home-sales-december-2025/", "accessed": "2026-07-14"},
+    {"name": "Census/HUD Monthly New Residential Sales, December 2025（2025 年新房销售 679,000 套）", "url": "https://www.census.gov/construction/nrs/pdf/newressales_202512.pdf", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C2",
+   "topic": "市场·年新增新房",
+   "bpClaim": "美国每年新增 120 万套新房",
+   "verdict": "PARTIAL",
+   "evidence": "Census/HUD：2025 年住宅开工 1,358,700 套（较 2024 年 1,367,100 降 0.6%），2025 年新建独栋住宅销售 679,000 套。若按开工口径，BP 的 120 万略低估（实际 ≈136 万）；若按'卖给购房者的新房'口径则高估一倍（实际 ≈68 万）。量级方向正确但口径含糊。",
+   "sources": [
+    {"name": "Census/HUD Monthly New Residential Construction, December 2025", "url": "https://www.census.gov/construction/nrc/pdf/newresconst_202512.pdf", "accessed": "2026-07-14"},
+    {"name": "NAHB：Overall Housing Starts Inch Lower in 2025", "url": "https://www.nahb.org/news-and-economics/press-releases/2026/02/overall-housing-starts-inch-lower-in-2025", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C3",
+   "topic": "竞争·subdivision 级监测空白",
+   "bpClaim": "现有工具如 Zillow 无细分到 subdivision 级施工进度（评分卡将竞争格局打 7/10）",
+   "verdict": "REFUTED",
+   "evidence": "Zonda Enterprise（原 Meyers Research/Hanley Wood）日更追踪全美 54,000+ 在建及规划中 subdivision，含地块状态、开工/交房、价格、开发商活动等 500+ 指标，并按 subdivision 输出季度活动与库存报告；其消费者端 NewHomeSource 自称美国第一新房房源平台。'无人做 subdivision 级施工进度'不成立——只是产品面向 B 端（建商/开发商/REIT），消费者级订阅确有空隙（见 C4）。",
+   "sources": [
+    {"name": "Zonda Enterprise 产品页（54K+ active & future subdivisions）", "url": "https://zondahome.com/data-solutions/enterprise/", "accessed": "2026-07-14"},
+    {"name": "Zonda Enterprise 6.8 发布：Subdivision & Builder Reports", "url": "https://zondahome.com/introducing-enterprise-6-8-empowering-housing-market-analysis-with-new-subdivision-builder-reports/", "accessed": "2026-07-14"},
+    {"name": "Zonda Listings：NewHomeSource & Livabl", "url": "https://zondahome.com/listings/", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C4",
+   "topic": "竞争·permit 数据 API",
+   "bpClaim": "SubDivMap Pro：向房贷经纪、REIT 分析师出售新建分区 API 数据流（评 39/50，隐含该位置空缺）",
+   "verdict": "REFUTED",
+   "evidence": "Shovels.ai 已在该位置运营：1.64 亿+ 建筑许可、2,450+ 辖区（约覆盖美国 85% 人口）、LLM 清洗、REST API + 数据仓库直连，客户覆盖 proptech 初创到上市公司。BP 五候选中的'数据 API'定位已被直接占据。",
+   "sources": [
+    {"name": "Shovels.ai 官网（164M+ permits，2,450+ jurisdictions）", "url": "https://www.shovels.ai/", "accessed": "2026-07-14"},
+    {"name": "Shovels API 页", "url": "https://www.shovels.ai/api", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C5",
+   "topic": "技术·卫星验证动工",
+   "bpClaim": "差异化：唯一整合 county-level building permit 扫描 + 卫星图像变化检测（via NASA FIRMS API）验证实际动工",
+   "verdict": "REFUTED",
+   "evidence": "NASA FIRMS = Fire Information for Resource Management System，分发 MODIS（1km 分辨率）与 VIIRS（375m）的活跃野火/热异常检测数据，探测对象为火点、火山、燃气火炬等热源。它既无可见光变化检测能力，分辨率也远不足以识别工地动工。以 FIRMS 做施工监测是技术幻觉；真正可用的是 Sentinel-2（10m，免费）或商业高分辨率影像，成本与工程量远超 BP 描述。",
+   "sources": [
+    {"name": "NASA Earthdata：FIRMS 工具页", "url": "https://www.earthdata.nasa.gov/data/tools/firms", "accessed": "2026-07-14"},
+    {"name": "FIRMS 官网（active fire data，MODIS/VIIRS）", "url": "https://firms.modaps.eosdis.nasa.gov/", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C6",
+   "topic": "数据源·许可辖区规模",
+   "bpClaim": "AI 解析全美 2,200+ 县建筑许可数据库；3-12 月扩展至全美 2,200+ 县",
+   "verdict": "REFUTED",
+   "evidence": "美国建筑许可由约 20,000 个 AHJ（Authority Having Jurisdiction，市/县政府）签发，格式与数字化程度参差；专业公司 Shovels 融合多家上游供应商也只标准化了约 2,000~2,450 个辖区（≈85% 人口）。'12 个月内单团队覆盖全美'严重低估采集与维护成本——Shovels 自述这是随辖区数线性增长的抓取/维护问题。",
+   "sources": [
+    {"name": "Shovels 文档：US ~20,000 permit jurisdictions", "url": "https://docs.shovels.ai/docs/knowledge-base/data/geographic/jurisdictions", "accessed": "2026-07-14"},
+    {"name": "Shovels 文档：Permit Availability（覆盖难度说明）", "url": "https://docs.shovels.ai/docs/foundations-understanding-permits", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C7",
+   "topic": "单位经济·CPC",
+   "bpClaim": "Google Ads CPC $0.8（房地产投放）",
+   "verdict": "REFUTED",
+   "evidence": "WordStream/LocaliQ 2026 基准（2025-04~2026-03，13,477 个美国搜索广告系列）：房地产行业 CPC 中位数 $3.22，且同比上涨 27.27%（2025 版为 $2.53）。BP 的 $0.8 比行业基准低约 4 倍。",
+   "sources": [
+    {"name": "WordStream Google Ads Benchmarks 2026（Real Estate CPC $3.22）", "url": "https://www.wordstream.com/blog/2026-google-ads-benchmarks", "accessed": "2026-07-14"},
+    {"name": "LocaliQ Real Estate Advertising Benchmarks 2026", "url": "https://localiq.com/blog/real-estate-search-advertising-benchmarks/", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C8",
+   "topic": "单位经济·churn 引用",
+   "bpClaim": "churn 3.5%/月取同类房地产 SaaS 中位数，来源 OpenView PE 2024 Benchmark",
+   "verdict": "UNVERIFIABLE",
+   "evidence": "引用本身有瑕疵：OpenView Partners 于 2023-12 停止新投资并大幅裁员，其自有 SaaS Benchmarks 报告止于 2023 版；2024 版由 High Alpha 接手出品（OpenView 为合作方之一）。该系列报告按 ARR 分层报告增长/留存，并无'房地产 SaaS 月流失中位数 3.5%'这一细分数字。3.5%/月对低频消费级订阅并非离谱假设，但其标注的出处不能成立。",
+   "sources": [
+    {"name": "OpenView 官方声明（2023-12-06 暂停新投资）", "url": "https://openviewpartners.com/openview-refocuses-on-existing-portfolio-companies/", "accessed": "2026-07-14"},
+    {"name": "2024 SaaS Benchmarks Report by High Alpha（接手方）", "url": "https://highalpha.com/saas-benchmarks/2024", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C9",
+   "topic": "市场·房贷经纪机构数",
+   "bpClaim": "区域性房贷经纪约 12.4 万家机构",
+   "verdict": "REFUTED",
+   "evidence": "CSBS/NMLS 2024 年报：全美经 NMLS 持州牌照的公司约 3.4 万家（涵盖抵押贷款、汇款、消费金融、催收等全部非银类），另有约 8,000 家联邦注册公司；2023 年独立持牌公司 33,845 家。即便把全部持牌公司都算作'房贷经纪'，也不足 4.2 万家，BP 高估约 3~4 倍。",
+   "sources": [
+    {"name": "CSBS Annual Report 2024（>34,000 companies state-licensed）", "url": "https://www.csbs.org/sites/default/files/reports/CSBS_AnnualReport%202024_DIGITAL.pdf", "accessed": "2026-07-14"},
+    {"name": "CSBS Annual Report 2023（33,845 家独立持牌公司）", "url": "https://www.csbs.org/sites/default/files/reports/CSBS_AnnualReport2023_digital.pdf", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C10",
+   "topic": "GTM·集成伙伴",
+   "bpClaim": "与 NMLS 认证的房贷经纪 SaaS（如 Blend、Roostify）API 集成",
+   "verdict": "PARTIAL",
+   "evidence": "Roostify 已于 2023-02-21 被 CoreLogic 收购并整合进其 Digital Mortgage Platform，作为独立集成伙伴已不存在；Blend 仍独立运营。GTM 名单未反映 2023 年后的行业格局，且'Realtor.com 开放 API 反向导流'并无公开的第三方导流 API（Realtor.com 由 Move/News Corp 运营，无此公开产品，标注为存疑）。",
+   "sources": [
+    {"name": "BusinessWire：CoreLogic Acquires Roostify（2023-02-22）", "url": "https://www.businesswire.com/news/home/20230222005850/en/CoreLogic-Acquires-Roostify-Expanding-Digital-Mortgage-Capabilities", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C11",
+   "topic": "需求·搜索量",
+   "bpClaim": "'new subdivisions' 月搜索量 5000+（美国趋势榜第 40 名）",
+   "verdict": "UNVERIFIABLE",
+   "evidence": "免费渠道无法精确核实关键词月搜索量（需 Ahrefs/Semrush/Google Keyword Planner 实测）。趋势榜第 40 名是单日瞬时信号，不等于稳定月搜索量。5000+/月对该词族并非离谱量级，但据此推导用户量的算式本身算错了 333 倍（见复算脚本 M6）。",
+   "sources": [
+    {"name": "（不可独立核实——留待阶段 0 用关键词工具实测）", "url": "", "accessed": "2026-07-14"}
+   ]
+  },
+  {
+   "id": "C12",
+   "topic": "竞争·Attom 定价",
+   "bpClaim": "Attom 提供数据但需企业级合同（起订 $5k/年）且无消费者界面",
+   "verdict": "PARTIAL",
+   "evidence": "ATTOM 确为企业级物业数据供应商、无消费者订阅界面（方向正确）；但'$5k/年起订'无公开价目可核实，标注为未经证实的量级估计。",
+   "sources": [
+    {"name": "（定价未公开，无法核实具体数字）", "url": "https://www.attomdata.com/", "accessed": "2026-07-14"}
+   ]
+  }
+ ],
+ "correctedInputs": {
+  "description": "verify_subdivfinder_math.py 重建修正后模型所用输入。",
+  "firstTimeBuyerShare2025": 0.21,
+  "existingHomeSales2025": 4061000,
+  "newHomeSales2025": 679000,
+  "housingStarts2025": 1358700,
+  "realEstateCpc2026": 3.22,
+  "penetrationRateAssumption": 0.15,
+  "arpuPerYear": 120.0,
+  "monthlyPrice": 9.99,
+  "monthlyChurnAssumption": 0.035,
+  "visitToSignupRange": [0.02, 0.05],
+  "signupToPaidBpRoadmap": 0.043,
+  "notes": "visitToSignup 2%~5% 为免费增值网页产品的常见区间（模型假设，非测量值）；signupToPaid 4.3% 直接取 BP 自己 Roadmap 里声称的'行业基准'，用其自己的假设检验其自己的结论。"
+ }
+}
