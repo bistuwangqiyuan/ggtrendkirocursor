@@ -12,7 +12,7 @@ Trend Now is a real-time Google Trends data visualization platform built with As
 - **SEO Optimized**: Server-Side Rendering (SSR), semantic HTML, and structured data.
 - **Feedback System**: Integrated user feedback submission.
 - **AI Business Plans**: Turn the #1 trending keyword into a structured, investor-grade business plan via an LLM (opportunity brainstorm -> six-dimension scoring -> selection -> BP), persisted to the database and viewable on-site at `/bp`.
-- **Scheduled Auto-Generation**: A Netlify Scheduled Function kicks off a background batch (15-min budget, generation runs in-process) every 6 hours. It scans trends **collected within the last 48h**, skips keywords with a completed BP in the last 7 days, circuit-breaks keywords that failed twice in the last 24h, and picks hotwords with a composite score above 60.
+- **Scheduled Auto-Generation**: A Netlify Scheduled Function kicks off a background batch (15-min budget, generation runs in-process) every 3 hours (8 runs x 5 BPs = up to 40 hotwords analyzed per day). It scans trends **collected within the last 48h**, skips keywords that already have a completed BP anywhere in history (all-history dedupe: each hotword is analyzed at most once), circuit-breaks keywords that failed twice in the last 24h, and picks hotwords with a composite score above 60.
 - **Verifiable Financials**: Seed-round return metrics are recomputed server-side with declared formulas; deviations get a calibration note. Any report can be independently re-verified with `python scripts/verify_bp_math.py --id <report-id>`.
 - **Abuse Protection**: Ops endpoints require an environment secret (`ADMIN_SECRET`), and write endpoints (login/register/feedback/newsletter/BP generation) are rate limited.
 - **LLM Auto-Failover**: Configure multiple OpenAI-compatible endpoints; the service switches to the next one automatically on timeout / HTTP / auth errors.
@@ -140,7 +140,7 @@ curl -X POST "https://<your-site>/api/db-init?secret=$ADMIN_SECRET&migrate=bp" -
 
 ### Scheduled auto-generation
 
-[`netlify/functions/bp-scheduled.ts`](netlify/functions/bp-scheduled.ts) runs every 6 hours (`0 */6 * * *`, UTC) and calls `POST /api/bp/cron` with the `CRON_SECRET`. To enable it in production, set both `CRON_SECRET` and an LLM key (`LLM_API_KEY` or `LLM_API_ENDPOINTS`) in the Netlify dashboard, then redeploy.
+[`netlify/functions/bp-scheduled.ts`](netlify/functions/bp-scheduled.ts) runs every 3 hours (`0 */3 * * *`, UTC) and triggers the `bp-batch-background` function (batch size `BP_BATCH_SIZE`, default 5) with the `CRON_SECRET`, for up to 40 BPs per day. To enable it in production, set both `CRON_SECRET` and an LLM key (`LLM_API_KEY` or `LLM_API_ENDPOINTS`) in the Netlify dashboard, then redeploy.
 
 You can verify the schedule under Netlify -> Functions -> `bp-scheduled`, or trigger it manually:
 

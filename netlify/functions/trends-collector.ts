@@ -1,13 +1,15 @@
 import { schedule } from '@netlify/functions';
 
 /**
- * Scheduled Google Trends RSS harvest. Runs every 6 hours at minute 50 (UTC),
+ * Scheduled Google Trends RSS harvest. Runs every 3 hours at minute 50 (UTC),
  * ~10 minutes before the BP batch generator, so the keyword pool is freshly
- * topped up before generation begins. Spends zero LLM tokens.
+ * topped up before generation begins. With all-history dedupe each keyword is
+ * analyzed only once, so the pool must keep supplying genuinely new hotwords
+ * (up to 40/day are consumed). Spends zero LLM tokens.
  *
  * Requires the CRON_SECRET environment variable to authorize the call.
  */
-export const handler = schedule('50 */6 * * *', async () => {
+export const handler = schedule('50 */3 * * *', async () => {
   const secret = process.env.CRON_SECRET?.trim();
   const base = (process.env.URL || process.env.DEPLOY_URL || 'https://ggtrendkirocursor.netlify.app').replace(/\/$/, '');
 

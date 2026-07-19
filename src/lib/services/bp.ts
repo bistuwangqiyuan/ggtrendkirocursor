@@ -421,35 +421,23 @@ ${avoid}
 }
 
 /**
- * Deduplication window (days). A keyword is treated as "already done" only if it
- * has a completed BP within this many days; after the window elapses the cron
- * regenerates a fresh BP. The same window bounds the manual reuse path and the
- * business-model dedup, so the weekly refresh produces genuinely new content.
+ * Deduplication is all-history: a keyword is treated as "already done" if it
+ * has a completed BP anywhere in the analysis record, so each hotword is
+ * analyzed at most once. The same rule bounds the manual reuse path and the
+ * business-model dedup.
  */
-export const DEDUPE_WINDOW_DAYS = 7;
-
-/** True when `date` is within `days` of `now` (inclusive boundary at exactly N days). */
-export function isWithinDays(date: Date, now: Date, days: number): boolean {
-  const ms = now.getTime() - date.getTime();
-  if (!Number.isFinite(ms)) return false;
-  return ms <= days * 24 * 60 * 60 * 1000 && ms >= 0;
-}
 
 /**
- * Pure helper: build the set of keyword_norms that are "recently completed"
- * (within `windowDays`). Used by the cron skip-set so the 7-day rule is
- * unit-testable independently of the database.
+ * Pure helper: build the set of keyword_norms that have a completed BP.
+ * Used by the cron skip-set so the all-history dedupe rule is unit-testable
+ * independently of the database.
  */
-export function recentKeywordNormSet(
-  rows: { keywordNorm: string; createdAt: Date }[],
-  now: Date,
-  windowDays = DEDUPE_WINDOW_DAYS
+export function completedKeywordNormSet(
+  rows: { keywordNorm: string }[]
 ): Set<string> {
   const set = new Set<string>();
   for (const r of rows) {
-    if (r.keywordNorm && isWithinDays(r.createdAt, now, windowDays)) {
-      set.add(r.keywordNorm);
-    }
+    if (r.keywordNorm) set.add(r.keywordNorm);
   }
   return set;
 }
@@ -575,8 +563,8 @@ function mapReportRow(row: any): BpReport {
 export class BpService {
   /**
    * Ops diagnostic (no generation): report how the scheduled picker sees the
-   * world right now — the size of the 7-day completed skip-set, what it would
-   * pick, and whether that pick is (incorrectly) already in the skip-set.
+   * world right now — the size of the all-history completed skip-set, what it
+   * would pick, and whether that pick is (incorrectly) already in the skip-set.
    */
   async debugPickDiagnostics(timeRange = '4h'): Promise<{
     completedCount: number;
@@ -668,38 +656,27 @@ export class BpService {
     };
   }
 
-  /** Whether a completed BP exists for this keyword within the dedupe window. */
+  /** Whether a completed BP exists for this keyword (anywhere in history). */
   async hasCompletedBp(keywordNorm: string): Promise<boolean> {
     const row = await queryOne<{ exists: boolean }>(
       `SELECT EXISTS(
          SELECT 1 FROM bp_reports
          WHERE keyword_norm = $1 AND status = 'completed'
-           AND created_at >= NOW() - make_interval(days => $2)
        ) AS exists`,
-      [keywordNorm, DEDUPE_WINDOW_DAYS]
+      [keywordNorm]
     );
     return !!row?.exists;
   }
 
   /**
-   * Keyword_norm values with a completed BP within the dedupe window (7 days).
-   * Older keywords fall out of the set so the cron regenerates a fresh BP.
-   * Windowing is delegated to the DB clock (NOW()) for consistency with the
-   * reuse queries; the pure `recentKeywordNormSet` helper remains unit-tested.
+   * Keyword_norm values with a completed BP anywhere in history. Dedupe is
+   * all-history so each hotword gets exactly one analysis; the picker always
+   * advances to genuinely-new keywords instead of refreshing old ones.
    */
-  async getRecentlyCompletedKeywordNorms(windowDays = DEDUPE_WINDOW_DAYS): Promise<Set<string>> {
-    // Trust the SQL window (DB NOW()) as the single source of truth — the same
-    // clock findReusable / hasCompletedBp / findCompletedByBusinessModel use.
-    // A previous JS-side re-filter (isWithinDays against new Date()) could
-    // disagree with the DB clock for rows near the 7-day boundary: findReusable
-    // would still reuse such a keyword while the picker failed to skip it,
-    // causing a reuse-loop where the batch keeps re-picking the same keyword
-    // instead of advancing to genuinely-new hotwords.
+  async getRecentlyCompletedKeywordNorms(): Promise<Set<string>> {
     const rows = await query<{ keyword_norm: string }>(
       `SELECT DISTINCT keyword_norm FROM bp_reports
-       WHERE status = 'completed' AND keyword_norm IS NOT NULL
-         AND created_at >= NOW() - make_interval(days => $1)`,
-      [windowDays]
+       WHERE status = 'completed' AND keyword_norm IS NOT NULL`
     );
     const set = new Set<string>();
     for (const r of rows) if (r.keyword_norm) set.add(r.keyword_norm);
@@ -731,9 +708,8 @@ export class BpService {
 
   /**
    * Walk trends by search_volume desc; return the first whose composite score
-   * exceeds MIN_TREND_SCORE and which has no completed BP within the dedupe
-   * window (7 days). Keywords last generated more than 7 days ago are eligible
-   * again so their BP is refreshed.
+   * exceeds MIN_TREND_SCORE and which has no completed BP anywhere in history
+   * (all-history dedupe: each hotword is analyzed at most once).
    *
    * Only trends COLLECTED within SCHEDULED_FRESHNESS_WINDOW are scanned, and
    * keywords that recently failed repeatedly are circuit-broken out.
@@ -793,11 +769,9 @@ export class BpService {
   }
 
   /**
-   * Find the earliest completed report within the dedupe window (7 days) whose
-   * business model matches `bmNorm` (excluding `excludeId`). Bounding by the
-   * window means the weekly keyword refresh produces genuinely new content
-   * rather than re-pointing at a stale canonical from a previous week.
-   * Only considers canonical reports (those that are not themselves duplicates).
+   * Find the earliest completed report (anywhere in history) whose business
+   * model matches `bmNorm` (excluding `excludeId`). Only considers canonical
+   * reports (those that are not themselves duplicates).
    */
   async findCompletedByBusinessModel(bmNorm: string, excludeId?: string): Promise<BpReport | null> {
     if (!bmNorm) return null;
@@ -806,40 +780,41 @@ export class BpService {
        WHERE status = 'completed'
          AND business_model_norm = $1
          AND canonical_report_id IS NULL
-         AND created_at >= NOW() - make_interval(days => $3)
          AND ($2::uuid IS NULL OR id <> $2::uuid)
        ORDER BY created_at ASC LIMIT 1`,
-      [bmNorm, excludeId ?? null, DEDUPE_WINDOW_DAYS]
+      [bmNorm, excludeId ?? null]
     );
     return row ? mapReportRow(row) : null;
   }
 
   /**
-   * Distinct business-model norms generated within the dedupe window (7 days),
-   * used to steer the LLM away from re-proposing models that already exist.
-   * Converting would-be collisions into new content avoids wasting whole calls.
+   * Most recently used distinct business-model norms (all history), used to
+   * steer the LLM away from re-proposing models that already exist. Converting
+   * would-be collisions into new content avoids wasting whole calls.
    */
-  async getRecentBusinessModels(limit = 20, windowDays = DEDUPE_WINDOW_DAYS): Promise<string[]> {
+  async getRecentBusinessModels(limit = 20): Promise<string[]> {
     const rows = await query<{ business_model_norm: string }>(
-      `SELECT DISTINCT business_model_norm FROM bp_reports
-       WHERE status = 'completed'
-         AND business_model_norm IS NOT NULL AND business_model_norm <> ''
-         AND created_at >= NOW() - make_interval(days => $1)
-       ORDER BY business_model_norm
-       LIMIT $2`,
-      [windowDays, limit]
+      `SELECT business_model_norm FROM (
+         SELECT business_model_norm, MAX(created_at) AS last_used
+         FROM bp_reports
+         WHERE status = 'completed'
+           AND business_model_norm IS NOT NULL AND business_model_norm <> ''
+         GROUP BY business_model_norm
+       ) t
+       ORDER BY last_used DESC
+       LIMIT $1`,
+      [limit]
     );
     return rows.map((r) => r.business_model_norm).filter(Boolean);
   }
 
-  /** Return a completed report for this keyword within the dedupe window (7 days), if any. */
+  /** Return the latest completed report for this keyword (anywhere in history), if any. */
   async findReusable(keywordNorm: string): Promise<BpReport | null> {
     const row = await queryOne<any>(
       `SELECT * FROM bp_reports
        WHERE keyword_norm = $1 AND status = 'completed'
-         AND created_at >= NOW() - make_interval(days => $2)
        ORDER BY created_at DESC LIMIT 1`,
-      [keywordNorm, DEDUPE_WINDOW_DAYS]
+      [keywordNorm]
     );
     return row ? mapReportRow(row) : null;
   }
@@ -865,8 +840,8 @@ export class BpService {
 
   /**
    * Scheduled entry point: clean stale rows, pick the next eligible hotword
-   * (score > MIN_TREND_SCORE, no completed BP within the last 7 days), then
-   * generate one new BP. Keywords roll back into eligibility after 7 days.
+   * (score > MIN_TREND_SCORE, no completed BP anywhere in history), then
+   * generate one new BP. Each hotword is analyzed at most once.
    */
   async runScheduledGeneration(opts?: { llmTimeoutMs?: number }): Promise<
     Result<

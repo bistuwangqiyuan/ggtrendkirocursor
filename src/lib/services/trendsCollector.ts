@@ -4,8 +4,8 @@ import { query, getClient, getTrendsTableName, getTimestampColumnName } from '..
  * Google Trends "Daily Trending Searches" RSS collector.
  *
  * Provides a free, zero-LLM-token supply of REAL hotwords so the BP generator
- * never starves (the 7-day dedup window would otherwise exhaust a static pool
- * in 1-2 days at 5-10x volume). Rows are written into the active trends table
+ * never starves (all-history dedupe means each keyword is analyzed only once,
+ * so a static pool would exhaust quickly). Rows are written into the active trends table
  * with a fresh collection timestamp so the dashboard's collectedWithin filter
  * and the BP picker both see fresh, eligible keywords.
  *

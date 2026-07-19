@@ -16,7 +16,7 @@
 | `LLM_MODELS_CACHE_TTL_MS` | 否 | `43200000`（12h） | 自动选型探测结果缓存时长 |
 | `LLM_PROVIDER_RANK` | 否 | 内置排名 | 跨供应商优先级覆盖（JSON：`{"glm":99,"qwen":80}`），数值越大越优先尝试 |
 | `CRON_SECRET` | 是（启用定时） | — | 定时任务鉴权密钥，建议 32+ 位随机串（采集与批量生成共用） |
-| `BP_BATCH_SIZE` | 否 | `10` | 每次定时批量生成的 BP 数量（自动钳制到 1-10）。4 次/天 × 10 = 40 份/天（≈10×） |
+| `BP_BATCH_SIZE` | 否 | `5` | 每次定时批量生成的 BP 数量（自动钳制到 1-10）。8 次/天 × 5 = 40 份/天 |
 | `TRENDS_TABLE` | 否 | 自动探测 | 强制指定趋势表名（默认在 `google_trends` / `trends_trending_now` 间按行数自动选择） |
 
 > 二选一：`LLM_API_KEY` 与 `LLM_API_ENDPOINTS` 至少配置其一，否则 BP 生成端点返回 503（fail-closed，不做模板回退）。
@@ -52,12 +52,12 @@
 
 ## 3. 定时关键词采集（零 LLM token）
 
-- 实现：[netlify/functions/trends-collector.ts](../../../netlify/functions/trends-collector.ts)，`schedule('50 */6 * * *', ...)`，UTC 每 6 小时的第 50 分（比 BP 批量生成早约 10 分钟，先补充词池）。
+- 实现：[netlify/functions/trends-collector.ts](../../../netlify/functions/trends-collector.ts)，`schedule('50 */3 * * *', ...)`，UTC 每 3 小时的第 50 分（比 BP 批量生成早约 10 分钟，先补充词池）。
 - 行为：调用 `POST /api/trends/collect`（`Authorization: Bearer ${CRON_SECRET}`）→ `trendsCollector.collect()`：
   1. 抓取 Google Trends 实时热搜 RSS（`https://trends.google.com/trending/rss?geo=...`），默认地区 `US,GB,CA,AU,IN,SG`；
   2. 解析关键词与 `approx_traffic`（"200K+"→200000），按地区 24h 去重后写入活跃趋势表，采集时间戳 = `NOW()`；
   3. `growth_rate` 由流量分级保守估算（界定 74-100，仅作内部评分信号，避免乐观偏差），确保新词在 BP 选词器中 > `MIN_TREND_SCORE`。
-- 成本：**0 LLM token**。解决「词池静态、7 天去重后无新词可用」与 R3 采集时效问题。
+- 成本：**0 LLM token**。解决「词池静态、全历史去重后无新词可用」与 R3 采集时效问题（每词只分析一次，词池必须持续供应新词）。
 - 手动触发：
   ```bash
   curl -X POST "https://<your-site>/api/trends/collect" \
@@ -68,16 +68,16 @@
 
 ## 3b. 定时批量自动生成
 
-- 实现：[netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts)，`schedule('0 */6 * * *', ...)`，UTC 每 6 小时整点。该触发器**仅异步拉起**后台批量函数并立即返回（不占用定时函数时长）。
-- 后台批量：[netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts)（`-background` 后缀 → 15 分钟时长上限）循环 `BP_BATCH_SIZE`（默认 10，钳制 1-10）次调用 `POST /api/bp/cron`，**每次生成 1 份 BP**（各自在 26s 同步上限内完成）；遇 `action=skipped`（词池耗尽）或连续 2 次失败则提前结束，调用间隔 1.5s。
+- 实现：[netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts)，`schedule('0 */3 * * *', ...)`，UTC 每 3 小时整点（8 次/天 × 5 份 = 最多 40 份/天）。该触发器**仅异步拉起**后台批量函数并立即返回（不占用定时函数时长）。
+- 后台批量：[netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts)（`-background` 后缀 → 15 分钟时长上限）在进程内循环 `BP_BATCH_SIZE`（默认 5，钳制 1-10）次调用 `bpService.runScheduledGeneration()`，**每次生成 1 份 BP**；遇 `action=skipped`（词池耗尽）或连续 3 次失败则提前结束，调用间隔 1.5s。
 - 单次 `POST /api/bp/cron` → `bpService.runScheduledGeneration()`：
   1. `resetStaleGenerating()` 把超过 15 分钟仍 `generating/pending` 的记录置为 `failed`；
   2. 按 `4h` 窗口、`search_volume` 降序扫描趋势（每页 50 条，最多 5 页）；
-  3. **热词 7 天滚动去重**：跳过近 7 天内已有 `completed` BP 的热词，自动顺延下一个不重复的热词；超过 7 天的热词重新进入候选，定时任务会为其生成**全新**的 BP（每周刷新）；
+  3. **热词全历史去重**：跳过历史上任一时刻已有 `completed` BP 的热词，自动顺延下一个不重复的热词。每个热词只分析一次，永不重复生成；
   4. **评分筛选**：综合百分制分 > 60 才合格（`50%×增长速度% + 50%×搜索量对数归一化`，见 `computeTrendHotwordScore`）；
   5. 对首个合格且未生成 BP 的热词调用 LLM，`action=generated`；无合格热词则 `action=skipped`（200，非错误）。
-  6. **商业模式去重（同样限定 7 天窗口）**：生成并校验后，按归一化 `businessModel`（`normalizeBusinessModel`：小写、压缩空白、去首尾标点）比对**近 7 天**的 `completed` 报告。若 7 天内已存在相同商业模式的报告，则**不重复存储内容**，将本次记录标记为 `completed` 并通过 `canonical_report_id` 指向原报告，直接复用其商业计划书（详情/列表读取时自动解析指向）；超过 7 天则不复用，保证每周刷新产出新内容。
-  7. **省 token：商业模式回避清单**：调用 LLM 前注入近 7 天已生成的去重商业模式清单（`getRecentBusinessModels` + `buildAvoidModelsLine`，约 +150-250 输入 token），引导模型另辟差异化方向，把「生成后才发现模式重复」的整次浪费调用转化为新内容。配合精简后的提示词，单份约 5k→4.3k token。
+  6. **商业模式去重（同样为全历史）**：生成并校验后，按归一化 `businessModel`（`normalizeBusinessModel`：小写、压缩空白、去首尾标点）比对**全部历史**的 `completed` 报告。若已存在相同商业模式的报告，则**不重复存储内容**，将本次记录标记为 `completed` 并通过 `canonical_report_id` 指向原报告，直接复用其商业计划书（详情/列表读取时自动解析指向）。
+  7. **省 token：商业模式回避清单**：调用 LLM 前注入最近使用过的去重商业模式清单（`getRecentBusinessModels` + `buildAvoidModelsLine`，约 +150-250 输入 token），引导模型另辟差异化方向，把「生成后才发现模式重复」的整次浪费调用转化为新内容。配合精简后的提示词，单份约 5k→4.3k token。
   8. **全 AI 无人公司硬约束**：`SYSTEM_PROMPT` 与 `buildUserPrompt` 要求所选机会必须是可由全 AI 自动化运营的"无人公司"承载的在线服务（内容/获客/转化/客服/交付/计费/风控等环节近零人工），自动化程度计入 onlineability/feasibility，`businessModel`/`summary` 须逐环节说明无人化实现路径与近零人力成本结构；关键财务参数须可复算（注明公式与取值，便于 Python 验证）；须合法合规、符合社会公序良俗。
 - 手动触发（验证用）：
   ```bash
@@ -144,18 +144,18 @@ BP 相关探针：
 
 ### C. 报告长期卡在 `generating`
 - 原因：Netlify 函数 26s 超时中断了同步生成。
-- 处置：下一次 cron 会自动 `resetStaleGenerating()` 置为 `failed` 并重试；也可手动调用 cron。缓解：优先用更快模型、缩短输出、依赖 7 天去重窗口避免重复消耗。
+- 处置：下一次 cron 会自动 `resetStaleGenerating()` 置为 `failed` 并重试；也可手动调用 cron。缓解：优先用更快模型、缩短输出、依赖全历史去重避免重复消耗。
 
 ### D. 定时任务未执行
 - 检查：Netlify → Functions → `bp-scheduled` 是否存在且有调用记录；`CRON_SECRET` 是否已配置；时区为 UTC。
 
 ## 6. 成本与安全
 
-- **成本控制**：7 天去重窗口 + `max_tokens` 限制 + 失败不重复落库；精简提示词 + 商业模式回避清单减少无效调用；关键词采集 0 token；定时频率默认 6h。批量产量由 `BP_BATCH_SIZE`（默认 10 → 约 40 份/天）控制。
+- **成本控制**：全历史去重（每词只分析一次）+ `max_tokens` 限制 + 失败不重复落库；精简提示词 + 商业模式回避清单减少无效调用；关键词采集 0 token；定时频率默认 3h。批量产量由 `BP_BATCH_SIZE`（默认 5 → 约 40 份/天）控制。
 - **安全**：cron 强制 `CRON_SECRET`；所有 DB 访问参数化查询；详情页对 LLM 文本默认转义（不使用 `set:html` 渲染不可信内容）；生成端点要求登录用户（cron 除外，靠密钥鉴权）。
 
 ## 7. 变更频率（如需调整）
 
-- 修改 [netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts) 与 [netlify/functions/trends-collector.ts](../../../netlify/functions/trends-collector.ts) 中的 cron 表达式（如 `0 */12 * * *` 改为每 12 小时）。
-- 调整批量产量：设置环境变量 `BP_BATCH_SIZE`（1-10）。提升地区覆盖：修改 [src/lib/services/trendsCollector.ts](../../../src/lib/services/trendsCollector.ts) 中 `DEFAULT_GEOS`。
-- 修改 [src/lib/services/bp.ts](../../../src/lib/services/bp.ts) 中 `DEDUPE_WINDOW_DAYS`（去重窗口，默认 7 天，同时作用于热词去重、手动复用与商业模式去重）与 `resetStaleGenerating(maxAgeMinutes)`（卡死阈值）。
+- 修改 [netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts) 与 [netlify/functions/trends-collector.ts](../../../netlify/functions/trends-collector.ts) 中的 cron 表达式（当前均为每 3 小时：`0 */3 * * *` / `50 */3 * * *`）。
+- 调整批量产量：设置环境变量 `BP_BATCH_SIZE`（1-10，默认 5）。提升地区覆盖：修改 [src/lib/services/trendsCollector.ts](../../../src/lib/services/trendsCollector.ts) 中 `DEFAULT_GEOS`。
+- 去重为**全历史**（热词去重、手动复用与商业模式去重均不设时间窗，每个热词只分析一次）；`resetStaleGenerating(maxAgeMinutes)`（卡死阈值）仍在 [src/lib/services/bp.ts](../../../src/lib/services/bp.ts) 中调整。

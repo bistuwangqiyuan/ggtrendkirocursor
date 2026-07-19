@@ -1,5 +1,10 @@
-/** Default number of BPs generated per scheduled batch run. */
-export const DEFAULT_BP_BATCH_SIZE = 10;
+/**
+ * Default number of BPs generated per scheduled batch run. The schedule fires
+ * every 3 hours (8 runs/day), so the default yields up to 40 BPs per day while
+ * keeping each run (~2 min per BP on reasoning-tier models) inside the
+ * background function's 11-minute working budget.
+ */
+export const DEFAULT_BP_BATCH_SIZE = 5;
 
 /** Hard ceiling so a misconfigured env var can't blow the function budget. */
 export const MAX_BP_BATCH_SIZE = 10;

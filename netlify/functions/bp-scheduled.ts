@@ -1,15 +1,16 @@
 import { schedule } from '@netlify/functions';
 
 /**
- * Scheduled BP auto-generation. Runs every 6 hours (UTC) and fires the
+ * Scheduled BP auto-generation. Runs every 3 hours (UTC) and fires the
  * `bp-batch-background` function (15-min budget), which loops and generates
- * several BPs per run (BP_BATCH_SIZE, default 10) for the next eligible
- * ungenerated hotwords (score > 60, skip duplicates within the 7-day window).
+ * several BPs per run (BP_BATCH_SIZE, default 5) for the next eligible
+ * ungenerated hotwords (score > 60, skipping any keyword that already has a
+ * completed BP anywhere in history). 8 runs/day x 5 BPs = up to 40 BPs/day.
  *
  * This trigger only kicks off the background job and returns immediately, so it
  * stays well within the scheduled-function time limit. Requires CRON_SECRET.
  */
-export const handler = schedule('0 */6 * * *', async () => {
+export const handler = schedule('0 */3 * * *', async () => {
   const secret = process.env.CRON_SECRET?.trim();
   // Netlify provides URL (production) / DEPLOY_URL (deploy previews).
   const base = (process.env.URL || process.env.DEPLOY_URL || 'https://ggtrendkirocursor.netlify.app').replace(/\/$/, '');

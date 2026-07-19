@@ -17,14 +17,14 @@ import { isLlmConfigured } from '../../src/lib/services/llm';
  * returns 202 to the caller immediately; this body keeps running.
  *
  * Tunables:
- *   BP_BATCH_SIZE  number of BPs to attempt per run (default 10, clamped 1-10)
+ *   BP_BATCH_SIZE  number of BPs to attempt per run (default 5, clamped 1-10)
  *   CRON_SECRET    bearer secret required to invoke this function
  */
 
 /**
  * Stop starting new generations once this much of the 15-min budget is spent.
  * Reasoning-tier models (auto-upgraded, e.g. qwen3.7-max) take ~2min per BP,
- * so a 10-BP batch can overrun the budget; an iteration started after this
+ * so a full batch can overrun the budget; an iteration started after this
  * cutoff risks being killed mid-DB-write and leaving a row stuck at
  * 'generating' — the exact failure mode this function exists to avoid.
  * 11 min leaves >= one full LLM timeout (150s) plus write headroom.
