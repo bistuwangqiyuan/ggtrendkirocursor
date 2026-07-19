@@ -90,9 +90,14 @@ function getPool() {
       console.log('[DB] Connecting with URL pattern:', connectionString.replace(/\/\/.*@/, '//***@'));
     }
 
+    // Hosted Postgres (Neon) requires TLS, but a local dev instance usually has
+    // no SSL support at all. Honour an explicit `sslmode=disable` in the URL so
+    // real-function testing can run against a local server.
+    const sslDisabled = /[?&]sslmode=disable\b/i.test(connectionString || '');
+
     poolInstance = new Pool({
       connectionString,
-      ssl: { rejectUnauthorized: false },
+      ssl: sslDisabled ? undefined : { rejectUnauthorized: false },
       max: 2,
       idleTimeoutMillis: 5000,
       // Fail fast when the instance is unreachable so a dead DB can't stack
@@ -188,8 +193,9 @@ export async function getTrendsTableName(): Promise<string> {
     const names: string[] = existing.rows.map((r: any) => r.table_name);
 
     if (names.length === 0) {
-      cachedTrendsTableName = 'google_trends';
-      return cachedTrendsTableName;
+      // No trends table yet (fresh DB before db-init): return the default
+      // WITHOUT caching so the real table is picked up once it is created.
+      return 'google_trends';
     }
     if (names.length === 1) {
       cachedTrendsTableName = names[0];
@@ -232,11 +238,16 @@ export async function getTimestampColumnName(tableName: string): Promise<string>
        ORDER BY CASE column_name WHEN 'timestamp' THEN 0 ELSE 1 END LIMIT 1`,
       [tableName]
     );
-    const col = res.rows[0]?.column_name || 'timestamp';
-    cachedTimestampColumn.set(tableName, col);
-    return col;
+    const col = res.rows[0]?.column_name;
+    // Only cache a REAL lookup hit. When the table does not exist yet (e.g.
+    // before db-init on a fresh database), caching the fallback would keep
+    // pointing at the wrong column forever after the table is created.
+    if (col) {
+      cachedTimestampColumn.set(tableName, col);
+      return col;
+    }
+    return 'timestamp';
   } catch {
-    cachedTimestampColumn.set(tableName, 'timestamp');
     return 'timestamp';
   }
 }

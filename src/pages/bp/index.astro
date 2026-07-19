@@ -72,33 +72,33 @@ const pages = pageWindow(data.pagination.currentPage, data.pagination.totalPages
       <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.serviceUnavailable}</div>
     )}
 
-    {data.reports.length === 0 ? (
-      <div class="rounded-lg border border-gray-800 bg-gray-900/50 px-6 py-16 text-center text-gray-400">
-        {t.bp.empty}
-      </div>
-    ) : (
-      <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/50 shadow-xl">
-        <table class="w-full text-left text-sm text-gray-400">
-          <thead class="bg-gray-800 text-gray-200 uppercase text-xs font-medium">
+    <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/50 shadow-xl">
+      <table class="w-full text-left text-sm text-gray-400">
+        <thead class="bg-gray-800 text-gray-200 uppercase text-xs font-medium">
+          <tr>
+            <th class="px-6 py-4 tracking-wider">{t.bp.columns.keyword}</th>
+            <th class="px-6 py-4 tracking-wider">{t.bp.columns.title}</th>
+            <th class="px-6 py-4 tracking-wider">{t.bp.columns.selected}</th>
+            <th class="px-6 py-4 tracking-wider text-right">
+              <a href={sortHref('riskAdjusted')} class="no-underline text-gray-200 hover:text-blue-400 transition-colors" data-testid="sort-risk-adjusted">
+                {t.bp.seed.riskAdjusted}{sortIndicator('riskAdjusted')}
+              </a>
+            </th>
+            <th class="px-6 py-4 tracking-wider">{t.bp.columns.status}</th>
+            <th class="px-6 py-4 tracking-wider text-right">
+              <a href={sortHref('createdAt')} class="no-underline text-gray-200 hover:text-blue-400 transition-colors">
+                {t.bp.columns.time}{sortIndicator('createdAt')}
+              </a>
+            </th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {data.reports.length === 0 ? (
             <tr>
-              <th class="px-6 py-4 tracking-wider">{t.bp.columns.keyword}</th>
-              <th class="px-6 py-4 tracking-wider">{t.bp.columns.title}</th>
-              <th class="px-6 py-4 tracking-wider">{t.bp.columns.selected}</th>
-              <th class="px-6 py-4 tracking-wider text-right">
-                <a href={sortHref('riskAdjusted')} class="no-underline text-gray-200 hover:text-blue-400 transition-colors" data-testid="sort-risk-adjusted">
-                  {t.bp.seed.riskAdjusted}{sortIndicator('riskAdjusted')}
-                </a>
-              </th>
-              <th class="px-6 py-4 tracking-wider">{t.bp.columns.status}</th>
-              <th class="px-6 py-4 tracking-wider text-right">
-                <a href={sortHref('createdAt')} class="no-underline text-gray-200 hover:text-blue-400 transition-colors">
-                  {t.bp.columns.time}{sortIndicator('createdAt')}
-                </a>
-              </th>
+              <td colspan="6" class="px-6 py-16 text-center text-gray-400">{t.bp.empty}</td>
             </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-800">
-            {data.reports.map((r) => (
+          ) : (
+            data.reports.map((r) => (
               <tr class="hover:bg-gray-800/50 transition-colors group">
                 <td class="px-6 py-4 font-medium text-white">
                   <a href={`/bp/${r.id}`} class="group-hover:text-blue-400 transition-colors no-underline">{r.keyword}</a>
@@ -113,11 +113,11 @@ const pages = pageWindow(data.pagination.currentPage, data.pagination.totalPages
                 </td>
                 <td class="px-6 py-4 text-right text-gray-500">{formatDateTime(new Date(r.createdAt), locale)}</td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )}
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
 
     {data.pagination.totalPages > 1 && (
       <div class="flex items-center justify-center gap-2 flex-wrap">

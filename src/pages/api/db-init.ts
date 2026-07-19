@@ -42,6 +42,28 @@ const BASE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)`,
+  // Trends storage. Production Neon happened to have this table pre-created by
+  // a sibling app; a fresh database (e.g. local real-function testing) did not,
+  // which 500'd the collector. Schema matches the production google_trends
+  // table (trend_timestamp column) that the app auto-detects.
+  `CREATE TABLE IF NOT EXISTS google_trends (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    keyword TEXT NOT NULL,
+    search_volume BIGINT NOT NULL DEFAULT 0,
+    growth_rate NUMERIC(10, 2) DEFAULT 0,
+    time_range VARCHAR(20),
+    category TEXT,
+    region VARCHAR(10) DEFAULT 'US',
+    traffic_source TEXT,
+    related_queries JSONB,
+    trend_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_created_at ON google_trends(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_search_volume ON google_trends(search_volume)`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_time_range ON google_trends(time_range)`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_keyword ON google_trends(keyword)`,
   // Hot word -> BP feature tables (additive; do not modify existing tables).
   `CREATE TABLE IF NOT EXISTS bp_reports (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
