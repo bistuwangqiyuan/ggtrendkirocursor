@@ -16,6 +16,8 @@ Trend Now is a real-time Google Trends data visualization platform built with As
 - **Verifiable Financials**: Seed-round return metrics are recomputed server-side with declared formulas; deviations get a calibration note. Any report can be independently re-verified with `python scripts/verify_bp_math.py --id <report-id>`.
 - **Abuse Protection**: Ops endpoints require an environment secret (`ADMIN_SECRET`), and write endpoints (login/register/feedback/newsletter/BP generation) are rate limited.
 - **LLM Auto-Failover**: Configure multiple OpenAI-compatible endpoints; the service switches to the next one automatically on timeout / HTTP / auth errors.
+- **Hotword SEO Landing Pages**: Every collected trending keyword gets a dedicated landing page at `/t/[slug]` (search stats, trending history, FAQ + Breadcrumb JSON-LD) that captures organic search traffic for the keyword and funnels visitors to the AI business-plan report and registration. All landing pages are listed in the sitemap; `/t` is the browsable index.
+- **Site Monitoring**: Uptime + SEO health monitoring for your own deployed sites (Vercel/Netlify/any domain). Register sites via `POST /api/monitor/sites` (admin secret), a scheduled function probes each site every 6h (HTTP status, latency, title/description/canonical/viewport/H1/OG/JSON-LD/robots.txt/sitemap checks, 0–100 SEO score), and the `/monitor` dashboard shows the latest state per site.
 - **Performance**: Low latency, partial hydration with Astro Islands.
 
 ## Tech Stack

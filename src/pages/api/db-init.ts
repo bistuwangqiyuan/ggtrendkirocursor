@@ -123,6 +123,26 @@ const BASE_STATEMENTS = [
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE INDEX IF NOT EXISTS idx_newsletter_subscribers_email ON newsletter_subscribers(email)`,
+  // Site monitoring (uptime + SEO health of the user's own deployed sites).
+  `CREATE TABLE IF NOT EXISTS monitored_sites (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(200) NOT NULL,
+    url VARCHAR(500) UNIQUE NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS site_checks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    site_id UUID NOT NULL REFERENCES monitored_sites(id) ON DELETE CASCADE,
+    ok BOOLEAN NOT NULL,
+    http_status INT,
+    response_ms INT,
+    seo_score INT,
+    seo_checks JSONB,
+    error TEXT,
+    checked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_site_checks_site_id_checked_at ON site_checks(site_id, checked_at DESC)`,
 ];
 
 // Columns the application code requires on each table.
@@ -133,6 +153,8 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   bp_reports: ['id', 'keyword', 'keyword_norm', 'source_trend_id', 'search_volume', 'growth_rate', 'category', 'time_range', 'region', 'rank', 'status', 'title', 'summary', 'selected_opportunity', 'content_json', 'business_model_norm', 'canonical_report_id', 'model', 'tokens_used', 'error', 'user_id', 'created_at', 'updated_at'],
   bp_report_opportunities: ['id', 'report_id', 'name', 'description', 'score_market', 'score_roi', 'score_onlineability', 'score_feasibility', 'score_speed', 'score_moat', 'weighted_score', 'is_selected', 'rank', 'created_at'],
   newsletter_subscribers: ['id', 'email', 'created_at'],
+  monitored_sites: ['id', 'name', 'url', 'enabled', 'created_at'],
+  site_checks: ['id', 'site_id', 'ok', 'http_status', 'response_ms', 'seo_score', 'seo_checks', 'error', 'checked_at'],
 };
 
 // Destructive recreate of the auth/feedback tables (drops mismatched legacy schema).

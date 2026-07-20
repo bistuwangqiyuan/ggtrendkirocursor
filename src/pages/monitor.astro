@@ -1,0 +1,121 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { siteMonitorService, SEO_CHECK_KEYS } from '../lib/services/siteMonitor';
+import type { SiteWithLatestCheck } from '../lib/services/siteMonitor';
+import { isDbDown } from '../lib/db/client';
+import { getTranslations } from '../lib/i18n';
+import { formatDateTime } from '../lib/utils/format';
+
+export const prerender = false;
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+
+let sites: SiteWithLatestCheck[] = [];
+let degraded = false;
+try {
+  sites = await siteMonitorService.listSitesWithLatestCheck();
+} catch {
+  degraded = true;
+}
+degraded = degraded || isDbDown();
+
+const upCount = sites.filter((s) => s.lastCheck?.ok).length;
+const downCount = sites.filter((s) => s.lastCheck && !s.lastCheck.ok).length;
+
+const statusOf = (s: SiteWithLatestCheck) =>
+  !s.lastCheck ? 'unknown' : s.lastCheck.ok ? 'up' : 'down';
+const statusLabel = (s: SiteWithLatestCheck) =>
+  ({ up: t.monitor.statusUp, down: t.monitor.statusDown, unknown: t.monitor.statusUnknown })[statusOf(s)];
+const statusClass = (s: SiteWithLatestCheck) =>
+  ({
+    up: 'bg-green-500/10 text-green-400 border-green-500/20',
+    down: 'bg-red-500/10 text-red-400 border-red-500/20',
+    unknown: 'bg-gray-700/30 text-gray-300 border-gray-600/30',
+  })[statusOf(s)];
+const scoreClass = (score: number) =>
+  score >= 80 ? 'text-green-400' : score >= 50 ? 'text-amber-400' : 'text-red-400';
+// The Astro template compiler misparses inline `as Record<string, string>`
+// casts (reads `<string,` as a tag), so resolve labels here in frontmatter.
+const checkLabels = t.monitor.checkLabels as Record<string, string>;
+const checkLabel = (k: string) => checkLabels[k] || k;
+---
+
+<Layout title={t.monitor.title} description={t.monitor.metaDescription}>
+  <div class="space-y-6" data-page="monitor">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight text-white">{t.monitor.title}</h1>
+        <p class="mt-1.5 text-sm text-gray-400">{t.monitor.subtitle}</p>
+      </div>
+      <div class="flex items-center gap-4 text-sm" data-testid="monitor-stats">
+        <span class="text-green-400">● {t.monitor.statusUp} {upCount}</span>
+        <span class="text-red-400">● {t.monitor.statusDown} {downCount}</span>
+        <span class="text-gray-500">· {sites.length}</span>
+      </div>
+    </div>
+
+    {degraded && (
+      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.serviceUnavailable}</div>
+    )}
+
+    <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/50 shadow-xl">
+      <table class="w-full text-left text-sm text-gray-400">
+        <thead class="bg-gray-800 text-xs font-medium uppercase text-gray-200">
+          <tr>
+            <th class="px-6 py-4 tracking-wider">{t.monitor.columns.site}</th>
+            <th class="px-6 py-4 tracking-wider">{t.monitor.columns.status}</th>
+            <th class="px-6 py-4 tracking-wider text-right">{t.monitor.columns.responseMs}</th>
+            <th class="px-6 py-4 tracking-wider text-right">{t.monitor.columns.seoScore}</th>
+            <th class="px-6 py-4 tracking-wider">{t.monitor.columns.checks}</th>
+            <th class="px-6 py-4 tracking-wider text-right">{t.monitor.columns.lastChecked}</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {sites.length === 0 ? (
+            <tr>
+              <td colspan="6" class="px-6 py-16 text-center text-gray-400" data-testid="monitor-empty">{t.monitor.empty}</td>
+            </tr>
+          ) : (
+            sites.map((s) => (
+              <tr class="hover:bg-gray-800/50 transition-colors">
+                <td class="px-6 py-4">
+                  <p class="font-medium text-white">{s.name}</p>
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" class="text-xs text-blue-400/80 no-underline hover:text-blue-300">{s.url}</a>
+                </td>
+                <td class="px-6 py-4">
+                  <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusClass(s)}`}>
+                    {statusLabel(s)}
+                  </span>
+                  {s.lastCheck?.error && (
+                    <p class="mt-1 max-w-[16rem] truncate text-xs text-red-400/80" title={s.lastCheck.error}>{t.monitor.lastError}: {s.lastCheck.error}</p>
+                  )}
+                </td>
+                <td class="px-6 py-4 text-right font-mono">
+                  {s.lastCheck ? `${s.lastCheck.responseMs} ms` : '—'}
+                </td>
+                <td class={`px-6 py-4 text-right font-mono font-semibold ${s.lastCheck ? scoreClass(s.lastCheck.seoScore) : ''}`}>
+                  {s.lastCheck ? `${s.lastCheck.seoScore}` : '—'}
+                </td>
+                <td class="px-6 py-4">
+                  {s.lastCheck ? (
+                    <div class="flex max-w-xs flex-wrap gap-1">
+                      {SEO_CHECK_KEYS.map((k) => (
+                        <span class={`rounded px-1.5 py-0.5 text-[10px] font-medium ${s.lastCheck!.seoChecks?.[k] ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                          {checkLabel(k)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : '—'}
+                </td>
+                <td class="px-6 py-4 text-right text-gray-500">
+                  {s.lastCheck ? formatDateTime(s.lastCheck.checkedAt, locale) : t.monitor.neverChecked}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</Layout>

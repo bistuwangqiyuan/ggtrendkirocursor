@@ -1,0 +1,68 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { landingService } from '../../lib/services/landing';
+import { isDbDown } from '../../lib/db/client';
+import { getTranslations } from '../../lib/i18n';
+import { formatNumber, formatRelativeTime } from '../../lib/utils/format';
+
+export const prerender = false;
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+
+const page = Math.max(1, parseInt(Astro.url.searchParams.get('page') || '1', 10) || 1);
+
+let keywords: Awaited<ReturnType<typeof landingService.listKeywords>>['keywords'] = [];
+let pagination = { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 50 };
+let degraded = false;
+try {
+  const data = await landingService.listKeywords(page, 50);
+  keywords = data.keywords;
+  pagination = data.pagination;
+} catch {
+  degraded = true;
+}
+degraded = degraded || isDbDown();
+---
+
+<Layout title={t.landing.indexTitle} description={t.landing.indexSubtitle}>
+  <div class="space-y-6" data-page="landing-index">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight text-white">{t.landing.indexTitle}</h1>
+      <p class="mt-1.5 text-sm text-gray-400">{t.landing.indexSubtitle}<span class="ml-2 text-gray-600">· {pagination.totalItems}</span></p>
+    </div>
+
+    {degraded && (
+      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.serviceUnavailable}</div>
+    )}
+
+    {keywords.length === 0 ? (
+      <div class="rounded-lg border border-gray-800 bg-gray-900/50 px-6 py-16 text-center text-gray-400">{t.trends.noData}</div>
+    ) : (
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="landing-grid">
+        {keywords.map((k) => (
+          <a href={`/t/${k.slug}`} class="group rounded-xl border border-gray-800 bg-gray-900/50 p-4 no-underline transition hover:border-blue-500/40 hover:bg-gray-900">
+            <p class="truncate font-semibold text-white group-hover:text-blue-400 transition-colors">{k.keyword}</p>
+            <p class="mt-2 flex items-center gap-3 text-xs text-gray-500">
+              <span class="font-mono text-gray-400">{formatNumber(k.searchVolume)}</span>
+              <span>{k.region}</span>
+              <span>{formatRelativeTime(k.lastSeen, locale)}</span>
+            </p>
+          </a>
+        ))}
+      </div>
+    )}
+
+    {pagination.totalPages > 1 && (
+      <div class="flex items-center justify-center gap-2">
+        {pagination.currentPage > 1 && (
+          <a href={`/t?page=${pagination.currentPage - 1}`} class="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 no-underline hover:bg-gray-700">‹</a>
+        )}
+        <span class="text-sm text-gray-500">{pagination.currentPage} / {pagination.totalPages}</span>
+        {pagination.currentPage < pagination.totalPages && (
+          <a href={`/t?page=${pagination.currentPage + 1}`} class="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 no-underline hover:bg-gray-700">›</a>
+        )}
+      </div>
+    )}
+  </div>
+</Layout>

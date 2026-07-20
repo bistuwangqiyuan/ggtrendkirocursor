@@ -1,5 +1,6 @@
 ---
 import { formatNumber, formatGrowthRate, formatRelativeTime, formatDateTime } from '../../lib/utils/format';
+import { slugifyKeyword } from '../../lib/utils/slug';
 import type { Trend } from '../../types';
 import { getTranslations } from '../../lib/i18n';
 
@@ -30,7 +31,11 @@ const emptyLabel = noDataLabel ?? t.trends.noData;
         trends.map((trend) => (
           <tr class="hover:bg-gray-800/50 transition-colors group">
             <td class="px-6 py-4 font-medium text-white group-hover:text-blue-400 transition-colors">
-              {trend.keyword}
+              {slugifyKeyword(trend.keyword) ? (
+                <a href={`/t/${slugifyKeyword(trend.keyword)}`} class="no-underline">{trend.keyword}</a>
+              ) : (
+                trend.keyword
+              )}
             </td>
             <td class="px-6 py-4 text-right font-mono">
               {formatNumber(trend.searchVolume)}

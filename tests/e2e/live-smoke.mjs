@@ -361,6 +361,103 @@ async function run() {
     'R-SITE13', 'nav includes product/pricing/trends links', 'links present', 'nav links missing');
 
 
+  // ---- Hotword SEO landing pages (/t) ----
+  // R-LAND1: index page renders (DB-independent shell).
+  const landIndex = await http('/t', { headers: { Cookie: 'locale=zh' } });
+  expect(landIndex.status === 200 && landIndex.body.includes('data-page="landing-index"'),
+    'R-LAND1', '/t landing index renders', `status=${landIndex.status}`, `status=${landIndex.status}`);
+
+  // R-LAND2: a real keyword landing page renders with SEO structured data.
+  if (DB_UP) {
+    const anyTrend = jsonOf((await http('/api/trends/list?pageSize=1')).body);
+    const kw = anyTrend?.data?.trends?.[0]?.keyword;
+    if (kw) {
+      const slug = kw.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
+      const landPage = await http(`/t/${encodeURIComponent(slug)}`, { headers: { Cookie: 'locale=zh' } });
+      const hasPage = landPage.status === 200 && landPage.body.includes('data-page="landing-keyword"');
+      const hasFaqLd = landPage.body.includes('FAQPage') && landPage.body.includes('BreadcrumbList');
+      const hasBpSection = landPage.body.includes('landing-bp-section');
+      expect(hasPage && hasFaqLd && hasBpSection,
+        'R-LAND2', 'keyword landing page renders with JSON-LD + BP section',
+        `slug=${slug}`, `status=${landPage.status} page=${hasPage} ld=${hasFaqLd} bp=${hasBpSection}`);
+    } else {
+      record('R-LAND2', 'keyword landing page renders with JSON-LD + BP section', 'BLOCKED', 'no trends rows');
+    }
+  } else {
+    record('R-LAND2', 'keyword landing page renders with JSON-LD + BP section', 'BLOCKED', 'DB down (Neon quota)');
+  }
+
+  // R-LAND3: unknown slug returns 404, not 500.
+  const landMissing = await http('/t/this-slug-does-not-exist-xyz-123');
+  expect(landMissing.status === 404, 'R-LAND3', 'unknown landing slug returns 404', `status=${landMissing.status}`, `status=${landMissing.status}`);
+
+  // R-LAND4: sitemap includes the /t index route.
+  expect(sitemap.body.includes('/t</loc>') || sitemap.body.includes('/t<'),
+    'R-LAND4', 'sitemap lists /t landing index', 'listed', 'missing /t');
+
+  // ---- Site monitoring system (/monitor) ----
+  // R-MON1: dashboard page renders.
+  const monPage = await http('/monitor', { headers: { Cookie: 'locale=zh' } });
+  expect(monPage.status === 200 && monPage.body.includes('data-page="monitor"'),
+    'R-MON1', '/monitor dashboard renders', `status=${monPage.status}`, `status=${monPage.status}`);
+
+  // R-MON2: public GET lists sites (shape check).
+  const monList = await http('/api/monitor/sites');
+  const monListJson = jsonOf(monList.body);
+  if (DB_UP) {
+    expect(monList.status === 200 && monListJson?.success === true && Array.isArray(monListJson?.data?.sites),
+      'R-MON2', 'monitor sites API returns list', `count=${monListJson?.data?.sites?.length}`,
+      `status=${monList.status} success=${monListJson?.success}`);
+  } else {
+    record('R-MON2', 'monitor sites API returns list', 'BLOCKED', 'DB down (Neon quota)');
+  }
+
+  // R-MON3: mutating endpoints are admin-gated (fail closed).
+  const monAddNoAuth = await http('/api/monitor/sites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'x', url: 'https://example.com' }) });
+  expect(monAddNoAuth.status === 401 || monAddNoAuth.status === 503,
+    'R-MON3', 'monitor site registration rejects unauthenticated calls',
+    `status=${monAddNoAuth.status}`, `status=${monAddNoAuth.status}`);
+  const monRunNoAuth = await http('/api/monitor/run', { method: 'POST' });
+  expect(monRunNoAuth.status === 401 || monRunNoAuth.status === 503,
+    'R-MON3', 'monitor run rejects unauthenticated calls',
+    `status=${monRunNoAuth.status}`, `status=${monRunNoAuth.status}`);
+
+  // R-MON4: full authenticated round-trip — register a site, run checks, read
+  // the result back, then clean up. Uses this site itself as the probe target.
+  if (process.env.E2E_CRON_SECRET && DB_UP) {
+    const adminHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.E2E_CRON_SECRET}` };
+    const add = await http('/api/monitor/sites', { method: 'POST', headers: adminHeaders, body: JSON.stringify({ name: 'Trend Now (self)', url: BASE_URL }) });
+    const addJson = jsonOf(add.body);
+    const siteId = addJson?.data?.site?.id;
+    expect(add.status === 201 && !!siteId, 'R-MON4', 'admin registers a monitored site', `id=${siteId}`, `status=${add.status} body=${add.body.slice(0, 120)}`);
+
+    if (siteId) {
+      const run = await http('/api/monitor/run', { method: 'POST', headers: adminHeaders });
+      const runJson = jsonOf(run.body);
+      expect(run.status === 200 && runJson?.success === true && runJson?.checked >= 1,
+        'R-MON4', 'monitor run probes registered sites', `checked=${runJson?.checked} up=${runJson?.up}`,
+        `status=${run.status} body=${run.body.slice(0, 160)}`);
+
+      const after = jsonOf((await http('/api/monitor/sites')).body);
+      const self = after?.data?.sites?.find((s) => s.id === siteId);
+      expect(!!self?.lastCheck && typeof self.lastCheck.seoScore === 'number' && self.lastCheck.seoScore >= 50,
+        'R-MON4', 'self-probe stores an SEO score >= 50', `score=${self?.lastCheck?.seoScore} ok=${self?.lastCheck?.ok}`,
+        `lastCheck=${JSON.stringify(self?.lastCheck ?? null).slice(0, 160)}`);
+
+      // Invalid URL rejected.
+      const badAdd = await http('/api/monitor/sites', { method: 'POST', headers: adminHeaders, body: JSON.stringify({ name: 'bad', url: 'not-a-url' }) });
+      expect(badAdd.status === 400, 'R-MON5', 'monitor rejects invalid site URL', `status=${badAdd.status}`, `status=${badAdd.status}`);
+
+      // Cleanup so repeated runs stay idempotent.
+      const del = await http(`/api/monitor/sites?id=${siteId}`, { method: 'DELETE', headers: adminHeaders });
+      expect(del.status === 200, 'R-MON4', 'admin removes the monitored site', `status=${del.status}`, `status=${del.status}`);
+    }
+  } else {
+    const reason = !process.env.E2E_CRON_SECRET ? 'E2E_CRON_SECRET not set' : 'DB down (Neon quota)';
+    record('R-MON4', 'monitor register/run/read round-trip', 'BLOCKED', reason);
+    record('R-MON5', 'monitor rejects invalid site URL', 'BLOCKED', reason);
+  }
+
   // R-BP4: cron without secret must be rejected (401 when secret configured, 503 when not).
   const cronNoAuth = await http('/api/bp/cron', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
   expect(cronNoAuth.status === 401 || cronNoAuth.status === 503,
