@@ -1,0 +1,15 @@
+Stop logging ordinary 404s as read-path errors
+
+The daily error log exists so a real snapshot gap is visible the day it
+happens. In production it was instead filling with entries for URLs that
+simply do not exist: a keyed snapshot miss was always reported as "snapshot
+missing", whether the detail blob had not been built yet or the slug was
+never a keyword at all. Left alone, crawler traffic against dead links would
+bury the entries the log is for.
+
+Both call sites already knew the difference — /bp/[id] consults the list
+snapshot before 404ing — but the knowledge stopped at the page. readForPage
+now takes an optional `keyKnown` probe, evaluated only when the snapshot
+missed (it costs a second blob read) and only trusted when it answers
+definitively: an unavailable index or a throwing probe still logs, so a
+genuine outage cannot silence the log.

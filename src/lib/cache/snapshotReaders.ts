@@ -176,6 +176,19 @@ export async function getLandingDataFromSnapshot(
   return { hit: true, data: reviveLandingDetail(snap.data), generatedAt: new Date(snap.generatedAt) };
 }
 
+/**
+ * Whether a slug appears in the keyword index at all. Distinguishes "this
+ * keyword exists but its detail snapshot hasn't been built yet" from "no such
+ * keyword", so a crawler following a dead URL doesn't log an error. Returns null
+ * when the index snapshot itself is missing.
+ */
+export async function landingSlugExistsInSnapshot(slug: string): Promise<boolean | null> {
+  const snap = await readSnapshot<LandingIndexSnapshot>(SNAPSHOT_KEYS.landingIndex);
+  if (!snap) return null;
+  const clean = slug.trim().toLowerCase();
+  return snap.data.keywords.some((k) => k.slug === clean);
+}
+
 // ---------------------------------------------------------------------------
 // bp
 // ---------------------------------------------------------------------------

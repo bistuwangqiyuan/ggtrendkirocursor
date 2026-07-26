@@ -17,7 +17,8 @@ export const GET: APIRoute = async ({ params }) => {
     async () => {
       const r = await bpService.getById(id);
       return r.success ? r.data : null;
-    }
+    },
+    { keyKnown: () => bpIdExistsInSnapshot(id) }
   );
 
   let report = read.data;

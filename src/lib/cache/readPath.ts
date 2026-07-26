@@ -28,10 +28,27 @@ export interface PageData<T> {
   pending: boolean;
 }
 
+export interface ReadOptions {
+  /**
+   * For keyed lookups (`/t/<slug>`, `/bp/<id>`): does the key exist at all?
+   *
+   * A missing detail snapshot has two very different causes — the snapshot has
+   * not been built yet (a real problem) or the key simply does not exist (an
+   * ordinary 404). Without this the daily error log fills with every crawler
+   * that follows a dead URL, which buries the entries that matter.
+   *
+   * Called lazily, and only when the snapshot missed, because answering it costs
+   * a second blob read. Return `false` for "definitely not a thing", `null` when
+   * the index needed to answer is itself unavailable.
+   */
+  keyKnown?: () => Promise<boolean | null>;
+}
+
 export async function readForPage<T>(
   label: string,
   readSnapshot: () => Promise<SnapshotRead<T>>,
-  dbFallback?: () => Promise<T>
+  dbFallback?: () => Promise<T>,
+  options: ReadOptions = {}
 ): Promise<PageData<T>> {
   const route = currentDbContext().route;
   let snap: SnapshotRead<T>;
@@ -63,8 +80,22 @@ export async function readForPage<T>(
     }
   }
 
+  if (options.keyKnown && (await safeKeyKnown(options.keyKnown)) === false) {
+    // Not a missing snapshot — a missing thing. The caller renders a 404.
+    return { data: snap.data, source: 'pending', generatedAt: null, pending: true };
+  }
+
   const message = `${label}: snapshot missing — serving pending state (run POST /api/snapshots/rebuild)`;
   console.error(`[read-path] ${message}`);
   recordError('read-path', message, { route, context: { label, stage: 'pending' } });
   return { data: snap.data, source: 'pending', generatedAt: null, pending: true };
+}
+
+/** An index lookup that fails must not suppress the log, so treat it as unknown. */
+async function safeKeyKnown(fn: () => Promise<boolean | null>): Promise<boolean | null> {
+  try {
+    return await fn();
+  } catch {
+    return null;
+  }
 }

@@ -1,7 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { landingService } from '../../lib/services/landing';
-import { getLandingDataFromSnapshot } from '../../lib/cache/snapshotReaders';
+import { getLandingDataFromSnapshot, landingSlugExistsInSnapshot } from '../../lib/cache/snapshotReaders';
 import { readForPage } from '../../lib/cache/readPath';
 import { applyPageCache, CACHE_PROFILES } from '../../lib/cache/httpCache';
 import { getTranslations } from '../../lib/i18n';
@@ -18,7 +18,8 @@ const slug = Astro.params.slug || '';
 const result = await readForPage(
   'landing:detail',
   () => getLandingDataFromSnapshot(slug),
-  () => landingService.getLandingData(slug)
+  () => landingService.getLandingData(slug),
+  { keyKnown: () => landingSlugExistsInSnapshot(slug) }
 );
 const data = result.data;
 
