@@ -1,6 +1,12 @@
 import { query, queryOne, pool, getClient } from '../db/client';
 import { trendsService } from './trends';
 import { generateJson, isLlmConfigured, LlmError } from './llm';
+import {
+  classifyTrendTopic,
+  commercialIntentScore,
+  isAnalyzableTopic,
+  parseTopicClass,
+} from './trendTriage';
 import { getTrendsFromSnapshot } from '../cache/snapshotReaders';
 import type {
   BpContent,
@@ -534,8 +540,58 @@ export function computeTrendHotwordScore(t: { searchVolume: number; growthRate: 
 }
 
 /**
- * Pick the first trend (in search_volume order) that has no completed BP and
- * meets the score threshold. Pure function for unit testing.
+ * Whether a hotword is worth analysing, on topic grounds.
+ *
+ * Rows collected since triage shipped carry a stored classification made with
+ * the news context, which is far more accurate than anything derivable later.
+ * Older rows have none, so they are re-classified from the keyword alone — that
+ * catches the explicit cases ("chiefs vs bills") and lets the ambiguous ones
+ * through, which is the right way round: a wasted report costs one LLM call,
+ * while wrongly rejecting one loses an opportunity silently.
+ */
+export function isAnalyzableTrend(trend: Pick<Trend, 'keyword' | 'topicClass'>): boolean {
+  const stored = parseTopicClass(trend.topicClass);
+  if (stored) return isAnalyzableTopic(stored);
+  return isAnalyzableTopic(classifyTrendTopic({ keyword: trend.keyword }).topic);
+}
+
+/**
+ * How much a clear commercial angle is worth when ordering candidates.
+ *
+ * Search volume answers "what is popular", but the site exists to answer "what
+ * could be sold online". The bonus is capped at 15 points against a 0-100
+ * hotword score, so it reorders comparable candidates without letting a faint
+ * commercial hint promote a lukewarm keyword over a genuine breakout.
+ */
+export const COMMERCIAL_INTENT_WEIGHT = 0.15;
+
+export function rankTrendForAnalysis(
+  trend: Pick<Trend, 'keyword' | 'searchVolume' | 'growthRate'>
+): number {
+  return (
+    computeTrendHotwordScore(trend) +
+    commercialIntentScore(trend.keyword) * COMMERCIAL_INTENT_WEIGHT
+  );
+}
+
+/**
+ * Order candidates by analysis value while remembering where each one stood in
+ * the incoming search-volume order — reports record that position as the
+ * hotword's rank, so re-sorting must not silently redefine it.
+ */
+export function orderTrendsForAnalysis(trends: Trend[], startRank = 1): { trend: Trend; rank: number }[] {
+  return trends
+    .map((trend, i) => ({ trend, rank: startRank + i }))
+    .sort((a, b) => rankTrendForAnalysis(b.trend) - rankTrendForAnalysis(a.trend));
+}
+
+/**
+ * Pick the first trend that has no completed BP, clears the score threshold,
+ * and is not sport or entertainment. Pure function for unit testing.
+ *
+ * "First" is relative to the order it is given: callers that want the most
+ * commercially promising candidate pass the list through
+ * `orderTrendsForAnalysis` first.
  */
 export function pickFirstEligibleTrend(
   trends: Trend[],
@@ -552,6 +608,12 @@ export function pickFirstEligibleTrend(
     }
     const trendScore = computeTrendHotwordScore(trend);
     if (trendScore <= minScore) {
+      rank++;
+      continue;
+    }
+    // Sport and celebrity hotwords yield near-identical plans, so they are
+    // classified out here rather than after the LLM has been paid for.
+    if (!isAnalyzableTrend(trend)) {
       rank++;
       continue;
     }
@@ -903,15 +965,18 @@ export class BpService {
       }
     }
 
-    let globalRank = 0;
-    while (picks.length < count) {
-      const picked = pickFirstEligibleTrend(trends.slice(globalRank), skip, MIN_TREND_SCORE, globalRank + 1);
-      if (!picked) break;
-      const { trend, trendScore, rank } = picked;
+    // Reorder by analysis value before selecting. When the batch size is
+    // smaller than the eligible pool — the normal case — this decides which
+    // opportunities get the LLM budget, so the ones that read like a buildable
+    // online service go first. Each entry keeps its search-volume position.
+    const ordered = orderTrendsForAnalysis(trends);
+    for (const { trend, rank } of ordered) {
+      if (picks.length >= count) break;
+      const picked = pickFirstEligibleTrend([trend], skip, MIN_TREND_SCORE, rank);
+      if (!picked) continue;
       skip.add(normalizeKeyword(trend.keyword));
-      globalRank = rank; // continue scanning after this trend
       picks.push({
-        trendScore,
+        trendScore: picked.trendScore,
         snapshot: {
           sourceTrendId: trend.id,
           keyword: trend.keyword,

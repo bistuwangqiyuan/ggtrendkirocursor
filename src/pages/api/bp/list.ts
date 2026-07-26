@@ -4,6 +4,7 @@ import type { BpListSortBy, BpListSortOrder } from '../../../lib/services/bp';
 import { listBpFromSnapshot } from '../../../lib/cache/snapshotReaders';
 import { readForPage } from '../../../lib/cache/readPath';
 import { computeCacheHeaders, CACHE_PROFILES } from '../../../lib/cache/httpCache';
+import { bpWindowDays } from '../../../lib/utils/timeWindow';
 
 export const prerender = false;
 
@@ -22,10 +23,14 @@ export const GET: APIRoute = async ({ request }) => {
   const sortOrder: BpListSortOrder = orderParam === 'asc' ? 'asc' : 'desc';
   const safePage = Number.isFinite(page) ? page : 1;
   const safeSize = Number.isFinite(pageSize) ? pageSize : 20;
+  // Unlike the page, this defaults to all history: an API consumer that asked
+  // for no window means it, and silently truncating a machine-read list is a
+  // worse failure than a long response. `within` opts in to the page's windows.
+  const withinDays = bpWindowDays(url.searchParams.get('within') ?? '');
 
   const read = await readForPage(
     'api:bp:list',
-    () => listBpFromSnapshot(safePage, safeSize, sortBy, sortOrder, status),
+    () => listBpFromSnapshot(safePage, safeSize, sortBy, sortOrder, status, withinDays),
     async () => {
       const r = await bpService.list(safePage, safeSize, sortBy, sortOrder, status);
       return r.success

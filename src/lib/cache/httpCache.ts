@@ -41,6 +41,8 @@ export const CACHE_PROFILES = {
   bpList: { sMaxAge: 900, staleWhileRevalidate: DAY, tags: ['bp'] },
   bpDetail: { sMaxAge: 3600, staleWhileRevalidate: 7 * DAY, tags: ['bp'] },
   monitor: { sMaxAge: 600, staleWhileRevalidate: DAY, tags: ['monitor'] },
+  /** Aggregates change only when the cron runs, i.e. every 3 hours. */
+  stats: { sMaxAge: 1800, staleWhileRevalidate: DAY, tags: ['stats'] },
   sitemap: { sMaxAge: 3600, staleWhileRevalidate: DAY, tags: ['sitemap'] },
   /** Marketing pages: no data dependency at all. */
   staticPage: { sMaxAge: 6 * 3600, staleWhileRevalidate: 7 * DAY, tags: ['static'] },

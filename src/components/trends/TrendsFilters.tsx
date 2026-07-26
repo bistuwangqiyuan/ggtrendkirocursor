@@ -23,7 +23,7 @@ export function TrendsFilters({ basePath = '/trends', initialFilters, categories
   const updateURL = (newFilters: typeof filters) => {
     const params = new URLSearchParams(window.location.search);
     if (newFilters.timeRange) params.set('timeRange', newFilters.timeRange);
-    // 'all' is an explicit choice (server defaults to 48h when the param is
+    // 'all' is an explicit choice (server defaults to 24h when the param is
     // absent, so removing it would silently re-apply the freshness default).
     if (newFilters.collectedWithin) params.set('collectedWithin', newFilters.collectedWithin);
     else params.delete('collectedWithin');

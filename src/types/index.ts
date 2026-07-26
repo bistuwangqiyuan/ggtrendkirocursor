@@ -1,3 +1,7 @@
+import type { TopicClass } from '../lib/services/trendTriage';
+
+export type { TopicClass };
+
 export interface User {
   id: string;
   username: string;
@@ -28,6 +32,11 @@ export interface Trend {
   region: string;
   timestamp: Date;
   createdAt: Date;
+  /**
+   * What the hotword is about, decided at collection time from the news stories
+   * behind it (see trendTriage). Null on rows collected before triage existed.
+   */
+  topicClass?: TopicClass | null;
 }
 
 export interface Feedback {

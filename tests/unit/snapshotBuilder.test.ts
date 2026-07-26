@@ -11,6 +11,7 @@ vi.mock('../../src/lib/db/client', () => ({
   queryOne,
   getTrendsTableName: vi.fn(async () => 'google_trends'),
   getTimestampColumnName: vi.fn(async () => 'trend_timestamp'),
+  trendsTableHasColumn: vi.fn(async () => true),
 }));
 
 vi.mock('../../src/lib/services/bp', () => ({ bpService: { getById: vi.fn() } }));
@@ -108,5 +109,91 @@ describe('time budget', () => {
     expect(report.ok).toBe(false);
     expect(report.errors.trends).toContain('compute quota exceeded');
     expect(report.written.monitor).toBe(1);
+  });
+});
+
+describe('stats section', () => {
+  /** Route each aggregate query to a canned result by matching its SQL. */
+  function mockStatsQueries() {
+    queryOne.mockImplementation(async (sql: string) => {
+      const s = String(sql);
+      if (s.includes('COUNT(DISTINCT keyword)')) return { n: '90' };
+      if (s.includes('FROM bp_reports WHERE status = \'completed\'')) return { n: '8' };
+      if (s.includes('FROM bp_reports WHERE status = \'failed\'')) return { n: '2' };
+      if (s.includes('canonical_report_id IS NOT NULL')) return { n: '3' };
+      if (s.includes('FROM bp_reports WHERE created_at')) return { n: '7' };
+      if (s.includes('COUNT(*) AS n FROM bp_reports')) return { n: '10' };
+      if (s.includes('FROM users')) return { n: '4' };
+      if (s.includes('newsletter_subscribers')) return { n: '5' };
+      if (s.includes('FROM feedback')) return { n: '6' };
+      if (s.includes('monitored_sites')) return { n: '1' };
+      if (s.includes('MAX(trend_timestamp)')) return { ts: '2026-07-26T00:00:00.000Z' };
+      if (s.includes('MAX(created_at)')) return { ts: '2026-07-25T00:00:00.000Z' };
+      return { n: '120' };
+    });
+
+    query.mockImplementation(async (sql: string) => {
+      const s = String(sql);
+      if (s.includes("COALESCE(topic_class")) {
+        return [
+          { topic: 'sports', n: '50' },
+          { topic: 'entertainment', n: '30' },
+          { topic: 'general', n: '40' },
+        ];
+      }
+      if (s.includes('FROM bp_reports WHERE created_at >=') && s.includes('GROUP BY 1')) {
+        return [{ d: '2026-07-25', total: '5', completed: '4', failed: '1' }];
+      }
+      if (s.includes('FROM users WHERE created_at >=')) return [{ d: '2026-07-26', n: '2' }];
+      if (s.includes('date_trunc') && s.includes('trend_timestamp >=')) {
+        return [{ d: '2026-07-26', n: '40' }, { d: '2026-07-25', n: '35' }];
+      }
+      if (s.includes('GROUP BY keyword')) {
+        return [{ keyword: 'tax refund', appearances: '9', search_volume: '200000' }];
+      }
+      if (s.includes('risk_adjusted_num')) {
+        return [{ id: 'r1', keyword: 'tax refund', title: 'A plan', risk_adjusted: '42%' }];
+      }
+      return [];
+    });
+  }
+
+  it('aggregates totals, a daily series and the topic mix into one snapshot', async () => {
+    mockStatsQueries();
+    const report = await rebuildAllSnapshots({ only: ['stats'] });
+    expect(report.ok).toBe(true);
+
+    const snap = await readSnapshot<any>('stats/overview');
+    expect(snap?.data.totals).toMatchObject({
+      keywords: 90, bpTotal: 10, bpCompleted: 8, bpFailed: 2, bpDuplicates: 3, users: 4,
+    });
+    expect(snap?.data.topicMix).toEqual({
+      sports: 50, entertainment: 30, general: 40, unclassified: 0,
+    });
+    // Chronological, so a chart reads left to right.
+    expect(snap?.data.daily.map((d: any) => d.date)).toEqual(['2026-07-25', '2026-07-26']);
+    expect(snap?.data.content.topKeywords[0]).toMatchObject({
+      keyword: 'tax refund', slug: 'tax-refund', appearances: 9,
+    });
+  });
+
+  it('merges each daily source onto the same date', async () => {
+    mockStatsQueries();
+    await rebuildAllSnapshots({ only: ['stats'] });
+    const snap = await readSnapshot<any>('stats/overview');
+    const day = snap?.data.daily.find((d: any) => d.date === '2026-07-25');
+    expect(day).toMatchObject({ trendsCollected: 35, bpCreated: 5, bpCompleted: 4, bpFailed: 1 });
+  });
+
+  it('still writes a snapshot when a table this database lacks is queried', async () => {
+    // newsletter_subscribers is missing in some deployments; one absent table
+    // must not cost the whole statistics page.
+    queryOne.mockRejectedValue(new Error('relation does not exist'));
+    query.mockRejectedValue(new Error('relation does not exist'));
+
+    const report = await rebuildAllSnapshots({ only: ['stats'] });
+    expect(report.ok).toBe(true);
+    const snap = await readSnapshot<any>('stats/overview');
+    expect(snap?.data.totals.bpTotal).toBe(0);
   });
 });

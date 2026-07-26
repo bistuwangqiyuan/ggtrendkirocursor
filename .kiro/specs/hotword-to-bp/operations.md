@@ -56,7 +56,8 @@
 - 行为（等价于 `POST /api/trends/collect`，该端点保留供手动触发）：
   1. 抓取 Google Trends 实时热搜 RSS（`https://trends.google.com/trending/rss?geo=...`），默认地区 `US,GB,CA,AU,IN,SG`；
   2. 解析关键词与 `approx_traffic`（"200K+"→200000），按地区 24h 去重后写入活跃趋势表，采集时间戳 = `NOW()`；
-  3. `growth_rate` 由流量分级保守估算（界定 74-100，仅作内部评分信号，避免乐观偏差），确保新词在 BP 选词器中 > `MIN_TREND_SCORE`。
+  3. `growth_rate` 由流量分级保守估算（界定 74-100，仅作内部评分信号，避免乐观偏差），确保新词在 BP 选词器中 > `MIN_TREND_SCORE`；
+  4. **主题分类**：同时解析 RSS 里每个热词附带的新闻标题与来源域名，由 [src/lib/services/trendTriage.ts](../../../src/lib/services/trendTriage.ts) 判定 `sports` / `entertainment` / `general` 三类，写入 `google_trends.topic_class`。来源域名（espn.com、variety.com 等）是最强信号，其次是新闻标题里的赛事/娱乐词，最后才是热词本身，避免仅凭人名误判。该列由 `applyAdditiveMigrations()` 在每次 cron 开头自动补齐，老数据 `topic_class` 为空时在选词阶段按热词即时重分类。
 - 成本：**0 LLM token**。解决「词池静态、全历史去重后无新词可用」与 R3 采集时效问题（每词只分析一次，词池必须持续供应新词）。
 - 手动触发：
   ```bash
@@ -80,6 +81,7 @@
   2. 按 `4h` 窗口、`search_volume` 降序扫描趋势（每页 50 条，最多 5 页）；
   3. **热词全历史去重**：跳过历史上任一时刻已有 `completed` BP 的热词，自动顺延下一个不重复的热词。每个热词只分析一次，永不重复生成；
   4. **评分筛选**：综合百分制分 > 60 才合格（`50%×增长速度% + 50%×搜索量对数归一化`，见 `computeTrendHotwordScore`）；
+  4b. **品类排除**：`topic_class` 为 `sports` / `entertainment` 的热词直接跳过（体育赛事、运动员、娱乐明星）。这类热词产出的商业计划书高度雷同（粉丝周边、赛事直播、明星联名），持续分析只是重复消耗 LLM 额度。剩余候选再按 `rankTrendForAnalysis` 重排：在热度分之上叠加 `commercialIntentScore × 0.15` 的商业意图分，让"可在线服务化"的热词（app / tool / platform / 订阅 / 预订 / 报税 / 保险……）优先出队；
   5. 对首个合格且未生成 BP 的热词调用 LLM，`action=generated`；无合格热词则 `action=skipped`（200，非错误）。
   6. **商业模式去重（同样为全历史）**：生成并校验后，按归一化 `businessModel`（`normalizeBusinessModel`：小写、压缩空白、去首尾标点）比对**全部历史**的 `completed` 报告。若已存在相同商业模式的报告，则**不重复存储内容**，将本次记录标记为 `completed` 并通过 `canonical_report_id` 指向原报告，直接复用其商业计划书（详情/列表读取时自动解析指向）。
   7. **省 token：商业模式回避清单**：调用 LLM 前注入最近使用过的去重商业模式清单（`getRecentBusinessModels` + `buildAvoidModelsLine`，约 +150-250 输入 token），引导模型另辟差异化方向，把「生成后才发现模式重复」的整次浪费调用转化为新内容。配合精简后的提示词，单份约 5k→4.3k token。

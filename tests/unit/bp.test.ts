@@ -6,6 +6,7 @@ import {
   BpValidationError,
   computeTrendHotwordScore,
   pickFirstEligibleTrend,
+  orderTrendsForAnalysis,
   MIN_TREND_SCORE,
   normalizeBusinessModel,
   BUSINESS_MODEL_NORM_MAX_LENGTH,
@@ -197,7 +198,13 @@ describe('parseSignedPercent (risk-adjusted annualized sorting)', () => {
   });
 });
 
-function makeTrend(keyword: string, searchVolume: number, growthRate: number, id = 't1'): Trend {
+function makeTrend(
+  keyword: string,
+  searchVolume: number,
+  growthRate: number,
+  id = 't1',
+  topicClass: Trend['topicClass'] = 'general'
+): Trend {
   return {
     id,
     keyword,
@@ -206,6 +213,7 @@ function makeTrend(keyword: string, searchVolume: number, growthRate: number, id
     category: 'technology',
     timeRange: '4h',
     region: 'US',
+    topicClass,
     timestamp: new Date(),
     createdAt: new Date(),
   };
@@ -258,6 +266,74 @@ describe('pickFirstEligibleTrend', () => {
     const trends = [makeTrend('Done', 500_000, 90)];
     const picked = pickFirstEligibleTrend(trends, new Set(['done']));
     expect(picked).toBeNull();
+  });
+
+  test('skips a hotword the collector classified as sport', () => {
+    const trends = [
+      makeTrend('Chiefs Game', 900_000, 95, '1', 'sports'),
+      makeTrend('Tax Filing Deadline', 300_000, 80, '2', 'general'),
+    ];
+    const picked = pickFirstEligibleTrend(trends, new Set());
+    expect(picked?.trend.keyword).toBe('Tax Filing Deadline');
+  });
+
+  test('skips a hotword classified as entertainment', () => {
+    const trends = [
+      makeTrend('Some Actor', 900_000, 95, '1', 'entertainment'),
+      makeTrend('Power Outage Map', 300_000, 80, '2', 'general'),
+    ];
+    expect(pickFirstEligibleTrend(trends, new Set())?.trend.keyword).toBe('Power Outage Map');
+  });
+
+  test('re-classifies an unclassified legacy row from its keyword', () => {
+    // Rows collected before triage shipped carry no topic_class, so the obvious
+    // cases still have to be caught at pick time.
+    const trends = [
+      makeTrend('chiefs vs bills', 900_000, 95, '1', null),
+      makeTrend('Storm Warning', 300_000, 80, '2', null),
+    ];
+    expect(pickFirstEligibleTrend(trends, new Set())?.trend.keyword).toBe('Storm Warning');
+  });
+
+  test('keeps an ambiguous unclassified row eligible', () => {
+    const trends = [makeTrend('Aurora Borealis', 300_000, 80, '1', null)];
+    expect(pickFirstEligibleTrend(trends, new Set())?.trend.keyword).toBe('Aurora Borealis');
+  });
+
+  test('returns null when every candidate is sport or entertainment', () => {
+    const trends = [
+      makeTrend('Match Day', 900_000, 95, '1', 'sports'),
+      makeTrend('Premiere Night', 800_000, 95, '2', 'entertainment'),
+    ];
+    expect(pickFirstEligibleTrend(trends, new Set())).toBeNull();
+  });
+});
+
+describe('orderTrendsForAnalysis', () => {
+  test('promotes a comparable keyword that names a buildable service', () => {
+    const generic = makeTrend('Aurora Borealis', 300_000, 80, '1');
+    const commercial = makeTrend('best tax software', 300_000, 80, '2');
+    const ordered = orderTrendsForAnalysis([generic, commercial]);
+    expect(ordered[0].trend.keyword).toBe('best tax software');
+  });
+
+  test('does not let a commercial hint outrank a much hotter keyword', () => {
+    // The bonus caps at 15 points against a 0-100 hotword score, so a genuine
+    // breakout still wins. Without that cap the ranking would chase wording.
+    const breakout = makeTrend('Aurora Borealis', 5_000_000, 100, '1');
+    const lukewarm = makeTrend('best tax software app online', 2_000, 62, '2');
+    expect(orderTrendsForAnalysis([lukewarm, breakout])[0].trend.keyword).toBe('Aurora Borealis');
+  });
+
+  test('preserves each candidate position in the incoming order', () => {
+    // rank is recorded on the report as the hotword's standing, so re-sorting
+    // must not renumber it.
+    const ordered = orderTrendsForAnalysis([
+      makeTrend('Aurora Borealis', 300_000, 80, '1'),
+      makeTrend('best tax software', 300_000, 80, '2'),
+    ]);
+    expect(ordered.find((o) => o.trend.id === '1')?.rank).toBe(1);
+    expect(ordered.find((o) => o.trend.id === '2')?.rank).toBe(2);
   });
 });
 

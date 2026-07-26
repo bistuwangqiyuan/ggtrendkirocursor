@@ -8,6 +8,7 @@ import {
   dedupeRssItems,
   COLLECTOR_CATEGORY,
 } from '../../src/lib/services/trendsCollector';
+import type { RssTrendItem } from '../../src/lib/services/trendsCollector';
 import {
   computeTrendHotwordScore,
   MIN_TREND_SCORE,
@@ -24,6 +25,12 @@ const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
     <pubDate>Wed, 10 Jun 2026 00:00:00 -0700</pubDate>
     <ht:news_item>
       <ht:news_item_title>Some unrelated news headline</ht:news_item_title>
+      <ht:news_item_url>https://example.com/story</ht:news_item_url>
+      <ht:news_item_source>Example News</ht:news_item_source>
+    </ht:news_item>
+    <ht:news_item>
+      <ht:news_item_title>A second headline</ht:news_item_title>
+      <ht:news_item_source>Another Outlet</ht:news_item_source>
     </ht:news_item>
   </item>
   <item>
@@ -35,6 +42,11 @@ const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
   </item>
 </channel>
 </rss>`;
+
+/** An RSS item with everything defaulted, so a test states only what it means. */
+function rssItem(overrides: Partial<RssTrendItem> = {}): RssTrendItem {
+  return { keyword: 'k', approxTraffic: null, newsTitles: [], newsSources: [], ...overrides };
+}
 
 describe('parseApproxTraffic', () => {
   test('parses comma-grouped numbers', () => {
@@ -66,9 +78,23 @@ describe('parseTrendsRss', () => {
   test('extracts keyword + traffic from items (incl. CDATA and entities)', () => {
     const items = parseTrendsRss(SAMPLE_RSS);
     expect(items.length).toBe(3);
-    expect(items[0]).toEqual({ keyword: 'Acme & Co launch', approxTraffic: 200000 });
-    expect(items[1]).toEqual({ keyword: 'New iPhone', approxTraffic: 50000 });
-    expect(items[2]).toEqual({ keyword: 'quiet keyword', approxTraffic: null });
+    expect(items[0]).toMatchObject({ keyword: 'Acme & Co launch', approxTraffic: 200000 });
+    expect(items[1]).toMatchObject({ keyword: 'New iPhone', approxTraffic: 50000 });
+    expect(items[2]).toMatchObject({ keyword: 'quiet keyword', approxTraffic: null });
+  });
+  test('collects every news headline and publisher behind an item', () => {
+    const [first] = parseTrendsRss(SAMPLE_RSS);
+    expect(first.newsTitles).toEqual(['Some unrelated news headline', 'A second headline']);
+    // URLs come along with publisher names: the host is often the clearer
+    // signal ("sports.yahoo.com" vs "Yahoo Sports").
+    expect(first.newsSources).toEqual([
+      'Example News', 'Another Outlet', 'https://example.com/story',
+    ]);
+  });
+  test('yields empty news arrays when the feed omits them', () => {
+    const items = parseTrendsRss(SAMPLE_RSS);
+    expect(items[2].newsTitles).toEqual([]);
+    expect(items[2].newsSources).toEqual([]);
   });
   test('returns [] for empty/garbage input', () => {
     expect(parseTrendsRss('')).toEqual([]);
@@ -79,9 +105,9 @@ describe('parseTrendsRss', () => {
 describe('dedupeRssItems', () => {
   test('keeps the highest traffic per normalized keyword', () => {
     const out = dedupeRssItems([
-      { keyword: 'AI', approxTraffic: 1000 },
-      { keyword: 'ai', approxTraffic: 5000 },
-      { keyword: 'Other', approxTraffic: null },
+      { keyword: 'AI', approxTraffic: 1000, newsTitles: [], newsSources: [] },
+      { keyword: 'ai', approxTraffic: 5000, newsTitles: [], newsSources: [] },
+      { keyword: 'Other', approxTraffic: null, newsTitles: [], newsSources: [] },
     ]);
     expect(out.length).toBe(2);
     const ai = out.find((i) => i.keyword.toLowerCase() === 'ai');
@@ -103,7 +129,7 @@ describe('collected rows clear the BP picker threshold', () => {
   test.each([1000, 5000, 10000, 50000, 200000, 1000000])(
     'searchVolume %i scores above MIN_TREND_SCORE',
     (sv) => {
-      const row = mapRssItemToRow({ keyword: 'k', approxTraffic: sv }, 'US');
+      const row = mapRssItemToRow(rssItem({ approxTraffic: sv }), 'US');
       expect(row.category).toBe(COLLECTOR_CATEGORY);
       const score = computeTrendHotwordScore({ searchVolume: row.searchVolume, growthRate: row.growthRate });
       expect(score).toBeGreaterThan(MIN_TREND_SCORE);
@@ -111,10 +137,49 @@ describe('collected rows clear the BP picker threshold', () => {
   );
 
   test('missing traffic falls back to a usable volume that still scores', () => {
-    const row = mapRssItemToRow({ keyword: 'k', approxTraffic: null }, 'GB');
+    const row = mapRssItemToRow(rssItem({ approxTraffic: null }), 'GB');
     expect(row.searchVolume).toBeGreaterThan(0);
     const score = computeTrendHotwordScore({ searchVolume: row.searchVolume, growthRate: row.growthRate });
     expect(score).toBeGreaterThan(MIN_TREND_SCORE);
+  });
+});
+
+describe('mapRssItemToRow classification', () => {
+  test('tags a sports hotword from its news publishers, not the keyword', () => {
+    // "brickyard 400" says nothing on its own; the publishers settle it.
+    const row = mapRssItemToRow(
+      rssItem({
+        keyword: 'brickyard 400',
+        newsTitles: ['What to Watch: Brickyard 400 demands perfection'],
+        newsSources: ['NASCAR.com', 'https://sports.yahoo.com/articles/x'],
+      }),
+      'US'
+    );
+    expect(row.topicClass).toBe('sports');
+  });
+
+  test('tags an entertainment hotword the same way', () => {
+    const row = mapRssItemToRow(
+      rssItem({
+        keyword: 'ana de armas',
+        newsTitles: ['Actress opens up about her new film'],
+        newsSources: ['Variety.com', 'TMZ'],
+      }),
+      'US'
+    );
+    expect(row.topicClass).toBe('entertainment');
+  });
+
+  test('leaves an ordinary hotword analysable', () => {
+    const row = mapRssItemToRow(
+      rssItem({
+        keyword: 'irs tax refund status',
+        newsTitles: ['How to check your refund online'],
+        newsSources: ['Reuters'],
+      }),
+      'US'
+    );
+    expect(row.topicClass).toBe('general');
   });
 });
 

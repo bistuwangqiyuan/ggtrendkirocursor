@@ -27,6 +27,23 @@ export const OWNED_TABLES = [
 
 export type OwnedTable = (typeof OWNED_TABLES)[number];
 
+/**
+ * Columns added after the tables were first provisioned.
+ *
+ * `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a new column
+ * never reaches a live database through the base DDL alone — that is how
+ * production drifts. These run on every db-init and on every maintenance pass,
+ * so the migration applies itself with no manual step.
+ *
+ * The trends table is one of two names depending on how the database was
+ * provisioned (see getTrendsTableName); the statement for whichever is absent
+ * fails harmlessly and is reported as skipped.
+ */
+export const ADDITIVE_STATEMENTS = [
+  `ALTER TABLE google_trends ADD COLUMN IF NOT EXISTS topic_class VARCHAR(20)`,
+  `ALTER TABLE trends_trending_now ADD COLUMN IF NOT EXISTS topic_class VARCHAR(20)`,
+];
+
 export const NEWSLETTER_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS newsletter_subscribers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -88,12 +105,14 @@ export const BASE_STATEMENTS = [
     time_range VARCHAR(20),
     category TEXT,
     region VARCHAR(10) DEFAULT 'US',
+    topic_class VARCHAR(20),
     traffic_source TEXT,
     related_queries JSONB,
     trend_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
   )`,
+  ...ADDITIVE_STATEMENTS,
   `CREATE INDEX IF NOT EXISTS idx_google_trends_created_at ON google_trends(created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_google_trends_search_volume ON google_trends(search_volume)`,
   `CREATE INDEX IF NOT EXISTS idx_google_trends_time_range ON google_trends(time_range)`,

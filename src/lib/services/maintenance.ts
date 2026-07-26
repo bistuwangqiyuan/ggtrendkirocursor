@@ -10,7 +10,7 @@
  *      trends are superseded every 3 hours, checks are a rolling health signal.
  */
 import { query, getTrendsTableName, getTimestampColumnName } from '../db/client';
-import { NEWSLETTER_STATEMENTS } from '../db/schema';
+import { ADDITIVE_STATEMENTS, NEWSLETTER_STATEMENTS } from '../db/schema';
 import { recordError, pruneOldLogs } from '../observability/errorLog';
 
 export const TRENDS_RETENTION_DEFAULT_DAYS = 30;
@@ -24,6 +24,7 @@ function retention(envVar: string, fallback: number): number {
 
 export interface MaintenanceResult {
   newsletterTableEnsured: boolean;
+  columnsAdded: number;
   trendsDeleted: number;
   siteChecksDeleted: number;
   logsDeleted: number;
@@ -37,6 +38,27 @@ export async function ensureNewsletterTable(): Promise<boolean> {
     await query(statement);
   }
   return true;
+}
+
+/**
+ * Apply additive column migrations. Runs every cycle so a schema change ships
+ * with the deploy instead of waiting on someone to remember `db-init`.
+ *
+ * Each statement is independent: they target two possible trends table names,
+ * only one of which exists, so a failure on the absent one is expected and must
+ * not stop the rest. Returns how many statements applied cleanly.
+ */
+export async function applyAdditiveMigrations(): Promise<number> {
+  let applied = 0;
+  for (const statement of ADDITIVE_STATEMENTS) {
+    try {
+      await query(statement);
+      applied++;
+    } catch {
+      // Table absent in this database — the statement for its sibling name ran.
+    }
+  }
+  return applied;
 }
 
 export async function pruneTrends(days = retention('TRENDS_RETENTION_DAYS', TRENDS_RETENTION_DEFAULT_DAYS)): Promise<number> {
@@ -78,6 +100,7 @@ export async function pruneSiteChecks(
 export async function runMaintenance(): Promise<MaintenanceResult> {
   const result: MaintenanceResult = {
     newsletterTableEnsured: false,
+    columnsAdded: 0,
     trendsDeleted: 0,
     siteChecksDeleted: 0,
     logsDeleted: 0,
@@ -86,6 +109,7 @@ export async function runMaintenance(): Promise<MaintenanceResult> {
 
   const steps: [string, () => Promise<void>][] = [
     ['newsletter', async () => { result.newsletterTableEnsured = await ensureNewsletterTable(); }],
+    ['additive-migrations', async () => { result.columnsAdded = await applyAdditiveMigrations(); }],
     ['trends-retention', async () => { result.trendsDeleted = await pruneTrends(); }],
     ['site-checks-retention', async () => { result.siteChecksDeleted = await pruneSiteChecks(); }],
     ['error-log-retention', async () => { result.logsDeleted = await pruneOldLogs(); }],

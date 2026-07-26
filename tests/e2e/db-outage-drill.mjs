@@ -162,6 +162,25 @@ async function seedSnapshots(dir) {
       },
     ],
   });
+
+  await writeFixture(dir, 'stats/overview', {
+    totals: {
+      trends: 4242, keywords: 900, bpTotal: 120, bpCompleted: 100, bpFailed: 5,
+      bpDuplicates: 15, users: 7, subscribers: 3, feedback: 2, monitoredSites: 1,
+    },
+    daily: [
+      { date: '2026-07-25', trendsCollected: 40, bpCreated: 5, bpCompleted: 5, bpFailed: 0, usersRegistered: 1 },
+      { date: '2026-07-26', trendsCollected: 44, bpCreated: 5, bpCompleted: 4, bpFailed: 1, usersRegistered: 0 },
+    ],
+    topicMix: { sports: 50, entertainment: 30, general: 40, unclassified: 0 },
+    content: {
+      bpInLast30Days: 30,
+      topKeywords: [{ keyword: KEYWORD, slug: SLUG, appearances: 9, searchVolume: 123456 }],
+      topReports: [{ id: BP_ID, keyword: KEYWORD, title: 'Drill fixture plan', riskAdjusted: '40%' }],
+    },
+    monitor: { sites: 1, up: 1, down: 0, avgSeoScore: 90 },
+    freshness: { latestTrendAt: NOW, latestBpAt: NOW },
+  });
 }
 
 function startServer(snapshotDir) {
@@ -239,6 +258,9 @@ async function run() {
       // bp-report only exists when the completed-report body actually rendered.
       [`/bp/${BP_ID}`, 'bp-report', 'Drill fixture plan'],
       ['/monitor', 'data-page="monitor"', 'Drill fixture site'],
+      // Every figure on /stats is a whole-table aggregate, so it is the page
+      // that must never reach for Postgres.
+      ['/stats', 'data-page="stats"', '4,242'],
     ];
     for (const [path, marker, content] of routes) {
       const r = await get(path);

@@ -15,6 +15,8 @@ export type TrendJson = Omit<Trend, 'timestamp' | 'createdAt'> & {
   createdAt: string;
 };
 
+export type TopicCounts = Record<'sports' | 'entertainment' | 'general' | 'unclassified', number>;
+
 export interface TrendsTopSnapshot {
   /** Most recent rows, newest first. Capped — see TRENDS_SNAPSHOT_MAX. */
   rows: TrendJson[];
@@ -84,6 +86,47 @@ export interface MonitorSiteJson {
 
 export interface MonitorSnapshot {
   sites: MonitorSiteJson[];
+}
+
+// ---------------------------------------------------------------------------
+// stats (/stats)
+// ---------------------------------------------------------------------------
+
+/** One day of pipeline activity, UTC. */
+export interface StatsDayJson {
+  /** YYYY-MM-DD, UTC. */
+  date: string;
+  trendsCollected: number;
+  bpCreated: number;
+  bpCompleted: number;
+  bpFailed: number;
+  usersRegistered: number;
+}
+
+export interface StatsSnapshot {
+  totals: {
+    trends: number;
+    keywords: number;
+    bpTotal: number;
+    bpCompleted: number;
+    bpFailed: number;
+    bpDuplicates: number;
+    users: number;
+    subscribers: number;
+    feedback: number;
+    monitoredSites: number;
+  };
+  /** Newest last, so a chart reads left to right. */
+  daily: StatsDayJson[];
+  /** How the analysable pool splits, over the retained trends window. */
+  topicMix: TopicCounts;
+  content: {
+    bpInLast30Days: number;
+    topKeywords: { keyword: string; slug: string; appearances: number; searchVolume: number }[];
+    topReports: { id: string; keyword: string; title: string | null; riskAdjusted: string | null }[];
+  };
+  monitor: { sites: number; up: number; down: number; avgSeoScore: number | null };
+  freshness: { latestTrendAt: string | null; latestBpAt: string | null };
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { readForPage } from '../../lib/cache/readPath';
 import { applyPageCache, CACHE_PROFILES } from '../../lib/cache/httpCache';
 import { getTranslations } from '../../lib/i18n';
 import { formatDateTime } from '../../lib/utils/format';
+import { BP_WINDOW_OPTIONS, bpWindowDays, normalizeBpWindow } from '../../lib/utils/timeWindow';
 
 export const prerender = false;
 
@@ -20,19 +21,29 @@ const sortParam = Astro.url.searchParams.get('sort');
 const orderParam = Astro.url.searchParams.get('order');
 const sortBy: BpListSortBy = sortParam === 'riskAdjusted' ? 'riskAdjusted' : 'createdAt';
 const sortOrder: BpListSortOrder = orderParam === 'asc' ? 'asc' : 'desc';
+// Default to the last month so the newest opportunities are on the first
+// screen; the archive stays reachable through the window selector.
+const timeWindow = normalizeBpWindow(Astro.url.searchParams.get('within'));
+const withinDays = bpWindowDays(timeWindow);
 
+const emptyPage = { reports: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
 const result = await readForPage(
   'bp:list',
-  () => listBpFromSnapshot(page, 20, sortBy, sortOrder),
+  () => listBpFromSnapshot(page, 20, sortBy, sortOrder, undefined, withinDays),
   async () => {
     const r = await bpService.list(page, 20, sortBy, sortOrder);
-    return r.success
-      ? r.data
-      : { reports: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
+    return r.success ? r.data : emptyPage;
   }
 );
 const data = result.data;
 const degraded = result.pending;
+
+// A window with nothing in it would read as "no reports exist". Say how many
+// there are in total instead, so the empty state points at the way out.
+const totalAllTime = withinDays
+  ? (await listBpFromSnapshot(1, 1, sortBy, sortOrder)).data.pagination.totalItems
+  : data.pagination.totalItems;
+const emptyBecauseOfWindow = data.pagination.totalItems === 0 && totalAllTime > 0;
 
 const statusLabel = (s: string) => (t.bp.status as Record<string, string>)[s] || s;
 const statusClass = (s: string) =>
@@ -41,15 +52,25 @@ const statusClass = (s: string) =>
   : s === 'failed' ? 'bg-red-500/10 text-red-400 border-red-500/20'
   : 'bg-gray-700/30 text-gray-300 border-gray-600/30';
 
-// Sortable header link: clicking the active column flips the order; page resets to 1.
-const sortHref = (col: BpListSortBy) => {
-  const nextOrder = sortBy === col && sortOrder === 'desc' ? 'asc' : 'desc';
-  return `/bp?sort=${col}&order=${nextOrder}`;
+// Every link carries the whole filter state, so changing one control never
+// silently resets the others.
+const href = (overrides: { sort?: BpListSortBy; order?: BpListSortOrder; within?: string; page?: number }) => {
+  const params = new URLSearchParams({
+    sort: overrides.sort ?? sortBy,
+    order: overrides.order ?? sortOrder,
+    within: overrides.within ?? timeWindow,
+  });
+  if (overrides.page && overrides.page > 1) params.set('page', String(overrides.page));
+  return `/bp?${params.toString()}`;
 };
+
+// Sortable header link: clicking the active column flips the order; page resets to 1.
+const sortHref = (col: BpListSortBy) =>
+  href({ sort: col, order: sortBy === col && sortOrder === 'desc' ? 'asc' : 'desc' });
 const sortIndicator = (col: BpListSortBy) =>
   sortBy === col ? (sortOrder === 'desc' ? ' ▼' : ' ▲') : '';
 
-const pageHref = (p: number) => `/bp?sort=${sortBy}&order=${sortOrder}&page=${p}`;
+const pageHref = (p: number) => href({ page: p });
 
 // Windowed page list: first / last / current ±2, with null as an ellipsis
 // marker — an unbounded row of page links grows forever as reports accumulate.
@@ -85,6 +106,22 @@ const pages = pageWindow(data.pagination.currentPage, data.pagination.totalPages
       <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.dataPending}</div>
     )}
 
+    <div class="flex flex-wrap items-center gap-2" data-testid="bp-window-filter">
+      <span class="text-xs font-medium uppercase tracking-wider text-gray-500">{t.bp.window.label}</span>
+      {BP_WINDOW_OPTIONS.map((opt) => (
+        <a
+          href={href({ within: opt })}
+          data-window={opt}
+          aria-current={opt === timeWindow ? 'true' : undefined}
+          class={`rounded-md border px-3 py-1.5 text-sm no-underline transition-colors ${
+            opt === timeWindow
+              ? 'border-blue-500 bg-blue-600 text-white'
+              : 'border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700'
+          }`}
+        >{t.bp.window[opt]}</a>
+      ))}
+    </div>
+
     <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/50 shadow-xl">
       <table class="w-full text-left text-sm text-gray-400">
         <thead class="bg-gray-800 text-gray-200 uppercase text-xs font-medium">
@@ -108,7 +145,14 @@ const pages = pageWindow(data.pagination.currentPage, data.pagination.totalPages
         <tbody class="divide-y divide-gray-800">
           {data.reports.length === 0 ? (
             <tr>
-              <td colspan="6" class="px-6 py-16 text-center text-gray-400">{t.bp.empty}</td>
+              <td colspan="6" class="px-6 py-16 text-center text-gray-400">
+                {emptyBecauseOfWindow ? (
+                  <span data-testid="bp-window-empty">
+                    {t.bp.window.emptyInWindow}
+                    <a href={href({ within: 'all' })} class="ml-1.5 text-blue-400 hover:text-blue-300">{t.bp.window.showAll} ({totalAllTime})</a>
+                  </span>
+                ) : t.bp.empty}
+              </td>
             </tr>
           ) : (
             data.reports.map((r) => (

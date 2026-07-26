@@ -26,6 +26,7 @@ import {
   type LandingDetailSnapshot,
   type LandingIndexSnapshot,
   type MonitorSnapshot,
+  type StatsSnapshot,
   type TrendsTopSnapshot,
 } from './snapshotTypes';
 
@@ -198,7 +199,9 @@ export async function listBpFromSnapshot(
   pageSize = 20,
   sortBy: 'createdAt' | 'riskAdjusted' = 'createdAt',
   sortOrder: 'asc' | 'desc' = 'desc',
-  status?: string
+  status?: string,
+  /** Keep only reports created this many days ago or less. Omit for all history. */
+  withinDays?: number
 ): Promise<SnapshotRead<PaginatedBpReports>> {
   const snap = await readSnapshot<BpListSnapshot>(SNAPSHOT_KEYS.bpList);
   const empty: PaginatedBpReports = {
@@ -209,6 +212,12 @@ export async function listBpFromSnapshot(
 
   let rows = snap.data.reports;
   if (status) rows = rows.filter((r) => r.status === status);
+  if (withinDays && withinDays > 0) {
+    const cutoff = new Date(Date.now() - withinDays * 86_400_000).toISOString();
+    // createdAt is a stored ISO string, so a lexicographic compare is both
+    // correct and cheaper than parsing every row into a Date.
+    rows = rows.filter((r) => r.createdAt >= cutoff);
+  }
 
   // Mirror the SQL ordering: failed placeholders last, then the chosen key,
   // with missing risk-adjusted values sorted last regardless of direction.
@@ -279,4 +288,27 @@ export async function listMonitorSitesFromSnapshot(): Promise<SnapshotRead<SiteW
     data: snap.data.sites.map(reviveMonitorSite),
     generatedAt: new Date(snap.generatedAt),
   };
+}
+
+// ---------------------------------------------------------------------------
+// stats
+// ---------------------------------------------------------------------------
+
+/** Shown when the snapshot has not been built yet, so the page still renders. */
+export const EMPTY_STATS: StatsSnapshot = {
+  totals: {
+    trends: 0, keywords: 0, bpTotal: 0, bpCompleted: 0, bpFailed: 0, bpDuplicates: 0,
+    users: 0, subscribers: 0, feedback: 0, monitoredSites: 0,
+  },
+  daily: [],
+  topicMix: { sports: 0, entertainment: 0, general: 0, unclassified: 0 },
+  content: { bpInLast30Days: 0, topKeywords: [], topReports: [] },
+  monitor: { sites: 0, up: 0, down: 0, avgSeoScore: null },
+  freshness: { latestTrendAt: null, latestBpAt: null },
+};
+
+export async function getStatsFromSnapshot(): Promise<SnapshotRead<StatsSnapshot>> {
+  const snap = await readSnapshot<StatsSnapshot>(SNAPSHOT_KEYS.statsOverview);
+  if (!snap) return miss(EMPTY_STATS);
+  return { hit: true, data: snap.data, generatedAt: new Date(snap.generatedAt) };
 }

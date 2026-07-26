@@ -284,3 +284,34 @@ export async function getTimestampColumnName(tableName: string): Promise<string>
     return 'timestamp';
   }
 }
+
+/**
+ * Whether the trends table has an additively-migrated column yet.
+ *
+ * Columns added after a database was provisioned (topic_class) only appear once
+ * the maintenance job or db-init has run. Readers and writers check first so a
+ * lagging database degrades — collecting without the classification — instead
+ * of failing every insert.
+ *
+ * Only a positive result is cached: caching "absent" would keep the column
+ * invisible for the rest of the process after the migration adds it.
+ */
+const cachedTrendsColumns = new Map<string, boolean>();
+
+export async function trendsTableHasColumn(tableName: string, column: string): Promise<boolean> {
+  const cacheKey = `${tableName}.${column}`;
+  if (cachedTrendsColumns.get(cacheKey)) return true;
+  if (isDbDown()) return false;
+  try {
+    const res = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2 LIMIT 1`,
+      [tableName, column]
+    );
+    const present = res.rows.length > 0;
+    if (present) cachedTrendsColumns.set(cacheKey, true);
+    return present;
+  } catch {
+    return false;
+  }
+}

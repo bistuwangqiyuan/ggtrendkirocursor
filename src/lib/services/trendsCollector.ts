@@ -1,4 +1,11 @@
-import { query, getClient, getTrendsTableName, getTimestampColumnName } from '../db/client';
+import {
+  query,
+  getClient,
+  getTrendsTableName,
+  getTimestampColumnName,
+  trendsTableHasColumn,
+} from '../db/client';
+import { classifyTrendTopic, type TopicClass } from './trendTriage';
 
 /**
  * Google Trends "Daily Trending Searches" RSS collector.
@@ -34,6 +41,10 @@ const RSS_TIMEOUT_MS = 12_000;
 export interface RssTrendItem {
   keyword: string;
   approxTraffic: number | null;
+  /** Headlines of the stories driving the spike. Empty when the feed omits them. */
+  newsTitles: string[];
+  /** Publisher names and article URLs for those stories. */
+  newsSources: string[];
 }
 
 export interface CollectedTrendRow {
@@ -43,6 +54,8 @@ export interface CollectedTrendRow {
   category: string;
   timeRange: string;
   region: string;
+  /** Sport / entertainment / general, decided from the keyword and its news. */
+  topicClass: TopicClass;
 }
 
 /** Decode the handful of XML/HTML entities that show up in trend titles. */
@@ -96,9 +109,25 @@ export function estimateTrendGrowthRate(searchVolume: number): number {
   return Math.round(Math.min(100, Math.max(74, g)));
 }
 
+/** Collect every value of a repeating tag within one item block. */
+function extractAll(chunk: string, tag: string): string[] {
+  const re = new RegExp(`<${tag}>(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([\\s\\S]*?))</${tag}>`, 'gi');
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(chunk)) !== null) {
+    const value = decodeXmlEntities(m[1] ?? m[2] ?? '');
+    if (value) out.push(value);
+  }
+  return out;
+}
+
 /**
  * Extract trend items from a Google Trends daily RSS document.
  * Pure (no I/O) so it is unit-testable from a fixture string.
+ *
+ * Each `<item>` also carries the news stories behind the spike. Those headlines
+ * and publishers are what makes an opaque keyword like "brickyard 400"
+ * classifiable, so they are parsed alongside the keyword itself.
  */
 export function parseTrendsRss(xml: string): RssTrendItem[] {
   if (typeof xml !== 'string' || !xml) return [];
@@ -116,7 +145,17 @@ export function parseTrendsRss(xml: string): RssTrendItem[] {
     if (!keyword) continue;
     const trm = trafficRe.exec(chunk);
     const rawTraffic = trm ? (trm[1] ?? trm[2] ?? '') : '';
-    items.push({ keyword, approxTraffic: parseApproxTraffic(rawTraffic) });
+    items.push({
+      keyword,
+      approxTraffic: parseApproxTraffic(rawTraffic),
+      newsTitles: extractAll(chunk, 'ht:news_item_title'),
+      // Publisher name and article URL both carry the beat, and the URL host is
+      // the more reliable of the two ("Yahoo Sports" vs "sports.yahoo.com").
+      newsSources: [
+        ...extractAll(chunk, 'ht:news_item_source'),
+        ...extractAll(chunk, 'ht:news_item_url'),
+      ],
+    });
   }
   return items;
 }
@@ -134,6 +173,13 @@ export function mapRssItemToRow(item: RssTrendItem, geo: string): CollectedTrend
     category: COLLECTOR_CATEGORY,
     timeRange: COLLECTOR_TIME_RANGE,
     region: geo,
+    // Classified here because this is the only place the news context exists;
+    // it is gone by the time the BP picker reads the row back.
+    topicClass: classifyTrendTopic({
+      keyword: item.keyword,
+      newsTitles: item.newsTitles,
+      newsSources: item.newsSources,
+    }).topic,
   };
 }
 
@@ -181,6 +227,10 @@ export interface CollectSummary {
   skipped: number;
   table: string;
   timestampColumn: string;
+  /** False when the database predates the topic_class column. */
+  topicClassStored: boolean;
+  /** How the freshly inserted rows were classified. */
+  topics: Record<TopicClass, number>;
   geos: Record<string, { fetched: number; inserted: number; skipped: number }>;
   errors: string[];
 }
@@ -194,12 +244,15 @@ export class TrendsCollector {
     const table = await getTrendsTableName();
     const tsCol = await getTimestampColumnName(table);
     const tsRef = tsCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
+    const withTopicClass = await trendsTableHasColumn(table, 'topic_class');
 
     const summary: CollectSummary = {
       inserted: 0,
       skipped: 0,
       table,
       timestampColumn: tsCol,
+      topicClassStored: withTopicClass,
+      topics: { sports: 0, entertainment: 0, general: 0 },
       geos: {},
       errors: [],
     };
@@ -237,19 +290,21 @@ export class TrendsCollector {
         });
 
       if (fresh.length === 0) continue;
+      for (const row of fresh) summary.topics[row.topicClass]++;
 
       // Parameterized multi-row insert. id is generated in-app because the
       // google_trends table has no UUID default (trends_trending_now ignores
       // the explicit id). Each tuple ends with NOW(),NOW() for the collection
-      // timestamp column and created_at, so only 7 columns are parameterized.
-      const cols = 7;
+      // timestamp column and created_at, so the remaining columns are the only
+      // parameterized ones. topic_class is included only where it exists, so a
+      // database that has not run the additive migration still collects.
+      const cols = withTopicClass ? 8 : 7;
       const valuesSql: string[] = [];
       const params: any[] = [];
       fresh.forEach((row, i) => {
         const b = i * cols;
-        valuesSql.push(
-          `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},NOW(),NOW())`
-        );
+        const placeholders = Array.from({ length: cols }, (_, j) => `$${b + j + 1}`).join(',');
+        valuesSql.push(`(${placeholders},NOW(),NOW())`);
         params.push(
           crypto.randomUUID(),
           row.keyword,
@@ -259,10 +314,11 @@ export class TrendsCollector {
           row.timeRange,
           row.region
         );
+        if (withTopicClass) params.push(row.topicClass);
       });
 
       const insertSql = `INSERT INTO "${table}"
-        (id, keyword, search_volume, growth_rate, category, time_range, region, ${tsRef}, created_at)
+        (id, keyword, search_volume, growth_rate, category, time_range, region,${withTopicClass ? ' topic_class,' : ''} ${tsRef}, created_at)
         VALUES ${valuesSql.join(',')}`;
       // Use a raw client so INSERT errors surface (the shared query() helper
       // swallows errors and returns [], which would mask a failed insert).

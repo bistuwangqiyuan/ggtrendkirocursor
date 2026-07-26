@@ -1,0 +1,251 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getStatsFromSnapshot } from '../lib/cache/snapshotReaders';
+import { readForPage } from '../lib/cache/readPath';
+import { applyPageCache, CACHE_PROFILES } from '../lib/cache/httpCache';
+import { getTranslations } from '../lib/i18n';
+import { formatDateTime } from '../lib/utils/format';
+
+export const prerender = false;
+
+applyPageCache(Astro, CACHE_PROFILES.stats);
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+
+// Snapshot only, with no database fallback: every figure here is an aggregate
+// over whole tables, which is the most expensive thing this site could possibly
+// run per request. The cron computes them once per cycle instead.
+const read = await readForPage('stats:overview', () => getStatsFromSnapshot());
+const stats = read.data;
+const degraded = read.pending;
+
+const { totals, daily, topicMix, content, monitor, freshness } = stats;
+
+const completionRate = totals.bpTotal > 0
+  ? Math.round((totals.bpCompleted / totals.bpTotal) * 100)
+  : null;
+
+const overviewCards = [
+  { label: t.stats.metrics.trends, value: totals.trends },
+  { label: t.stats.metrics.keywords, value: totals.keywords },
+  { label: t.stats.metrics.bpTotal, value: totals.bpTotal },
+  { label: t.stats.metrics.bpCompleted, value: totals.bpCompleted },
+  { label: t.stats.metrics.completionRate, value: completionRate === null ? '—' : `${completionRate}%` },
+  { label: t.stats.metrics.bpLast30d, value: content.bpInLast30Days },
+];
+
+const userCards = [
+  { label: t.stats.metrics.users, value: totals.users },
+  { label: t.stats.metrics.subscribers, value: totals.subscribers },
+  { label: t.stats.metrics.feedback, value: totals.feedback },
+  { label: t.stats.metrics.bpDuplicates, value: totals.bpDuplicates },
+  { label: t.stats.metrics.bpFailed, value: totals.bpFailed },
+  { label: t.stats.metrics.monitoredSites, value: totals.monitoredSites },
+];
+
+// Newest first reads better in a table, even though the payload is chronological.
+const dailyRows = [...daily].reverse();
+const peakTrends = Math.max(1, ...daily.map((d) => d.trendsCollected));
+
+const topicRows = [
+  { key: 'general', label: t.stats.topics.general, value: topicMix.general, tone: 'bg-blue-500' },
+  { key: 'sports', label: t.stats.topics.sports, value: topicMix.sports, tone: 'bg-emerald-500/70' },
+  { key: 'entertainment', label: t.stats.topics.entertainment, value: topicMix.entertainment, tone: 'bg-fuchsia-500/70' },
+  { key: 'unclassified', label: t.stats.topics.unclassified, value: topicMix.unclassified, tone: 'bg-gray-600' },
+];
+const topicTotal = topicRows.reduce((sum, r) => sum + r.value, 0);
+const topicPct = (n: number) => (topicTotal > 0 ? Math.round((n / topicTotal) * 1000) / 10 : 0);
+
+const fmt = (n: number) => n.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US');
+const asDate = (iso: string | null) => (iso ? formatDateTime(new Date(iso), locale) : '—');
+---
+
+<Layout title={t.stats.title} description={t.stats.metaDescription}>
+  <div class="space-y-10" data-page="stats">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight text-white">{t.stats.title}</h1>
+        <p class="mt-1.5 text-sm text-gray-400">{t.stats.subtitle}</p>
+      </div>
+      <div class="text-xs text-gray-500">
+        <p>{t.stats.latestTrend}: <span class="text-gray-400">{asDate(freshness.latestTrendAt)}</span></p>
+        <p>{t.stats.latestBp}: <span class="text-gray-400">{asDate(freshness.latestBpAt)}</span></p>
+      </div>
+    </div>
+
+    {degraded && (
+      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.dataPending}</div>
+    )}
+
+    {read.generatedAt && (
+      <p class="-mt-6 text-xs text-gray-500" data-testid="data-as-of">{t.common.dataAsOf} {read.generatedAt.toISOString()}</p>
+    )}
+
+    <section aria-labelledby="stats-overview">
+      <h2 id="stats-overview" class="mb-4 text-xl font-semibold text-white">{t.stats.overview}</h2>
+      <div class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6" data-testid="stats-overview">
+        {overviewCards.map((c) => (
+          <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-5">
+            <p class="text-2xl font-bold tabular-nums text-white">{typeof c.value === 'number' ? fmt(c.value) : c.value}</p>
+            <p class="mt-1 text-xs leading-snug text-gray-400">{c.label}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section aria-labelledby="stats-topics">
+      <h2 id="stats-topics" class="mb-1 text-xl font-semibold text-white">{t.stats.topicMix}</h2>
+      <p class="mb-4 max-w-3xl text-sm text-gray-400">{t.stats.topicsNote}</p>
+      <div class="space-y-3 rounded-xl border border-gray-800 bg-gray-900/50 p-5" data-testid="stats-topics">
+        {topicRows.map((r) => (
+          <div>
+            <div class="mb-1 flex items-baseline justify-between text-sm">
+              <span class="text-gray-300">{r.label}</span>
+              <span class="font-mono text-gray-400">{fmt(r.value)} · {topicPct(r.value)}%</span>
+            </div>
+            <div class="h-2 w-full overflow-hidden rounded-full bg-gray-800">
+              <div class={`h-full rounded-full ${r.tone}`} style={`width: ${topicPct(r.value)}%`}></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section aria-labelledby="stats-daily">
+      <h2 id="stats-daily" class="mb-4 text-xl font-semibold text-white">{t.stats.daily}</h2>
+      <div class="overflow-x-auto rounded-xl border border-gray-800 bg-gray-900/50 shadow-xl">
+        <table class="w-full text-left text-sm text-gray-400">
+          <thead class="bg-gray-800 text-xs font-medium uppercase text-gray-200">
+            <tr>
+              <th class="px-5 py-3.5 tracking-wider">{t.stats.columns.date}</th>
+              <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.trendsCollected}</th>
+              <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.bpCreated}</th>
+              <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.bpCompleted}</th>
+              <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.bpFailed}</th>
+              <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.usersRegistered}</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            {dailyRows.length === 0 ? (
+              <tr><td colspan="6" class="px-5 py-16 text-center text-gray-400" data-testid="stats-daily-empty">{t.stats.noDaily}</td></tr>
+            ) : (
+              dailyRows.map((d) => (
+                <tr class="transition-colors hover:bg-gray-800/50">
+                  <td class="px-5 py-3 font-mono text-gray-300">{d.date}</td>
+                  <td class="px-5 py-3 text-right">
+                    <div class="flex items-center justify-end gap-2">
+                      <div class="hidden h-1.5 w-24 overflow-hidden rounded-full bg-gray-800 sm:block">
+                        <div class="h-full rounded-full bg-blue-500" style={`width: ${Math.round((d.trendsCollected / peakTrends) * 100)}%`}></div>
+                      </div>
+                      <span class="tabular-nums text-gray-300">{fmt(d.trendsCollected)}</span>
+                    </div>
+                  </td>
+                  <td class="px-5 py-3 text-right tabular-nums">{fmt(d.bpCreated)}</td>
+                  <td class="px-5 py-3 text-right tabular-nums text-green-400/90">{fmt(d.bpCompleted)}</td>
+                  <td class="px-5 py-3 text-right tabular-nums text-red-400/80">{d.bpFailed ? fmt(d.bpFailed) : '—'}</td>
+                  <td class="px-5 py-3 text-right tabular-nums">{d.usersRegistered ? fmt(d.usersRegistered) : '—'}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="stats-users">
+      <h2 id="stats-users" class="mb-4 text-xl font-semibold text-white">{t.stats.userContent}</h2>
+      <div class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6" data-testid="stats-users">
+        {userCards.map((c) => (
+          <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-5">
+            <p class="text-2xl font-bold tabular-nums text-white">{fmt(c.value)}</p>
+            <p class="mt-1 text-xs leading-snug text-gray-400">{c.label}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+      <section aria-labelledby="stats-keywords">
+        <h2 id="stats-keywords" class="mb-4 text-xl font-semibold text-white">{t.stats.topKeywords}</h2>
+        <div class="overflow-hidden rounded-xl border border-gray-800 bg-gray-900/50">
+          <table class="w-full text-left text-sm text-gray-400">
+            <thead class="bg-gray-800 text-xs font-medium uppercase text-gray-200">
+              <tr>
+                <th class="px-5 py-3.5 tracking-wider">{t.stats.columns.keyword}</th>
+                <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.appearances}</th>
+                <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.searchVolume}</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+              {content.topKeywords.length === 0 ? (
+                <tr><td colspan="3" class="px-5 py-12 text-center text-gray-400">{t.stats.none}</td></tr>
+              ) : (
+                content.topKeywords.map((k) => (
+                  <tr class="transition-colors hover:bg-gray-800/50">
+                    <td class="px-5 py-3 font-medium text-white">
+                      <a href={`/t/${k.slug}`} class="no-underline hover:text-blue-400">{k.keyword}</a>
+                    </td>
+                    <td class="px-5 py-3 text-right tabular-nums">{fmt(k.appearances)}</td>
+                    <td class="px-5 py-3 text-right tabular-nums">{fmt(k.searchVolume)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="stats-reports">
+        <h2 id="stats-reports" class="mb-4 text-xl font-semibold text-white">{t.stats.topReports}</h2>
+        <div class="overflow-hidden rounded-xl border border-gray-800 bg-gray-900/50">
+          <table class="w-full text-left text-sm text-gray-400">
+            <thead class="bg-gray-800 text-xs font-medium uppercase text-gray-200">
+              <tr>
+                <th class="px-5 py-3.5 tracking-wider">{t.stats.columns.keyword}</th>
+                <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.riskAdjusted}</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+              {content.topReports.length === 0 ? (
+                <tr><td colspan="2" class="px-5 py-12 text-center text-gray-400">{t.stats.none}</td></tr>
+              ) : (
+                content.topReports.map((r) => (
+                  <tr class="transition-colors hover:bg-gray-800/50">
+                    <td class="px-5 py-3">
+                      <a href={`/bp/${r.id}`} class="font-medium text-white no-underline hover:text-blue-400">{r.keyword}</a>
+                      {r.title && <p class="mt-0.5 max-w-xs truncate text-xs text-gray-500">{r.title}</p>}
+                    </td>
+                    <td class="px-5 py-3 text-right font-mono whitespace-nowrap text-amber-300/90">{r.riskAdjusted || '—'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <section aria-labelledby="stats-monitor">
+      <h2 id="stats-monitor" class="mb-4 text-xl font-semibold text-white">{t.stats.monitorSection}</h2>
+      <div class="grid grid-cols-2 gap-4 md:grid-cols-4" data-testid="stats-monitor">
+        <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-5">
+          <p class="text-2xl font-bold tabular-nums text-white">{fmt(monitor.sites)}</p>
+          <p class="mt-1 text-xs text-gray-400">{t.stats.metrics.monitoredSites}</p>
+        </div>
+        <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-5">
+          <p class="text-2xl font-bold tabular-nums text-green-400">{fmt(monitor.up)}</p>
+          <p class="mt-1 text-xs text-gray-400">{t.stats.metrics.sitesUp}</p>
+        </div>
+        <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-5">
+          <p class="text-2xl font-bold tabular-nums text-red-400">{fmt(monitor.down)}</p>
+          <p class="mt-1 text-xs text-gray-400">{t.monitor.statusDown}</p>
+        </div>
+        <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-5">
+          <p class="text-2xl font-bold tabular-nums text-white">{monitor.avgSeoScore ?? '—'}</p>
+          <p class="mt-1 text-xs text-gray-400">{t.stats.metrics.avgSeoScore}</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</Layout>

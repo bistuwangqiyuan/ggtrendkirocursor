@@ -2,7 +2,7 @@ import { clampBatchSize } from '../../src/lib/bpBatch';
 import { runBpBatch } from '../../src/lib/services/bpBatchRunner';
 import { trendsCollector } from '../../src/lib/services/trendsCollector';
 import { siteMonitorService } from '../../src/lib/services/siteMonitor';
-import { runMaintenance } from '../../src/lib/services/maintenance';
+import { applyAdditiveMigrations, runMaintenance } from '../../src/lib/services/maintenance';
 import { rebuildAllSnapshots } from '../../src/lib/cache/snapshotBuilder';
 import { isLlmConfigured } from '../../src/lib/services/llm';
 import { flushErrorLog, recordError } from '../../src/lib/observability/errorLog';
@@ -68,12 +68,29 @@ export const handler = async (event: { headers?: Record<string, string | undefin
   const parts: string[] = [];
 
   return runWithDbContext({ reason: 'cron', route: 'bp-batch-background' }, async () => {
+    // --- 0. Additive schema migrations ------------------------------------
+    // Ahead of collection, not with the other housekeeping in step 4: the
+    // collector writes topic_class, so running this afterwards would waste the
+    // first cycle after a schema change silently collecting unclassified rows.
+    try {
+      const columns = await applyAdditiveMigrations();
+      if (columns) parts.push(`migrations=${columns}`);
+    } catch (error) {
+      parts.push('migrations=error');
+      recordError('bp-batch', error, { context: { stage: 'migrations' } });
+    }
+
     // --- 1. Trends collection (was: trends-collector at :50) --------------
     try {
       const collected = await trendsCollector.collect();
       parts.push(`collected=${collected.inserted}`);
+      parts.push(
+        `topics=s:${collected.topics.sports},e:${collected.topics.entertainment},g:${collected.topics.general}`
+      );
       console.log(
-        `[bp-batch] collect: inserted=${collected.inserted} skipped=${collected.skipped} errors=${collected.errors.length}`
+        `[bp-batch] collect: inserted=${collected.inserted} skipped=${collected.skipped} ` +
+        `topics=${JSON.stringify(collected.topics)} stored=${collected.topicClassStored} ` +
+        `errors=${collected.errors.length}`
       );
       // Rebuild the trends snapshot before generation, not with the others at the
       // end: the candidate picker reads that snapshot, so without this the batch
@@ -136,7 +153,7 @@ export const handler = async (event: { headers?: Record<string, string | undefin
     // --- 5. Snapshot rebuild (the whole point: read paths never touch DB) --
     // Trends were already rebuilt in step 1 and nothing since then changed them.
     try {
-      const snapshots = await rebuildAllSnapshots({ only: ['landing', 'bp', 'monitor'] });
+      const snapshots = await rebuildAllSnapshots({ only: ['landing', 'bp', 'monitor', 'stats'] });
       const totalWritten = Object.values(snapshots.written).reduce((a, b) => a + b, 0);
       parts.push(`snapshots=${totalWritten}`);
       console.log(`[bp-batch] snapshots: ${JSON.stringify(snapshots)}`);

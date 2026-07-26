@@ -13,11 +13,18 @@
  * - Detail snapshots are written incrementally against a manifest, so a run
  *   rewrites only what actually changed.
  */
-import { query, queryOne, getTrendsTableName, getTimestampColumnName } from '../db/client';
+import {
+  query,
+  queryOne,
+  getTrendsTableName,
+  getTimestampColumnName,
+  trendsTableHasColumn,
+} from '../db/client';
 import { slugifyKeyword } from '../utils/slug';
 import { bpService } from '../services/bp';
 import { siteMonitorService } from '../services/siteMonitor';
 import { trendsService } from '../services/trends';
+import { parseTopicClass } from '../services/trendTriage';
 import type { BpReport } from '../../types';
 import {
   SNAPSHOT_KEYS,
@@ -36,6 +43,9 @@ import {
   type LandingKeywordJson,
   type LandingManifestSnapshot,
   type MonitorSnapshot,
+  type StatsDayJson,
+  type StatsSnapshot,
+  type TopicCounts,
   type TrendJson,
   type TrendsTopSnapshot,
 } from './snapshotTypes';
@@ -88,7 +98,7 @@ export interface BuildOptions {
   only?: SnapshotSection[];
 }
 
-export type SnapshotSection = 'trends' | 'landing' | 'bp' | 'monitor';
+export type SnapshotSection = 'trends' | 'landing' | 'bp' | 'monitor' | 'stats';
 
 /** What one section managed to do before its deadline. */
 interface SectionResult {
@@ -97,7 +107,8 @@ interface SectionResult {
   truncated?: boolean;
 }
 
-const ALL_SECTIONS: SnapshotSection[] = ['trends', 'landing', 'bp', 'monitor'];
+// Stats last: it counts what the other sections just refreshed.
+const ALL_SECTIONS: SnapshotSection[] = ['trends', 'landing', 'bp', 'monitor', 'stats'];
 
 /**
  * Rebuild every snapshot the read path depends on. Never throws: a failing
@@ -118,6 +129,7 @@ export async function rebuildAllSnapshots(options: BuildOptions = {}): Promise<S
     landing: buildLandingSnapshots,
     bp: buildBpSnapshots,
     monitor: buildMonitorSnapshot,
+    stats: buildStatsSnapshot,
   };
 
   for (const section of sections) {
@@ -149,13 +161,18 @@ async function buildTrendsSnapshots(): Promise<SectionResult> {
   const tableName = await getTrendsTableName();
   const timestampCol = await getTimestampColumnName(tableName);
   const tsRef = timestampCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
+  // Selected only where present, so a database that has not yet run the
+  // additive migration still produces a snapshot instead of erroring.
+  const topicSelect = (await trendsTableHasColumn(tableName, 'topic_class'))
+    ? 'topic_class'
+    : 'NULL AS topic_class';
 
   const countRow = await queryOne<{ total: string }>(`SELECT COUNT(*) AS total FROM "${tableName}"`);
   const totalRows = parseInt(countRow?.total || '0', 10);
 
   const rows = await query<any>(
     `SELECT id, keyword, search_volume, growth_rate, category, time_range, region,
-            ${tsRef} AS ts, created_at
+            ${topicSelect}, ${tsRef} AS ts, created_at
      FROM "${tableName}"
      ORDER BY ${tsRef} DESC
      LIMIT $1`,
@@ -170,6 +187,7 @@ async function buildTrendsSnapshots(): Promise<SectionResult> {
     category: r.category ?? '',
     timeRange: (r.time_range ?? '') as TrendJson['timeRange'],
     region: r.region ?? '',
+    topicClass: parseTopicClass(r.topic_class),
     timestamp: toIso(r.ts),
     createdAt: toIso(r.created_at),
   }));
@@ -465,4 +483,180 @@ async function buildMonitorSnapshot(): Promise<SectionResult> {
     })),
   };
   return { written: (await writeSnapshot<MonitorSnapshot>(SNAPSHOT_KEYS.monitorLatest, payload)) ? 1 : 0 };
+}
+
+// ---------------------------------------------------------------------------
+// stats (/stats)
+// ---------------------------------------------------------------------------
+
+/** Days of pipeline history shown on the stats page. */
+const STATS_DAILY_DAYS = 30;
+const STATS_TOP_N = 10;
+
+/** Count rows, tolerating a table that does not exist in this database. */
+async function countRows(sql: string, params: any[] = []): Promise<number> {
+  try {
+    const row = await queryOne<{ n: string }>(sql, params);
+    return parseInt(row?.n ?? '0', 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Aggregate the whole site into one snapshot.
+ *
+ * Every figure is computed with GROUP BY inside the cron's existing wake
+ * window. The alternative — counting on request — is exactly the pattern that
+ * exhausted the Neon compute budget, and a statistics page is the easiest thing
+ * in the site for a crawler to hammer.
+ */
+async function buildStatsSnapshot(): Promise<SectionResult> {
+  const tableName = await getTrendsTableName();
+  const timestampCol = await getTimestampColumnName(tableName);
+  const tsRef = timestampCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
+  const hasTopic = await trendsTableHasColumn(tableName, 'topic_class');
+
+  const since = `NOW() - INTERVAL '${STATS_DAILY_DAYS} days'`;
+
+  const [
+    trends, keywords, bpTotal, bpCompleted, bpFailed, bpDuplicates,
+    users, subscribers, feedback, monitoredSites, bpInLast30Days,
+  ] = await Promise.all([
+    countRows(`SELECT COUNT(*) AS n FROM "${tableName}"`),
+    countRows(`SELECT COUNT(DISTINCT keyword) AS n FROM "${tableName}"`),
+    countRows(`SELECT COUNT(*) AS n FROM bp_reports`),
+    countRows(`SELECT COUNT(*) AS n FROM bp_reports WHERE status = 'completed'`),
+    countRows(`SELECT COUNT(*) AS n FROM bp_reports WHERE status = 'failed'`),
+    countRows(`SELECT COUNT(*) AS n FROM bp_reports WHERE canonical_report_id IS NOT NULL`),
+    countRows(`SELECT COUNT(*) AS n FROM users`),
+    countRows(`SELECT COUNT(*) AS n FROM newsletter_subscribers`),
+    countRows(`SELECT COUNT(*) AS n FROM feedback`),
+    countRows(`SELECT COUNT(*) AS n FROM monitored_sites`),
+    countRows(`SELECT COUNT(*) AS n FROM bp_reports WHERE created_at >= ${since}`),
+  ]);
+
+  // Daily series: one grouped query per source, merged in memory. Three small
+  // scans beat 30 days x 3 point queries.
+  const days = new Map<string, StatsDayJson>();
+  const dayOf = (date: string): StatsDayJson => {
+    const existing = days.get(date);
+    if (existing) return existing;
+    const fresh: StatsDayJson = {
+      date, trendsCollected: 0, bpCreated: 0, bpCompleted: 0, bpFailed: 0, usersRegistered: 0,
+    };
+    days.set(date, fresh);
+    return fresh;
+  };
+
+  const trendDays = await query<any>(
+    `SELECT to_char(date_trunc('day', ${tsRef} AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*) AS n
+     FROM "${tableName}" WHERE ${tsRef} >= ${since} GROUP BY 1`
+  ).catch(() => []);
+  for (const r of trendDays) dayOf(r.d).trendsCollected = Number(r.n) || 0;
+
+  const bpDays = await query<any>(
+    `SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed
+     FROM bp_reports WHERE created_at >= ${since} GROUP BY 1`
+  ).catch(() => []);
+  for (const r of bpDays) {
+    const day = dayOf(r.d);
+    day.bpCreated = Number(r.total) || 0;
+    day.bpCompleted = Number(r.completed) || 0;
+    day.bpFailed = Number(r.failed) || 0;
+  }
+
+  const userDays = await query<any>(
+    `SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*) AS n
+     FROM users WHERE created_at >= ${since} GROUP BY 1`
+  ).catch(() => []);
+  for (const r of userDays) dayOf(r.d).usersRegistered = Number(r.n) || 0;
+
+  const daily = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+  const topicMix: TopicCounts = { sports: 0, entertainment: 0, general: 0, unclassified: 0 };
+  if (hasTopic) {
+    const rows = await query<any>(
+      `SELECT COALESCE(topic_class, 'unclassified') AS topic, COUNT(*) AS n
+       FROM "${tableName}" GROUP BY 1`
+    ).catch(() => []);
+    for (const r of rows) {
+      const key = r.topic as keyof TopicCounts;
+      if (key in topicMix) topicMix[key] = Number(r.n) || 0;
+      else topicMix.unclassified += Number(r.n) || 0;
+    }
+  } else {
+    topicMix.unclassified = trends;
+  }
+
+  const topKeywordRows = await query<any>(
+    `SELECT keyword, COUNT(*) AS appearances, MAX(search_volume) AS search_volume
+     FROM "${tableName}" GROUP BY keyword
+     ORDER BY appearances DESC, search_volume DESC LIMIT $1`,
+    [STATS_TOP_N]
+  ).catch(() => []);
+
+  const topReportRows = await query<any>(
+    `SELECT id, keyword, title,
+            content_json->'seedReturn'->>'riskAdjustedAnnualized' AS risk_adjusted,
+            NULLIF(substring(
+              content_json->'seedReturn'->>'riskAdjustedAnnualized' from '-?[0-9]+\\.?[0-9]*'
+            ), '')::numeric AS risk_adjusted_num
+     FROM bp_reports
+     WHERE status = 'completed' AND content_json IS NOT NULL
+     ORDER BY risk_adjusted_num DESC NULLS LAST, created_at DESC
+     LIMIT $1`,
+    [STATS_TOP_N]
+  ).catch(() => []);
+
+  const sites = await siteMonitorService.listSitesWithLatestCheck().catch(() => []);
+  const seoScores = sites.map((s) => s.lastCheck?.seoScore).filter((n): n is number => typeof n === 'number');
+
+  const latestTrend = await queryOne<{ ts: string }>(
+    `SELECT MAX(${tsRef}) AS ts FROM "${tableName}"`
+  ).catch(() => null);
+  const latestBp = await queryOne<{ ts: string }>(
+    `SELECT MAX(created_at) AS ts FROM bp_reports`
+  ).catch(() => null);
+
+  const payload: StatsSnapshot = {
+    totals: {
+      trends, keywords, bpTotal, bpCompleted, bpFailed, bpDuplicates,
+      users, subscribers, feedback, monitoredSites,
+    },
+    daily,
+    topicMix,
+    content: {
+      bpInLast30Days,
+      topKeywords: topKeywordRows.map((r) => ({
+        keyword: r.keyword,
+        slug: slugifyKeyword(r.keyword ?? ''),
+        appearances: Number(r.appearances) || 0,
+        searchVolume: Number(r.search_volume) || 0,
+      })),
+      topReports: topReportRows.map((r) => ({
+        id: r.id,
+        keyword: r.keyword,
+        title: r.title ?? null,
+        riskAdjusted: r.risk_adjusted ?? null,
+      })),
+    },
+    monitor: {
+      sites: sites.length,
+      up: sites.filter((s) => s.lastCheck?.ok).length,
+      down: sites.filter((s) => s.lastCheck && !s.lastCheck.ok).length,
+      avgSeoScore: seoScores.length
+        ? Math.round(seoScores.reduce((a, b) => a + b, 0) / seoScores.length)
+        : null,
+    },
+    freshness: {
+      latestTrendAt: latestTrend?.ts ? toIso(latestTrend.ts) : null,
+      latestBpAt: latestBp?.ts ? toIso(latestBp.ts) : null,
+    },
+  };
+
+  return { written: (await writeSnapshot<StatsSnapshot>(SNAPSHOT_KEYS.statsOverview, payload)) ? 1 : 0 };
 }

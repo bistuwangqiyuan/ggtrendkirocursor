@@ -36,6 +36,7 @@ export const SNAPSHOT_KEYS = {
   bpList: 'bp/list',
   bpDetail: (id: string) => `bp/detail/${id}`,
   monitorLatest: 'monitor/latest',
+  statsOverview: 'stats/overview',
 } as const;
 
 const STORE_NAME = 'snapshots';
