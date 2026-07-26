@@ -170,9 +170,19 @@ The 100 CU-hour allowance is per *project*, and this project also hosts a siblin
 ```bash
 SOURCE_DATABASE_URL=<old> node scripts/neon-migrate.mjs --dry-run   # row counts only
 SOURCE_DATABASE_URL=<old> TARGET_DATABASE_URL=<new> node scripts/neon-migrate.mjs
+SOURCE_DATABASE_URL=<old> TARGET_DATABASE_URL=<new> node scripts/neon-migrate.mjs --verify
 ```
 
-Then switch `DATABASE_URL` in the Netlify dashboard, redeploy, and keep the old project as a rollback path for a few days.
+Verification compares row counts *and* a per-table content fingerprint (row hashes sorted, then folded), so a value mangled in transit fails the run instead of passing on matching counts. Values move as text with explicit casts on arrival, because letting the driver decode them loses data: node-postgres turns `timestamptz` into a JS `Date`, whose millisecond resolution silently truncates Postgres microseconds.
+
+Before switching production over, point a local server at the new database and check the app can actually read what was copied:
+
+```bash
+DATABASE_URL=<new> ADMIN_SECRET=<secret> npx astro dev --port 4399
+BASE_URL=http://localhost:4399 ADMIN_SECRET=<secret> npm run test:migrated
+```
+
+That rebuilds every snapshot from the new database and asserts each read route renders real content (not the "data pending" placeholder). Then switch `DATABASE_URL` in the Netlify dashboard, redeploy, `POST /api/db-init?secret=$ADMIN_SECRET` to confirm the schema, and keep the old project as a rollback path for a few days.
 
 You can verify the schedule under Netlify -> Functions -> `bp-scheduled`, or trigger it manually:
 

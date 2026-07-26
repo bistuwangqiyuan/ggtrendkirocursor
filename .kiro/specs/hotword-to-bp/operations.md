@@ -164,3 +164,29 @@ BP 相关探针：
 - 修改 [netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts) 中的 cron 表达式（当前每 3 小时：`0 */3 * * *`）。采集与巡检已并入同一窗口，无需单独调频；增加窗口数会线性增加 Neon 计算消耗，调整前先跑 `python scripts/neon-budget.py --cron-runs N`。
 - 调整批量产量：设置环境变量 `BP_BATCH_SIZE`（1-10，默认 5）。提升地区覆盖：修改 [src/lib/services/trendsCollector.ts](../../../src/lib/services/trendsCollector.ts) 中 `DEFAULT_GEOS`。
 - 去重为**全历史**（热词去重、手动复用与商业模式去重均不设时间窗，每个热词只分析一次）；`resetStaleGenerating(maxAgeMinutes)`（卡死阈值）仍在 [src/lib/services/bp.ts](../../../src/lib/services/bp.ts) 中调整。
+
+## 8. 迁移到独立 Neon 项目
+
+100 CU-hours 按**项目**计，当前项目还有兄弟应用的 10 张表，节省下来的额度可能被它吃掉，且用量无法归因。[scripts/neon-migrate.mjs](../../../scripts/neon-migrate.mjs) 只复制本站拥有的 9 张表（表清单与 DDL 来自 [src/lib/db/schema.ts](../../../src/lib/db/schema.ts)），只读源库，可重复执行。
+
+步骤：
+
+```bash
+# 1. 先看行数，不写入
+SOURCE_DATABASE_URL=<旧> node scripts/neon-migrate.mjs --dry-run
+# 2. 建表 + 复制
+SOURCE_DATABASE_URL=<旧> TARGET_DATABASE_URL=<新> node scripts/neon-migrate.mjs
+# 3. 复核（行数 + 内容指纹）
+SOURCE_DATABASE_URL=<旧> TARGET_DATABASE_URL=<新> node scripts/neon-migrate.mjs --verify
+# 4. 让应用真的读一遍新库（重建全部快照并断言每个只读路由渲染真实内容）
+DATABASE_URL=<新> ADMIN_SECRET=<secret> npx astro dev --port 4399
+BASE_URL=http://localhost:4399 ADMIN_SECRET=<secret> npm run test:migrated
+# 5. Netlify 切换 DATABASE_URL → 重新部署 → POST /api/db-init?secret=$ADMIN_SECRET 确认 schema
+```
+
+两条已在本地真机演练中验证过的要点：
+
+- **值必须以文本搬运**。node-postgres 会把 `timestamptz` 解析成 JS `Date`（毫秒精度），Postgres 的微秒会被静默截断（`05:07:26.884298+08` → `.884+08`）。脚本改为 `col::text` 取出、落地时按目标列类型显式回转，本地 189 行 9 表迁移后逐行 md5 与源库完全一致。
+- **行数相等不等于内容相等**。`--verify` 会对每表计算内容指纹（逐行 md5 排序后折叠，与行序无关）；人为改动目标库一个字段后该步骤会报 `MISMATCH` 并以非零码退出。
+
+旧项目至少保留几天作为回滚路径，确认新项目跑完一个完整 cron 周期（`/api/snapshots/status` 新鲜）后再考虑清理。

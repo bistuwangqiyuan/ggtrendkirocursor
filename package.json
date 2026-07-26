@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:e2e": "node tests/e2e/live-smoke.mjs",
     "test:outage": "node tests/e2e/db-outage-drill.mjs",
+    "test:migrated": "node tests/e2e/migrated-db-check.mjs",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {

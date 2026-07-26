@@ -61,19 +61,27 @@ async function loadSchema() {
 }
 
 function connect(url) {
-  // Neon requires TLS; its certificate chain is standard, but sslmode in the URL
-  // is honoured by pg only for `require`, so be explicit.
-  return new Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
+  // Neon requires TLS, but a local Postgres (used to rehearse this migration)
+  // usually has no SSL support at all. Same rule as src/lib/db/client.ts.
+  const sslDisabled = /[?&]sslmode=disable\b/i.test(url || '');
+  return new Client({
+    connectionString: url,
+    ssl: sslDisabled ? undefined : { rejectUnauthorized: false },
+  });
 }
 
 async function tableColumns(client, table) {
+  // format_type gives the exact declared type (e.g. `timestamp with time zone`,
+  // `character varying(255)`), which the copy uses to cast text back losslessly.
   const { rows } = await client.query(
-    `SELECT column_name FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = $1
-      ORDER BY ordinal_position`,
+    `SELECT attname AS column_name, format_type(atttypid, atttypmod) AS type
+       FROM pg_attribute
+      WHERE attrelid = to_regclass('public.' || $1)
+        AND attnum > 0 AND NOT attisdropped
+      ORDER BY attnum`,
     [table]
   );
-  return rows.map((r) => r.column_name);
+  return rows.map((r) => ({ name: r.column_name, type: r.type }));
 }
 
 async function rowCount(client, table) {
@@ -85,31 +93,61 @@ async function rowCount(client, table) {
   }
 }
 
+/**
+ * Content fingerprint over the given columns. Row order is irrelevant because
+ * the per-row hashes are sorted before being folded together, so this compares
+ * the *set* of rows without assuming any sortable key. Row counts alone would
+ * not catch a value that was mangled in transit.
+ */
+async function checksum(client, table, colNames) {
+  if (colNames.length === 0) return null;
+  // \N stands in for NULL so that NULL and the empty string stay distinguishable.
+  const parts = colNames.map((c) => `coalesce("${c}"::text, '\\N')`).join(`, '|', `);
+  try {
+    const { rows } = await client.query(
+      `SELECT md5(coalesce(string_agg(h, '|' ORDER BY h), '')) AS h
+         FROM (SELECT md5(concat(${parts})) AS h FROM ${table}) s`
+    );
+    return rows[0].h;
+  } catch {
+    return null;
+  }
+}
+
 async function copyTable(source, target, table) {
   const srcCols = await tableColumns(source, table);
   const dstCols = await tableColumns(target, table);
   if (srcCols.length === 0) return { copied: 0, note: 'absent in source' };
   if (dstCols.length === 0) return { copied: 0, note: 'absent in target (schema step failed?)' };
 
+  const dstTypes = new Map(dstCols.map((c) => [c.name, c.type]));
   // Only columns present on both sides, so a schema that has drifted in either
   // direction degrades to a partial copy instead of failing the whole run.
-  const cols = srcCols.filter((c) => dstCols.includes(c));
-  const skipped = srcCols.filter((c) => !dstCols.includes(c));
-  const colList = cols.map((c) => `"${c}"`).join(', ');
+  const cols = srcCols.filter((c) => dstTypes.has(c.name));
+  const skipped = srcCols.filter((c) => !dstTypes.has(c.name)).map((c) => c.name);
+  const colList = cols.map((c) => `"${c.name}"`).join(', ');
+  // Every value travels as text and is cast back on arrival. Going through the
+  // driver's native types would quietly lose data: node-postgres decodes
+  // timestamptz into a JS Date, whose millisecond resolution truncates
+  // Postgres microseconds (e.g. 05:07:26.884298+08 -> .884+08). Text is the
+  // one representation both servers agree on exactly.
+  const selectList = cols.map((c) => `"${c.name}"::text`).join(', ');
 
   let copied = 0;
   let offset = 0;
   for (;;) {
     // Ordering by ctid keeps pagination stable without assuming a sortable key.
     const { rows } = await source.query(
-      `SELECT ${colList} FROM ${table} ORDER BY ctid LIMIT ${BATCH_ROWS} OFFSET ${offset}`
+      `SELECT ${selectList} FROM ${table} ORDER BY ctid LIMIT ${BATCH_ROWS} OFFSET ${offset}`
     );
     if (rows.length === 0) break;
 
     const values = [];
     const tuples = rows.map((row, i) => {
-      const placeholders = cols.map((_, j) => `$${i * cols.length + j + 1}`);
-      for (const c of cols) values.push(row[c]);
+      const placeholders = cols.map(
+        (c, j) => `$${i * cols.length + j + 1}::${dstTypes.get(c.name)}`
+      );
+      for (const c of cols) values.push(row[c.name]);
       return `(${placeholders.join(', ')})`;
     });
     // ON CONFLICT DO NOTHING makes the whole script re-runnable: an interrupted
@@ -178,14 +216,38 @@ async function main() {
     }
   }
 
-  console.log('\nVerification (source -> target):');
+  console.log('\nVerification (source -> target, rows + content fingerprint):');
   let mismatch = 0;
   for (const table of OWNED_TABLES) {
     const src = before[table];
     const dst = await rowCount(target, table);
-    const ok = src === null ? dst === null || dst === 0 : dst >= src;
+    let ok = src === null ? dst === null || dst === 0 : dst >= src;
+    let note = '';
+
+    if (ok && src) {
+      const srcCols = (await tableColumns(source, table)).map((c) => c.name);
+      const dstCols = new Set((await tableColumns(target, table)).map((c) => c.name));
+      const shared = srcCols.filter((c) => dstCols.has(c));
+      const [srcHash, dstHash] = await Promise.all([
+        checksum(source, table, shared),
+        checksum(target, table, shared),
+      ]);
+      if (srcHash && dstHash && srcHash !== dstHash) {
+        // Only meaningful when the target holds exactly the source's rows; a
+        // target that legitimately has extra rows will differ by design.
+        if (dst === src) {
+          ok = false;
+          note = `  content differs (${srcHash.slice(0, 8)} vs ${dstHash.slice(0, 8)})`;
+        } else {
+          note = '  (target has extra rows; fingerprint not comparable)';
+        }
+      }
+    }
+
     if (!ok) mismatch++;
-    console.log(`  ${table.padEnd(26)} ${src ?? 'ABSENT'} -> ${dst ?? 'ABSENT'}  ${ok ? 'OK' : 'MISMATCH'}`);
+    console.log(
+      `  ${table.padEnd(26)} ${src ?? 'ABSENT'} -> ${dst ?? 'ABSENT'}  ${ok ? 'OK' : 'MISMATCH'}${note}`
+    );
   }
 
   await source.end();
