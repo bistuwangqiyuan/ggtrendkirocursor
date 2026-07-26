@@ -84,6 +84,38 @@ async function tableColumns(client, table) {
   return rows.map((r) => ({ name: r.column_name, type: r.type }));
 }
 
+/**
+ * Report where the live table differs from this app's own schema definition.
+ *
+ * This matters because `users` is genuinely co-owned: the sibling application
+ * has foreign keys into it (`subscriptions.user_id`, `opportunity_pushes.user_id`)
+ * and has added its own auth columns (`encrypted_password`, `avatar_url`,
+ * `full_name`, `last_sign_in_at`). The copy only carries columns that exist on
+ * both sides, so those extras are dropped — correct for this app, but it must be
+ * a deliberate, visible decision rather than a silent one.
+ */
+async function reportDrift(client, ownedTables, requiredColumns) {
+  console.log('\nSchema drift (live SOURCE table vs this app\'s schema.ts):');
+  for (const table of ownedTables) {
+    const expected = requiredColumns[table];
+    const live = (await tableColumns(client, table)).map((c) => c.name);
+    if (live.length === 0) {
+      console.log(`  ${table.padEnd(26)} ABSENT in source`);
+      continue;
+    }
+    if (!expected) {
+      console.log(`  ${table.padEnd(26)} ${live.length} columns (no REQUIRED_COLUMNS entry; copied as-is)`);
+      continue;
+    }
+    const extra = live.filter((c) => !expected.includes(c));
+    const missing = expected.filter((c) => !live.includes(c));
+    const notes = [];
+    if (extra.length) notes.push(`NOT copied (foreign to this app): ${extra.join(', ')}`);
+    if (missing.length) notes.push(`MISSING in source: ${missing.join(', ')}`);
+    console.log(`  ${table.padEnd(26)} ${notes.length ? notes.join(' | ') : 'matches'}`);
+  }
+}
+
 async function rowCount(client, table) {
   try {
     const { rows } = await client.query(`SELECT COUNT(*)::int AS n FROM ${table}`);
@@ -174,7 +206,7 @@ async function main() {
     process.exit(2);
   }
 
-  const { BASE_STATEMENTS, OWNED_TABLES } = await loadSchema();
+  const { BASE_STATEMENTS, OWNED_TABLES, REQUIRED_COLUMNS } = await loadSchema();
 
   const source = connect(SOURCE_URL);
   await source.connect();
@@ -186,6 +218,8 @@ async function main() {
   for (const [t, n] of Object.entries(before)) {
     console.log(`  ${t.padEnd(26)} ${n === null ? 'ABSENT' : n}`);
   }
+
+  await reportDrift(source, OWNED_TABLES, REQUIRED_COLUMNS);
 
   if (DRY_RUN) {
     console.log('\n--dry-run: nothing was written. Set TARGET_DATABASE_URL and re-run to migrate.');

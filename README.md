@@ -163,15 +163,33 @@ curl https://<your-site>/api/snapshots/status
 curl -H "Authorization: Bearer $ADMIN_SECRET" "https://<your-site>/api/admin/errors?date=$(date -u +%F)"
 ```
 
-### Neon project isolation (optional, one-time)
-
-The 100 CU-hour allowance is per *project*, and this project also hosts a sibling application's 10 tables — so savings here can be consumed by that app, and usage cannot be attributed to either. `scripts/neon-migrate.mjs` copies only the nine tables this site owns into a new project, using the shared schema in `src/lib/db/schema.ts`. It never modifies the source and is safe to re-run.
+Snapshots are rebuilt incrementally against a manifest, so the scheduled job only rewrites what changed. Filling an empty store is a different job — thousands of landing pages and hundreds of reports exceed one function's time budget, so `/api/snapshots/rebuild` stops at its deadline and reports which sections were `truncated`. `scripts/snapshot-bootstrap.mjs` drives it until nothing is left over; use it after a first deploy, after switching `DATABASE_URL`, or if the store is ever wiped:
 
 ```bash
-SOURCE_DATABASE_URL=<old> node scripts/neon-migrate.mjs --dry-run   # row counts only
-SOURCE_DATABASE_URL=<old> TARGET_DATABASE_URL=<new> node scripts/neon-migrate.mjs
-SOURCE_DATABASE_URL=<old> TARGET_DATABASE_URL=<new> node scripts/neon-migrate.mjs --verify
+BASE_URL=https://<your-site> CRON_SECRET=<secret> node scripts/snapshot-bootstrap.mjs
 ```
+
+### Neon project isolation (one-time)
+
+The 100 CU-hour allowance and the 0.5 GB storage cap are both per *project*, and this project also hosts a sibling application. `scripts/neon-audit.mjs` measures the split without writing anything:
+
+```bash
+AUDIT_DATABASE_URL=<url> npx tsx scripts/neon-audit.mjs
+```
+
+On 2026-07-26 it reported the sibling holding 53.9 MB of 61.0 MB (88% of stored data) and writing to 7 of its tables within the last 7 days — including writes minutes apart during a working session. Since Neon bills compute *time* and suspends only after 5 idle minutes, those writes keep the shared compute awake no matter what this site does, which is why savings here cannot be attributed or even guaranteed while the project is shared.
+
+The audit also flags foreign keys that cross the boundary. Two do: `subscriptions.user_id` and `opportunity_pushes.user_id` both point at `users`, and the sibling has added its own auth columns to that table (`encrypted_password`, `avatar_url`, `full_name`, `last_sign_in_at`). **`users` is therefore co-owned.** Migrating forks it: each side keeps a full copy and they stop converging. That is acceptable here only because the two apps already authenticate independently — this app uses `password_hash` plus the `sessions` table, the sibling uses its own columns and never touches `sessions` — but it is a deliberate decision, not a detail.
+
+`scripts/neon-migrate.mjs` copies only the nine tables this site owns into a new project, using the shared schema in `src/lib/db/schema.ts`. It never modifies the source and is safe to re-run.
+
+```bash
+SOURCE_DATABASE_URL=<old> npx tsx scripts/neon-migrate.mjs --dry-run   # counts + schema drift
+SOURCE_DATABASE_URL=<old> TARGET_DATABASE_URL=<new> npx tsx scripts/neon-migrate.mjs
+SOURCE_DATABASE_URL=<old> TARGET_DATABASE_URL=<new> npx tsx scripts/neon-migrate.mjs --verify
+```
+
+The dry run prints a schema-drift report: columns the live table has but this app's schema does not (they are **not** copied) and columns this app needs but the source lacks. Check it before migrating — that is where the co-owned `users` and `feedback` columns show up.
 
 Verification compares row counts *and* a per-table content fingerprint (row hashes sorted, then folded), so a value mangled in transit fails the run instead of passing on matching counts. Values move as text with explicit casts on arrival, because letting the driver decode them loses data: node-postgres turns `timestamptz` into a JS `Date`, whose millisecond resolution silently truncates Postgres microseconds.
 
@@ -182,7 +200,9 @@ DATABASE_URL=<new> ADMIN_SECRET=<secret> npx astro dev --port 4399
 BASE_URL=http://localhost:4399 ADMIN_SECRET=<secret> npm run test:migrated
 ```
 
-That rebuilds every snapshot from the new database and asserts each read route renders real content (not the "data pending" placeholder). Then switch `DATABASE_URL` in the Netlify dashboard, redeploy, `POST /api/db-init?secret=$ADMIN_SECRET` to confirm the schema, and keep the old project as a rollback path for a few days.
+That rebuilds every snapshot from the new database and asserts each read route renders real content (not the "data pending" placeholder). Then set `DATABASE_URL` on this site in the Netlify dashboard, redeploy, `POST /api/db-init?secret=$ADMIN_SECRET` to confirm the schema, run `scripts/snapshot-bootstrap.mjs`, and keep the old project as a rollback path for a few days. `DATABASE_URL` takes precedence over `NETLIFY_DATABASE_URL` (see `src/lib/db/client.ts`), and setting it at *site* scope leaves the team-wide `NETLIFY_DATABASE_URL` — and therefore the sibling app — untouched.
+
+Provision the new project in the Neon console, not through `netlify database`. They are different products: Neon's own free plan gives 100 CU-hours per project on a compute that autoscales down to 0.25 CU (≈400 awake hours/month), while Netlify Database's free tier allows 48 compute units per billing period on a minimum of 1 CU (≈48 awake hours/month) — below this site's ~76 hours/month of scheduled write windows.
 
 You can verify the schedule under Netlify -> Functions -> `bp-scheduled`, or trigger it manually:
 

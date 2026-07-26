@@ -666,6 +666,10 @@ async function run() {
   // What IS observable is the effect: a `Cache-Status` from the Netlify cache,
   // our `Cache-Tag`, and browser revalidation left on. A hit (or an `age`)
   // proves the edge is serving copies without invoking the function at all.
+  // The first anonymous request populates the edge entry (`fwd=miss; stored`);
+  // only the next identical one can be a hit, so warm it before asserting.
+  await http('/trends');
+  await new Promise((r) => setTimeout(r, 1500));
   const trendsAnon = await http('/trends');
   const cacheStatus = trendsAnon.headers.get('cache-status') || '';
   const cacheTag = trendsAnon.headers.get('cache-tag') || '';
