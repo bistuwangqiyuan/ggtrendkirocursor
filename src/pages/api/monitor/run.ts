@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { siteMonitorService } from '../../../lib/services/siteMonitor';
 import { authorizeAdminRequest } from '../../../lib/utils/adminAuth';
+import { rebuildAllSnapshots } from '../../../lib/cache/snapshotBuilder';
 
 export const prerender = false;
 
@@ -15,8 +16,11 @@ export const POST: APIRoute = async ({ request }) => {
 
   try {
     const results = await siteMonitorService.runChecks();
+    // The dashboard reads the snapshot, so refresh it before this wake window closes.
+    const snapshots = await rebuildAllSnapshots({ only: ['monitor'], budgetMs: 30_000 });
     return json({
       success: true,
+      snapshots,
       checked: results.length,
       up: results.filter((r) => r.ok).length,
       down: results.filter((r) => !r.ok).length,

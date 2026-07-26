@@ -15,8 +15,13 @@ const TIME_RANGE_VARIANTS: Record<string, string[]> = {
   past_48_hours: ['past_48_hours', '48h'],
 };
 
-function timeRangeVariants(tr: string): string[] {
+export function timeRangeVariants(tr: string): string[] {
   return TIME_RANGE_VARIANTS[tr] ?? [tr];
+}
+
+/** Hours implied by a collection-window filter. Shared with the snapshot reader. */
+export function collectedWithinHours(key: string): number | undefined {
+  return COLLECTED_WITHIN_HOURS[key];
 }
 
 /**

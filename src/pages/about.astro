@@ -1,6 +1,11 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { getTranslations } from '../lib/i18n';
+import { applyPageCache, CACHE_PROFILES } from '../lib/cache/httpCache';
+
+// Pure content with no data dependency: let the edge serve it to anonymous
+// visitors and crawlers so these routes never invoke a function per request.
+applyPageCache(Astro, CACHE_PROFILES.staticPage);
 
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);

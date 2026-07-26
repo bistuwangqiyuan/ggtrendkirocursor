@@ -1,11 +1,16 @@
 import { schedule } from '@netlify/functions';
 
 /**
- * Scheduled BP auto-generation. Runs every 3 hours (UTC) and fires the
- * `bp-batch-background` function (15-min budget), which loops and generates
- * several BPs per run (BP_BATCH_SIZE, default 5) for the next eligible
- * ungenerated hotwords (score > 60, skipping any keyword that already has a
- * completed BP anywhere in history). 8 runs/day x 5 BPs = up to 40 BPs/day.
+ * The site's only cron trigger. Runs every 3 hours (UTC) and fires the
+ * `bp-batch-background` function (15-min budget), which performs the entire
+ * write cycle in one Neon wake window: trends collection, BP generation
+ * (BP_BATCH_SIZE, default 5 — 8 runs/day x 5 = up to 40 BPs/day), site
+ * monitoring, storage retention, then a snapshot rebuild.
+ *
+ * The separate `trends-collector` (:50) and `site-monitor` (:20) schedules were
+ * folded into that window on 2026-07-26: each extra schedule woke Neon and left
+ * a 5-minute idle-timer tail behind it, and free-plan billing is compute time,
+ * not queries.
  *
  * This trigger only kicks off the background job and returns immediately, so it
  * stays well within the scheduled-function time limit. Requires CRON_SECRET.

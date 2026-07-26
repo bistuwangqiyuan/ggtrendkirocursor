@@ -1,15 +1,17 @@
 import type { APIRoute } from 'astro';
-import { query } from '../lib/db/client';
-import { landingService } from '../lib/services/landing';
+import { listBpFromSnapshot, listKeywordsForSitemapFromSnapshot } from '../lib/cache/snapshotReaders';
+import { computeCacheHeaders, CACHE_PROFILES } from '../lib/cache/httpCache';
 
 export const prerender = false;
 
 /**
  * Dynamic sitemap. Static marketing/legal routes plus the completed BP detail
- * pages (canonical reports only — duplicate pointers add no crawl value) and
- * the hotword landing pages (/t/[slug], the SEO traffic-capture surface).
- * Low-value auth pages (/login, /register) are intentionally omitted.
- * Degrades to the static list if the DB is unavailable.
+ * pages and the hotword landing pages (/t/[slug], the SEO traffic-capture
+ * surface). Low-value auth pages (/login, /register) are intentionally omitted.
+ *
+ * Built entirely from snapshots: crawlers fetch this often, and it must not be
+ * the one route that keeps waking the Neon compute. Degrades to the static list
+ * when a snapshot is missing.
  */
 
 const STATIC_ROUTES: { path: string; changefreq: string; priority: string }[] = [
@@ -38,28 +40,23 @@ export const GET: APIRoute = async () => {
   );
 
   try {
-    const rows = await query<{ id: string; updated_at: Date }>(
-      `SELECT id, updated_at FROM bp_reports
-       WHERE status = 'completed' AND canonical_report_id IS NULL
-       ORDER BY created_at DESC
-       LIMIT $1`,
-      [MAX_BP_ENTRIES]
-    );
-    for (const r of rows) {
+    const bp = await listBpFromSnapshot(1, MAX_BP_ENTRIES, 'createdAt', 'desc', 'completed');
+    for (const r of bp.data.reports) {
       const lastmod =
-        r.updated_at instanceof Date ? r.updated_at.toISOString().slice(0, 10) : '';
+        r.createdAt instanceof Date && !isNaN(r.createdAt.getTime())
+          ? r.createdAt.toISOString().slice(0, 10)
+          : '';
       entries.push(
         `  <url>\n    <loc>${origin}/bp/${r.id}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ''}\n    <changefreq>monthly</changefreq>\n    <priority>0.6</priority>\n  </url>`
       );
     }
   } catch (error) {
-    // DB unavailable: serve the static part rather than a 500.
     console.error('sitemap: BP entries skipped:', (error as Error).message);
   }
 
   try {
-    const landing = await landingService.listKeywordsForSitemap(MAX_LANDING_ENTRIES);
-    for (const l of landing) {
+    const landing = await listKeywordsForSitemapFromSnapshot(MAX_LANDING_ENTRIES);
+    for (const l of landing.data) {
       const lastmod =
         l.lastSeen instanceof Date && !isNaN(l.lastSeen.getTime())
           ? l.lastSeen.toISOString().slice(0, 10)
@@ -78,7 +75,7 @@ export const GET: APIRoute = async () => {
     status: 200,
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=3600',
+      ...computeCacheHeaders(CACHE_PROFILES.sitemap),
     },
   });
 };

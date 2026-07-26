@@ -1,6 +1,7 @@
-import { query, queryOne, pool } from '../db/client';
+import { query, queryOne, pool, getClient } from '../db/client';
 import { trendsService } from './trends';
 import { generateJson, isLlmConfigured, LlmError } from './llm';
+import { getTrendsFromSnapshot } from '../cache/snapshotReaders';
 import type {
   BpContent,
   BpOpportunity,
@@ -14,6 +15,33 @@ import type {
   BpError,
   Trend,
 } from '../../types';
+
+/** A canonical completed report, keyed by business model, for in-memory dedupe. */
+export interface CanonicalBusinessModel {
+  id: string;
+  businessModelNorm: string;
+  title: string | null;
+  summary: string | null;
+  selectedOpportunity: string | null;
+}
+
+/** One finished generation, ready to be inserted in its final state. */
+export interface BatchResultInput {
+  snapshot: BpTrendSnapshot;
+  status: 'completed' | 'failed';
+  title?: string | null;
+  summary?: string | null;
+  selectedOpportunity?: string | null;
+  contentJson?: BpContent | null;
+  businessModelNorm?: string | null;
+  /** Set when this plan duplicates an existing business model. */
+  canonicalReportId?: string | null;
+  model?: string | null;
+  tokensUsed?: number | null;
+  error?: string | null;
+  userId?: string | null;
+  opportunities?: BpOpportunity[];
+}
 
 /** Fixed six-dimension weights (sum = 1). Server is the source of truth. */
 export const SCORE_WEIGHTS: Record<keyof BpScores, number> = {
@@ -376,7 +404,7 @@ export function pickCanonicalByBusinessModel(
   return matches.length > 0 ? matches[0].id : null;
 }
 
-const SYSTEM_PROMPT = `你是资深早期风投分析师与连续创业者。基于给定"谷歌热搜关键词"，头脑风暴**可完全线上化（纯网站/SaaS，无线下重资产）**的商业机会，严谨评分并遴选其中**ROI 最高且可完全线上化**者，产出投资人级、数据公允、可溯源、可执行的结构化商业计划书。
+export const SYSTEM_PROMPT = `你是资深早期风投分析师与连续创业者。基于给定"谷歌热搜关键词"，头脑风暴**可完全线上化（纯网站/SaaS，无线下重资产）**的商业机会，严谨评分并遴选其中**ROI 最高且可完全线上化**者，产出投资人级、数据公允、可溯源、可执行的结构化商业计划书。
 
 【输出】仅输出一个 JSON 对象，无任何额外文字或 Markdown 代码块；字段名用英文，内容用中文。
 
@@ -400,7 +428,7 @@ export function buildAvoidModelsLine(models: string[], max = 20): string {
   return `请避免与以下近期已生成的商业模式实质重复（务必另辟差异化新方向）：${cleaned.join('；')}。`;
 }
 
-function buildUserPrompt(trend: BpTrendSnapshot, avoidLine = ''): string {
+export function buildUserPrompt(trend: BpTrendSnapshot, avoidLine = ''): string {
   const avoid = avoidLine ? `\n${avoidLine}\n` : '';
   return `谷歌热搜第一名关键词："${trend.keyword}"
 分类：${trend.category || '未知'} | 搜索量：${trend.searchVolume} | 增长速度：${trend.growthRate} | 趋势窗口：${trend.timeRange} | 地区：${trend.region || '全球'}
@@ -530,6 +558,53 @@ export function pickFirstEligibleTrend(
     return { trend, trendScore, rank };
   }
   return null;
+}
+
+/**
+ * Build the parameterized multi-row INSERT for a report's opportunities.
+ *
+ * NOTE: table is bp_report_opportunities, NOT bp_opportunities. The shared Neon
+ * database also hosts a sibling app whose sync job periodically drops &
+ * recreates `bp_opportunities` with an incompatible legacy schema (plan_id /
+ * scores jsonb, observed 2026-07-13); writing to a table that app owns caused
+ * every generation to fail after its resync. Our own table name keeps the two
+ * apps from clobbering each other.
+ */
+function buildOpportunitiesInsert(
+  reportId: string,
+  opps: BpOpportunity[]
+): { sql: string; params: any[] } | null {
+  if (!opps.length) return null;
+  const cols = 13;
+  const valuesSql: string[] = [];
+  const params: any[] = [];
+  opps.forEach((o, i) => {
+    const base = i * cols;
+    valuesSql.push(
+      `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13})`
+    );
+    params.push(
+      reportId,
+      o.name,
+      o.description,
+      o.scores.market,
+      o.scores.roi,
+      o.scores.onlineability,
+      o.scores.feasibility,
+      o.scores.speed,
+      o.scores.moat,
+      o.weightedScore,
+      o.isSelected,
+      o.rank,
+      new Date()
+    );
+  });
+  return {
+    sql: `INSERT INTO bp_report_opportunities
+        (report_id, name, description, score_market, score_roi, score_onlineability, score_feasibility, score_speed, score_moat, weighted_score, is_selected, rank, created_at)
+       VALUES ${valuesSql.join(',')}`,
+    params,
+  };
 }
 
 function mapReportRow(row: any): BpReport {
@@ -766,6 +841,185 @@ export class BpService {
     }
 
     return null;
+  }
+
+  /**
+   * Pick up to `count` eligible hotwords in one pass.
+   *
+   * Candidates come from the trends SNAPSHOT when one exists, which is the whole
+   * point: the batch's collector phase refreshes that snapshot moments earlier in
+   * the same wake window, so selecting a full batch of candidates costs zero
+   * database queries instead of one paged scan per BP.
+   *
+   * `skip` is supplied by the caller (fetched once per batch) and is extended
+   * in-place as candidates are chosen, so the same keyword is never picked twice.
+   */
+  async pickEligibleTrendCandidates(
+    count: number,
+    skip: Set<string>,
+    timeRange = '4h'
+  ): Promise<{ snapshot: BpTrendSnapshot; trendScore: number }[]> {
+    const picks: { snapshot: BpTrendSnapshot; trendScore: number }[] = [];
+    if (count <= 0) return picks;
+
+    const snapshotRead = await getTrendsFromSnapshot({
+      timeRange,
+      collectedWithin: SCHEDULED_FRESHNESS_WINDOW,
+      sortBy: 'search_volume',
+      sortOrder: 'desc',
+      page: 1,
+      pageSize: SCHEDULED_SCAN_PAGE_SIZE * SCHEDULED_SCAN_MAX_PAGES,
+    });
+
+    let trends: Trend[] = snapshotRead.hit ? snapshotRead.data.trends : [];
+
+    // An empty result for the requested window means that bucket wasn't
+    // collected; widen rather than report "no eligible trend".
+    if (snapshotRead.hit && trends.length === 0) {
+      const relaxed = await getTrendsFromSnapshot({
+        collectedWithin: SCHEDULED_FRESHNESS_WINDOW,
+        sortBy: 'search_volume',
+        sortOrder: 'desc',
+        page: 1,
+        pageSize: SCHEDULED_SCAN_PAGE_SIZE * SCHEDULED_SCAN_MAX_PAGES,
+      });
+      trends = relaxed.data.trends;
+    }
+
+    if (!snapshotRead.hit) {
+      // No snapshot yet (fresh deploy): fall back to the paged DB scan.
+      for (let page = 1; page <= SCHEDULED_SCAN_MAX_PAGES && picks.length < count; page++) {
+        const res = await trendsService.getTrends({
+          timeRange,
+          collectedWithin: SCHEDULED_FRESHNESS_WINDOW,
+          sortBy: 'search_volume',
+          sortOrder: 'desc',
+          page,
+          pageSize: SCHEDULED_SCAN_PAGE_SIZE,
+        });
+        if (!res.success || res.data.trends.length === 0) break;
+        trends.push(...res.data.trends);
+        if (res.data.pagination.currentPage >= res.data.pagination.totalPages) break;
+      }
+    }
+
+    let globalRank = 0;
+    while (picks.length < count) {
+      const picked = pickFirstEligibleTrend(trends.slice(globalRank), skip, MIN_TREND_SCORE, globalRank + 1);
+      if (!picked) break;
+      const { trend, trendScore, rank } = picked;
+      skip.add(normalizeKeyword(trend.keyword));
+      globalRank = rank; // continue scanning after this trend
+      picks.push({
+        trendScore,
+        snapshot: {
+          sourceTrendId: trend.id,
+          keyword: trend.keyword,
+          searchVolume: trend.searchVolume,
+          growthRate: trend.growthRate,
+          category: trend.category,
+          timeRange: trend.timeRange || timeRange,
+          region: trend.region || '',
+          rank,
+        },
+      });
+    }
+
+    return picks;
+  }
+
+  /**
+   * Every canonical completed report keyed by business-model norm, in one query.
+   * Lets the batch resolve business-model dedupe entirely in memory instead of
+   * querying once per generated plan.
+   */
+  async listCanonicalBusinessModels(): Promise<Map<string, CanonicalBusinessModel>> {
+    const rows = await query<any>(
+      `SELECT DISTINCT ON (business_model_norm)
+              business_model_norm, id, title, summary, selected_opportunity
+       FROM bp_reports
+       WHERE status = 'completed'
+         AND canonical_report_id IS NULL
+         AND business_model_norm IS NOT NULL
+         AND business_model_norm <> ''
+       ORDER BY business_model_norm, created_at ASC`
+    );
+    const map = new Map<string, CanonicalBusinessModel>();
+    for (const r of rows) {
+      map.set(r.business_model_norm, {
+        id: r.id,
+        businessModelNorm: r.business_model_norm,
+        title: r.title ?? null,
+        summary: r.summary ?? null,
+        selectedOpportunity: r.selected_opportunity ?? null,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * Persist one batch of finished generations in a single transaction.
+   *
+   * Rows are inserted in their FINAL state (completed / failed) rather than as
+   * placeholders updated later, so the LLM phase in between needs no database
+   * access at all. Crash safety comes from the Blobs buffer the caller writes
+   * after each generation, which the next run replays.
+   */
+  async insertBatchResults(items: BatchResultInput[]): Promise<{ inserted: number; reports: BpReport[] }> {
+    if (items.length === 0) return { inserted: 0, reports: [] };
+    const client = await getClient();
+    const reports: BpReport[] = [];
+    try {
+      await client.query('BEGIN');
+      for (const item of items) {
+        const s = item.snapshot;
+        const row = await client.query(
+          `INSERT INTO bp_reports
+            (keyword, keyword_norm, source_trend_id, search_volume, growth_rate, category, time_range, region, rank,
+             status, title, summary, selected_opportunity, content_json, business_model_norm, canonical_report_id,
+             model, tokens_used, error, user_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+           RETURNING *`,
+          [
+            s.keyword,
+            normalizeKeyword(s.keyword),
+            s.sourceTrendId ?? null,
+            s.searchVolume,
+            s.growthRate,
+            s.category,
+            s.timeRange,
+            s.region,
+            s.rank,
+            item.status,
+            item.title ?? null,
+            item.summary ?? null,
+            item.selectedOpportunity ?? null,
+            item.contentJson ? JSON.stringify(item.contentJson) : null,
+            item.businessModelNorm ?? null,
+            item.canonicalReportId ?? null,
+            item.model ?? null,
+            item.tokensUsed ?? null,
+            item.error ?? null,
+            item.userId ?? null,
+          ]
+        );
+        const report = mapReportRow(row.rows[0]);
+        if (item.opportunities && item.opportunities.length > 0) {
+          await this.insertOpportunitiesWithClient(client, report.id, item.opportunities);
+          report.opportunities = item.opportunities;
+        }
+        reports.push(report);
+      }
+      await client.query('COMMIT');
+      return { inserted: reports.length, reports };
+    } catch (error) {
+      // All-or-nothing: a partial batch would leave reports without their
+      // opportunity rows, which the detail page renders as an empty score matrix.
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**
@@ -1027,44 +1281,21 @@ export class BpService {
     }
   }
 
+  /** Same insert as insertOpportunities, but on a transaction client. */
+  private async insertOpportunitiesWithClient(
+    client: { query: (sql: string, params?: any[]) => Promise<any> },
+    reportId: string,
+    opps: BpOpportunity[]
+  ): Promise<void> {
+    const built = buildOpportunitiesInsert(reportId, opps);
+    if (!built) return;
+    await client.query(built.sql, built.params);
+  }
+
   private async insertOpportunities(reportId: string, opps: BpOpportunity[]): Promise<void> {
-    if (!opps.length) return;
-    const cols = 13;
-    const valuesSql: string[] = [];
-    const params: any[] = [];
-    opps.forEach((o, i) => {
-      const base = i * cols;
-      valuesSql.push(
-        `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13})`
-      );
-      params.push(
-        reportId,
-        o.name,
-        o.description,
-        o.scores.market,
-        o.scores.roi,
-        o.scores.onlineability,
-        o.scores.feasibility,
-        o.scores.speed,
-        o.scores.moat,
-        o.weightedScore,
-        o.isSelected,
-        o.rank,
-        new Date()
-      );
-    });
-    // NOTE: table is bp_report_opportunities, NOT bp_opportunities. The shared
-    // Neon database also hosts a sibling app whose sync job periodically
-    // drops & recreates `bp_opportunities` with an incompatible legacy schema
-    // (plan_id/scores jsonb, observed 2026-07-13); writing to a table that app
-    // owns caused every generation to fail after its resync. Our own table
-    // name keeps the two apps from clobbering each other.
-    await query(
-      `INSERT INTO bp_report_opportunities
-        (report_id, name, description, score_market, score_roi, score_onlineability, score_feasibility, score_speed, score_moat, weighted_score, is_selected, rank, created_at)
-       VALUES ${valuesSql.join(',')}`,
-      params
-    );
+    const built = buildOpportunitiesInsert(reportId, opps);
+    if (!built) return;
+    await query(built.sql, built.params);
   }
 
   /** Fetch a single report plus its ranked opportunities. */

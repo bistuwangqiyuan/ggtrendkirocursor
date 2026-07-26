@@ -41,3 +41,6 @@ tmp-*
 # Production data backups (contain DB rows; keep local only)
 backups/
 coverage/
+
+# Local snapshot store (filesystem fallback for Netlify Blobs)
+.snapshots/

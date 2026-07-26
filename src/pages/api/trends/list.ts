@@ -1,6 +1,13 @@
 import type { APIRoute } from 'astro';
 import { trendsService } from '../../../lib/services/trends';
+import { getTrendsFromSnapshot } from '../../../lib/cache/snapshotReaders';
+import { readForPage } from '../../../lib/cache/readPath';
+import { computeCacheHeaders, CACHE_PROFILES } from '../../../lib/cache/httpCache';
 import type { TrendsQueryParams } from '../../../types/index';
+
+export const prerender = false;
+
+const EMPTY = { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
 
 export const GET: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
@@ -17,23 +24,33 @@ export const GET: APIRoute = async ({ request }) => {
     pageSize: parseInt(url.searchParams.get('pageSize') || '20', 10)
   };
 
-  let result = await trendsService.getTrends(params);
+  const dbFallback = async (p: TrendsQueryParams) => {
+    const r = await trendsService.getTrends(p);
+    return r.success ? r.data : EMPTY;
+  };
 
-  // Fallback: if no results for selected time range, try without time_range filter
-  if (result.success && result.data.trends.length === 0 && timeRange) {
-    result = await trendsService.getTrends({ ...params, timeRange: undefined });
+  let read = await readForPage('api:trends:list', () => getTrendsFromSnapshot(params), () => dbFallback(params));
+
+  // Fallback: if no results for the selected time range, retry without it.
+  if (!read.pending && read.data.trends.length === 0 && timeRange) {
+    const relaxed = { ...params, timeRange: undefined };
+    const retry = await readForPage(
+      'api:trends:list:relaxed',
+      () => getTrendsFromSnapshot(relaxed),
+      () => dbFallback(relaxed)
+    );
+    if (retry.data.trends.length > 0) read = retry;
   }
 
-  if (!result.success) {
-    return new Response(JSON.stringify({
-      success: false,
-      error: result.error.message
-    }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  if (read.pending) {
+    return new Response(
+      JSON.stringify({ success: false, error: 'Trends snapshot not available yet', code: 'SNAPSHOT_PENDING' }),
+      { status: 503, headers: { 'Content-Type': 'application/json', ...computeCacheHeaders({ sMaxAge: 30, staleWhileRevalidate: 60 }) } }
+    );
   }
 
-  return new Response(JSON.stringify({
-    success: true,
-    data: result.data
-  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  return new Response(
+    JSON.stringify({ success: true, data: read.data, generatedAt: read.generatedAt?.toISOString() ?? null }),
+    { status: 200, headers: { 'Content-Type': 'application/json', ...computeCacheHeaders(CACHE_PROFILES.readApi) } }
+  );
 };
-

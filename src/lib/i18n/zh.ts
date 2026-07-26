@@ -12,6 +12,8 @@ export const zh = {
     menuOpen: '打开菜单',
     menuClose: '关闭菜单',
     serviceUnavailable: '数据服务暂时不可用，请稍后重试。',
+    dataPending: '数据正在准备中。系统每几小时自动刷新一次，请稍后回来查看。',
+    dataAsOf: '数据更新于',
     metaDescription: 'Trend Now — 基于 Google Trends 热词挖掘、AI 商业分析与自动商业计划书生成的全线上化平台。',
     metaKeywords: 'Google Trends, 热词分析, AI 商业计划书, 创业机会, 趋势数据, business plan generator',
   },

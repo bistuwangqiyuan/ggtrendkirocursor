@@ -144,6 +144,36 @@ curl -X POST "https://<your-site>/api/db-init?secret=$ADMIN_SECRET&migrate=bp" -
 
 [`netlify/functions/bp-scheduled.ts`](netlify/functions/bp-scheduled.ts) runs every 3 hours (`0 */3 * * *`, UTC) and triggers the `bp-batch-background` function (batch size `BP_BATCH_SIZE`, default 5) with the `CRON_SECRET`, for up to 40 BPs per day. To enable it in production, set both `CRON_SECRET` and an LLM key (`LLM_API_KEY` or `LLM_API_ENDPOINTS`) in the Netlify dashboard, then redeploy.
 
+`bp-batch-background` is the site's only database write window. In one invocation it collects trends, generates the BP batch, probes the monitored sites, applies data retention, and rebuilds the read snapshots. The separate `trends-collector` and `site-monitor` schedules were folded into it because Neon's free plan bills compute *time* — each extra schedule woke the database and left a 5-minute idle timer behind it.
+
+### Read path and Neon compute budget
+
+Pages and read-only APIs never query Postgres. Scheduled jobs write JSON snapshots to Netlify Blobs (`src/lib/cache/`), pages read those, and Netlify's CDN caches the result (`src/lib/cache/httpCache.ts`). `ALLOW_DB_READ_FALLBACK` (default `false`) controls whether a missing snapshot may fall back to a query; leaving it off is what keeps crawler traffic from pinning the compute awake.
+
+```bash
+# Reproducible budget model: CU-hours before vs. after, with a sensitivity table
+python scripts/neon-budget.py
+
+# Hard proof of the above: boots the app against an unroutable DATABASE_URL and
+# asserts every read-only route still returns 200 with correct content
+npm run test:outage
+
+# Snapshot freshness (public, DB-free), and DB wake-up attribution (admin)
+curl https://<your-site>/api/snapshots/status
+curl -H "Authorization: Bearer $ADMIN_SECRET" "https://<your-site>/api/admin/errors?date=$(date -u +%F)"
+```
+
+### Neon project isolation (optional, one-time)
+
+The 100 CU-hour allowance is per *project*, and this project also hosts a sibling application's 10 tables — so savings here can be consumed by that app, and usage cannot be attributed to either. `scripts/neon-migrate.mjs` copies only the nine tables this site owns into a new project, using the shared schema in `src/lib/db/schema.ts`. It never modifies the source and is safe to re-run.
+
+```bash
+SOURCE_DATABASE_URL=<old> node scripts/neon-migrate.mjs --dry-run   # row counts only
+SOURCE_DATABASE_URL=<old> TARGET_DATABASE_URL=<new> node scripts/neon-migrate.mjs
+```
+
+Then switch `DATABASE_URL` in the Netlify dashboard, redeploy, and keep the old project as a rollback path for a few days.
+
 You can verify the schedule under Netlify -> Functions -> `bp-scheduled`, or trigger it manually:
 
 ```bash
@@ -171,6 +201,12 @@ BASE_URL=https://<your-site> E2E_CRON_SECRET=<same-as-CRON_SECRET> node tests/e2
 ```
 
 The smoke test exits non-zero only on `FAIL`; checks blocked by external dependencies (DB quota, missing secrets) are reported as `BLOCKED` and do not fail the run. A human-readable report is written to `tests/e2e/last-run.md`.
+
+DB-outage drill (local, no credentials needed) — starts the app with an unroutable `DATABASE_URL` and fixture snapshots, then asserts all read-only routes serve correct content:
+
+```bash
+npm run test:outage
+```
 
 ## License
 

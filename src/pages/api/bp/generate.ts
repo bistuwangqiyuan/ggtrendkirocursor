@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { bpService, SYNC_LLM_TIMEOUT_MS } from '../../../lib/services/bp';
 import { isLlmConfigured } from '../../../lib/services/llm';
 import { rateLimit, rateLimitResponse } from '../../../lib/utils/rateLimit';
+import { captureGeneratedBpReport } from '../../../lib/cache/snapshotBuilder';
 
 export const prerender = false;
 
@@ -50,6 +51,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
         { status, headers: { 'Content-Type': 'application/json' } }
       );
     }
+
+    // The client redirects straight to /bp/{id}, which reads from the snapshot
+    // store — so the report has to be there before we respond.
+    await captureGeneratedBpReport(result.data);
 
     return new Response(
       JSON.stringify({ success: true, data: { id: result.data.id, status: result.data.status } }),

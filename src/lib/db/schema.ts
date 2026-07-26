@@ -1,0 +1,284 @@
+/**
+ * The nine tables this site owns, as executable DDL.
+ *
+ * Single source of truth, shared by `/api/db-init` (provision / repair), the
+ * maintenance job (which backfills tables missing in production) and
+ * `scripts/neon-migrate.mjs` (which recreates the schema in a new Neon project).
+ * Keeping one copy is the point: when these lists lived only inside the db-init
+ * endpoint, the production database drifted from them silently — that is how
+ * `newsletter_subscribers` ended up defined but never created.
+ *
+ * The Neon project also hosts a sibling application's tables. Nothing here
+ * touches a table this site does not own.
+ */
+
+/** Tables owned by this application, parents before children. */
+export const OWNED_TABLES = [
+  'users',
+  'sessions',
+  'feedback',
+  'google_trends',
+  'bp_reports',
+  'bp_report_opportunities',
+  'newsletter_subscribers',
+  'monitored_sites',
+  'site_checks',
+] as const;
+
+export type OwnedTable = (typeof OWNED_TABLES)[number];
+
+export const NEWSLETTER_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_newsletter_subscribers_email ON newsletter_subscribers(email)`,
+];
+
+// Base (idempotent) schema. Safe to run repeatedly; CREATE ... IF NOT EXISTS.
+export const BASE_STATEMENTS = [
+  `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+  `CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    locale VARCHAR(5) DEFAULT 'zh',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP WITH TIME ZONE
+  )`,
+  `CREATE TABLE IF NOT EXISTS sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    user_agent TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS feedback (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    subject VARCHAR(200) NOT NULL,
+    message TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)`,
+  // Trends storage. Production Neon happened to have this table pre-created by
+  // a sibling app; a fresh database (e.g. local real-function testing) did not,
+  // which 500'd the collector. Schema matches the production google_trends
+  // table (trend_timestamp column) that the app auto-detects.
+  `CREATE TABLE IF NOT EXISTS google_trends (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    keyword TEXT NOT NULL,
+    search_volume BIGINT NOT NULL DEFAULT 0,
+    growth_rate NUMERIC(10, 2) DEFAULT 0,
+    time_range VARCHAR(20),
+    category TEXT,
+    region VARCHAR(10) DEFAULT 'US',
+    traffic_source TEXT,
+    related_queries JSONB,
+    trend_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_created_at ON google_trends(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_search_volume ON google_trends(search_volume)`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_time_range ON google_trends(time_range)`,
+  `CREATE INDEX IF NOT EXISTS idx_google_trends_keyword ON google_trends(keyword)`,
+  // Hot word -> BP feature tables (additive; do not modify existing tables).
+  `CREATE TABLE IF NOT EXISTS bp_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    keyword VARCHAR(200) NOT NULL,
+    keyword_norm VARCHAR(200),
+    source_trend_id VARCHAR(100),
+    search_volume BIGINT,
+    growth_rate NUMERIC,
+    category VARCHAR(100),
+    time_range VARCHAR(20),
+    region VARCHAR(50),
+    rank INT,
+    status VARCHAR(20) DEFAULT 'pending',
+    title TEXT,
+    summary TEXT,
+    selected_opportunity TEXT,
+    content_json JSONB,
+    business_model_norm VARCHAR(300),
+    canonical_report_id UUID,
+    model VARCHAR(100),
+    tokens_used INT,
+    error TEXT,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS bp_report_opportunities (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    report_id UUID NOT NULL REFERENCES bp_reports(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    score_market NUMERIC,
+    score_roi NUMERIC,
+    score_onlineability NUMERIC,
+    score_feasibility NUMERIC,
+    score_speed NUMERIC,
+    score_moat NUMERIC,
+    weighted_score NUMERIC,
+    is_selected BOOLEAN DEFAULT false,
+    rank INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_keyword_norm ON bp_reports(keyword_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_status ON bp_reports(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_business_model_norm ON bp_reports(business_model_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_report_opportunities_report_id ON bp_report_opportunities(report_id)`,
+  ...NEWSLETTER_STATEMENTS,
+  // Site monitoring (uptime + SEO health of the user's own deployed sites).
+  `CREATE TABLE IF NOT EXISTS monitored_sites (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(200) NOT NULL,
+    url VARCHAR(500) UNIQUE NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS site_checks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    site_id UUID NOT NULL REFERENCES monitored_sites(id) ON DELETE CASCADE,
+    ok BOOLEAN NOT NULL,
+    http_status INT,
+    response_ms INT,
+    seo_score INT,
+    seo_checks JSONB,
+    error TEXT,
+    checked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_site_checks_site_id_checked_at ON site_checks(site_id, checked_at DESC)`,
+];
+
+// Columns the application code requires on each table.
+export const REQUIRED_COLUMNS: Record<string, string[]> = {
+  users: ['id', 'username', 'email', 'password_hash', 'locale', 'created_at', 'updated_at', 'last_login_at'],
+  sessions: ['id', 'user_id', 'token', 'expires_at', 'created_at', 'ip_address', 'user_agent'],
+  feedback: ['id', 'user_id', 'name', 'email', 'subject', 'message', 'status', 'created_at'],
+  bp_reports: ['id', 'keyword', 'keyword_norm', 'source_trend_id', 'search_volume', 'growth_rate', 'category', 'time_range', 'region', 'rank', 'status', 'title', 'summary', 'selected_opportunity', 'content_json', 'business_model_norm', 'canonical_report_id', 'model', 'tokens_used', 'error', 'user_id', 'created_at', 'updated_at'],
+  bp_report_opportunities: ['id', 'report_id', 'name', 'description', 'score_market', 'score_roi', 'score_onlineability', 'score_feasibility', 'score_speed', 'score_moat', 'weighted_score', 'is_selected', 'rank', 'created_at'],
+  newsletter_subscribers: ['id', 'email', 'created_at'],
+  monitored_sites: ['id', 'name', 'url', 'enabled', 'created_at'],
+  site_checks: ['id', 'site_id', 'ok', 'http_status', 'response_ms', 'seo_score', 'seo_checks', 'error', 'checked_at'],
+};
+
+// Destructive recreate of the auth/feedback tables (drops mismatched legacy schema).
+// Order matters: drop FK-dependent tables before the referenced `users` table.
+export const RECREATE_STATEMENTS = [
+  `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+  `DROP TABLE IF EXISTS sessions CASCADE`,
+  `DROP TABLE IF EXISTS feedback CASCADE`,
+  `DROP TABLE IF EXISTS users CASCADE`,
+  `CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    locale VARCHAR(5) DEFAULT 'zh',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP WITH TIME ZONE
+  )`,
+  `CREATE TABLE sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    user_agent TEXT
+  )`,
+  `CREATE TABLE feedback (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    subject VARCHAR(200) NOT NULL,
+    message TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)`,
+];
+
+// Destructive recreate of the BP feature tables (drops child before parent).
+// Only OUR tables are dropped — bp_opportunities belongs to a sibling app
+// sharing this database and must not be touched.
+export const RECREATE_BP_STATEMENTS = [
+  `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+  `DROP TABLE IF EXISTS bp_report_opportunities CASCADE`,
+  `DROP TABLE IF EXISTS bp_reports CASCADE`,
+  `CREATE TABLE bp_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    keyword VARCHAR(200) NOT NULL,
+    keyword_norm VARCHAR(200),
+    source_trend_id VARCHAR(100),
+    search_volume BIGINT,
+    growth_rate NUMERIC,
+    category VARCHAR(100),
+    time_range VARCHAR(20),
+    region VARCHAR(50),
+    rank INT,
+    status VARCHAR(20) DEFAULT 'pending',
+    title TEXT,
+    summary TEXT,
+    selected_opportunity TEXT,
+    content_json JSONB,
+    business_model_norm VARCHAR(300),
+    canonical_report_id UUID,
+    model VARCHAR(100),
+    tokens_used INT,
+    error TEXT,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE bp_report_opportunities (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    report_id UUID NOT NULL REFERENCES bp_reports(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    score_market NUMERIC,
+    score_roi NUMERIC,
+    score_onlineability NUMERIC,
+    score_feasibility NUMERIC,
+    score_speed NUMERIC,
+    score_moat NUMERIC,
+    weighted_score NUMERIC,
+    is_selected BOOLEAN DEFAULT false,
+    rank INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_keyword_norm ON bp_reports(keyword_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_status ON bp_reports(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_created_at ON bp_reports(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_user_id ON bp_reports(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_reports_business_model_norm ON bp_reports(business_model_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_bp_report_opportunities_report_id ON bp_report_opportunities(report_id)`,
+];

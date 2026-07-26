@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { trendsCollector, DEFAULT_GEOS } from '../../../lib/services/trendsCollector';
+import { rebuildAllSnapshots } from '../../../lib/cache/snapshotBuilder';
 
 export const prerender = false;
 
@@ -36,7 +37,13 @@ export const POST: APIRoute = async ({ request }) => {
 
   try {
     const summary = await trendsCollector.collect(geos);
-    return json({ success: true, ...summary }, 200);
+    // Refresh the snapshots the read path serves from, while this wake window is
+    // already open. Skippable via ?snapshots=0 for isolated collector testing.
+    let snapshots: unknown = 'skipped';
+    if (new URL(request.url).searchParams.get('snapshots') !== '0') {
+      snapshots = await rebuildAllSnapshots({ only: ['trends', 'landing'], budgetMs: 60_000 });
+    }
+    return json({ success: true, ...summary, snapshots }, 200);
   } catch (error) {
     console.error('Trends collect API error:', error);
     return json({ success: false, error: '服务器内部错误' }, 500);

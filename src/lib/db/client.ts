@@ -1,7 +1,36 @@
 import pg from 'pg';
+import { recordDbWake, recordError } from '../observability/errorLog';
+import { currentDbContext } from '../observability/dbContext';
 const { Pool } = pg;
 
 let poolInstance: pg.Pool | null = null;
+
+/**
+ * Neon's free plan auto-suspends the compute after 5 minutes of inactivity and
+ * bills only while it is awake. A query arriving after a gap longer than that
+ * therefore *woke* the instance and started a fresh billed window; queries inside
+ * the window are effectively free. Metering wake-ups (not queries) is what makes
+ * the quota measurable.
+ */
+const NEON_AUTOSUSPEND_MS = 5 * 60 * 1000;
+let lastQueryAt = 0;
+/** Wake-ups seen by this process instance, for /api/health-style diagnostics. */
+let wakeCount = 0;
+
+export function getDbWakeCount(): number {
+  return wakeCount;
+}
+
+function noteDbActivity(): void {
+  const now = Date.now();
+  const gap = lastQueryAt === 0 ? Infinity : now - lastQueryAt;
+  lastQueryAt = now;
+  if (gap <= NEON_AUTOSUSPEND_MS) return;
+  wakeCount++;
+  const context = currentDbContext();
+  recordDbWake(context.reason, { route: context.route });
+  console.log(`[DB] wake #${wakeCount} reason=${context.reason} route=${context.route ?? '-'}`);
+}
 
 function getConnectionString(): string | undefined {
   return process.env.DATABASE_URL
@@ -39,6 +68,9 @@ export function markDbUnavailable(cooldownMs: number = DB_COOLDOWN_MS): void {
 function tripBreaker(reason: string): void {
   markDbUnavailable();
   console.error(`[DB] circuit breaker opened for ${DB_COOLDOWN_MS}ms:`, reason);
+  const context = currentDbContext();
+  // Blobs-backed log: recording a database outage must not require the database.
+  recordError('db', reason, { route: context.route, context: { dbReason: context.reason } });
 }
 
 /** For tests/diagnostics: clear the breaker. */
@@ -63,6 +95,7 @@ async function runGuarded<T>(fn: () => Promise<T>): Promise<T> {
   if (isDbDown()) {
     throw new DbUnavailableError();
   }
+  noteDbActivity();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race<T>([

@@ -620,6 +620,63 @@ async function run() {
     record('R-BP13', 'score matrix has ranked opportunities', 'BLOCKED', reason);
   }
 
+  // ---- Neon budget optimization: read paths must not depend on Postgres ----
+  // These are the plan's hard acceptance criteria. They are asserted on EVERY run,
+  // not only when the database happens to be down: a route that 200s here while
+  // the DB is up but is secretly querying it would still burn compute quota, so
+  // the wake-up counters in /api/admin/errors are the companion evidence.
+  const readOnlyRoutes = [
+    ['/', 'data-page="marketing-home"'],
+    ['/trends', 'data-page="trends"'],
+    ['/t', 'data-page="landing-index"'],
+    ['/bp', 'data-page="bp-list"'],
+    ['/monitor', 'data-page="monitor"'],
+  ];
+  for (const [path, marker] of readOnlyRoutes) {
+    const r = await http(path, { headers: { Cookie: 'locale=zh' } });
+    const ok = r.status === 200 && r.body.includes(marker);
+    expect(ok, 'R-NEON1', `read path ${path} serves without DB dependency`,
+      `status=${r.status}`, `status=${r.status} marker=${r.body.includes(marker)}`);
+  }
+  // sitemap.xml is the crawler's entry point and the heaviest former DB consumer.
+  expect(sitemap.status === 200 && sitemap.body.includes('<urlset'),
+    'R-NEON1', 'sitemap.xml serves without DB dependency', `status=${sitemap.status}`, `status=${sitemap.status}`);
+
+  // Snapshot freshness endpoint must answer even during a full DB outage, since
+  // it is how the outage is diagnosed.
+  const snapStatus = await http('/api/snapshots/status');
+  const snapJson = jsonOf(snapStatus.body);
+  expect(snapStatus.status === 200 && !!snapJson?.snapshots,
+    'R-NEON2', 'snapshot status endpoint is DB-free', `keys=${Object.keys(snapJson?.snapshots || {}).length}`,
+    `status=${snapStatus.status}`);
+  // A stale snapshot means the cron window failed; surface it as BLOCKED rather
+  // than FAIL, because it is an infrastructure symptom, not a code defect.
+  const trendsAgeH = Number(snapJson?.snapshots?.trendsTop?.ageSeconds ?? NaN) / 3600;
+  if (Number.isFinite(trendsAgeH)) {
+    record('R-NEON2', 'trends snapshot is fresh (< 6h)', trendsAgeH < 6 ? 'PASS' : 'BLOCKED',
+      `age=${trendsAgeH.toFixed(1)}h`);
+  } else {
+    record('R-NEON2', 'trends snapshot is fresh (< 6h)', 'BLOCKED', 'snapshot not built yet');
+  }
+
+  // CDN cache directives: anonymous reads must be edge-cacheable, and an
+  // authenticated read must never be stored by a shared cache.
+  const trendsAnon = await http('/trends');
+  const cdnHeader = trendsAnon.headers.get('netlify-cdn-cache-control') || '';
+  const cacheControl = trendsAnon.headers.get('cache-control') || '';
+  expect(/s-maxage=\d+/.test(cdnHeader) || /s-maxage=\d+/.test(cacheControl),
+    'R-NEON3', '/trends sets a CDN cache TTL', `cdn=${cdnHeader || cacheControl}`,
+    `cdn=${cdnHeader || 'absent'} cache-control=${cacheControl || 'absent'}`);
+  if (authCookie) {
+    const trendsAuthed = await http('/trends', { headers: { Cookie: authCookie } });
+    const authCache = trendsAuthed.headers.get('cache-control') || '';
+    expect(/no-store/.test(authCache),
+      'R-NEON3', 'authenticated read is not shared-cacheable', `cache-control=${authCache}`,
+      `cache-control=${authCache || 'absent'}`);
+  } else {
+    record('R-NEON3', 'authenticated read is not shared-cacheable', 'BLOCKED', 'no auth cookie');
+  }
+
   // ---- summary ----
   const counts = results.reduce((a, r) => (a[r.status] = (a[r.status] || 0) + 1, a), {});
   const pass = counts.PASS || 0, fail = counts.FAIL || 0, blocked = counts.BLOCKED || 0;

@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { authService } from '../../../lib/services/auth';
 import { rateLimit, rateLimitResponse, clientIpFromRequest } from '../../../lib/utils/rateLimit';
+import { buildEnvelope, encodeSessionCookie } from '../../../lib/auth/sessionCookie';
 
 export const POST: APIRoute = async ({ request, cookies, clientAddress }) => {
   // Brute-force baseline: 10 login attempts per IP per minute.
@@ -30,8 +31,13 @@ export const POST: APIRoute = async ({ request, cookies, clientAddress }) => {
 
     const { session, user } = result.data;
 
-    // Set session cookie
-    cookies.set('session_token', session.token, {
+    // Prefer the HMAC-signed envelope so subsequent requests skip the
+    // `sessions` lookup; without SESSION_SECRET, fall back to the raw token and
+    // per-request database validation.
+    const signed = encodeSessionCookie(
+      buildEnvelope(session.token, user, session.expiresAt)
+    );
+    cookies.set('session_token', signed ?? session.token, {
       path: '/',
       httpOnly: true,
       secure: import.meta.env.PROD, // True in production

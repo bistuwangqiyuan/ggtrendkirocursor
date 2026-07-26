@@ -1,28 +1,28 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { landingService } from '../../lib/services/landing';
-import { isDbDown } from '../../lib/db/client';
+import { listKeywordsFromSnapshot } from '../../lib/cache/snapshotReaders';
+import { readForPage } from '../../lib/cache/readPath';
+import { applyPageCache, CACHE_PROFILES } from '../../lib/cache/httpCache';
 import { getTranslations } from '../../lib/i18n';
 import { formatNumber, formatRelativeTime } from '../../lib/utils/format';
 
 export const prerender = false;
+
+applyPageCache(Astro, CACHE_PROFILES.landingIndex);
 
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
 
 const page = Math.max(1, parseInt(Astro.url.searchParams.get('page') || '1', 10) || 1);
 
-let keywords: Awaited<ReturnType<typeof landingService.listKeywords>>['keywords'] = [];
-let pagination = { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 50 };
-let degraded = false;
-try {
-  const data = await landingService.listKeywords(page, 50);
-  keywords = data.keywords;
-  pagination = data.pagination;
-} catch {
-  degraded = true;
-}
-degraded = degraded || isDbDown();
+const result = await readForPage(
+  'landing:index',
+  () => listKeywordsFromSnapshot(page, 50),
+  () => landingService.listKeywords(page, 50)
+);
+const { keywords, pagination } = result.data;
+const degraded = result.pending;
 ---
 
 <Layout title={t.landing.indexTitle} description={t.landing.indexSubtitle}>
@@ -33,7 +33,7 @@ degraded = degraded || isDbDown();
     </div>
 
     {degraded && (
-      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.serviceUnavailable}</div>
+      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.dataPending}</div>
     )}
 
     {keywords.length === 0 ? (

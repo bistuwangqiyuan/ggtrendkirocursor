@@ -1,0 +1,152 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { authorizeAdminRequest } from '../../lib/utils/adminAuth';
+import { listLogDates, readDayLog, retentionDays } from '../../lib/observability/errorLog';
+import { NO_STORE_HEADERS } from '../../lib/cache/httpCache';
+
+export const prerender = false;
+
+// Ops-only view of runtime errors and database wake-ups. Reads Netlify Blobs, so
+// it stays available during a database outage — which is when it matters most.
+for (const [k, v] of Object.entries(NO_STORE_HEADERS)) Astro.response.headers.set(k, v);
+
+const auth = authorizeAdminRequest(Astro.request);
+const secret = Astro.url.searchParams.get('secret') || '';
+
+const today = new Date().toISOString().slice(0, 10);
+const requestedDate = Astro.url.searchParams.get('date') || today;
+const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : today;
+const levelFilter = Astro.url.searchParams.get('level') || '';
+const routeFilter = Astro.url.searchParams.get('route') || '';
+
+const dates = auth.ok ? await listLogDates() : [];
+const log = auth.ok
+  ? await readDayLog(date, {
+      level: (levelFilter as 'error' | 'warn' | 'info') || undefined,
+      route: routeFilter || undefined,
+      limit: 300,
+    })
+  : null;
+
+// Wakes attributed to `page` are the regression signal: after the snapshot
+// migration, a page render must never reach Postgres.
+const pageWakes = log?.wakesByReason.page ?? 0;
+
+const linkFor = (params: Record<string, string>) => {
+  const q = new URLSearchParams({ secret, date, ...(levelFilter ? { level: levelFilter } : {}), ...(routeFilter ? { route: routeFilter } : {}), ...params });
+  return `/admin/errors?${q.toString()}`;
+};
+
+const levelClass = (level: string) =>
+  level === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20'
+  : level === 'warn' ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+  : 'bg-gray-700/30 text-gray-300 border-gray-600/30';
+---
+
+<Layout title="Runtime errors" description="Ops-only runtime error log and database wake-up meter.">
+  <div class="space-y-6" data-page="admin-errors">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight text-white">Runtime errors</h1>
+      <p class="mt-1.5 text-sm text-gray-400">
+        Day-partitioned log stored in Netlify Blobs (never Postgres), so it survives a database outage.
+      </p>
+    </div>
+
+    {!auth.ok && (
+      <div class="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-red-400" data-testid="admin-unauthorized">
+        {auth.message}. Append <code class="font-mono">?secret=…</code> (ADMIN_SECRET) to view this page.
+      </div>
+    )}
+
+    {auth.ok && log && (
+      <>
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-3">
+            <p class="text-xs uppercase tracking-wider text-gray-500">Entries</p>
+            <p class="mt-1 text-2xl font-semibold text-white" data-testid="entry-count">{log.totalEntries}</p>
+          </div>
+          <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-3">
+            <p class="text-xs uppercase tracking-wider text-gray-500">DB wake-ups</p>
+            <p class="mt-1 text-2xl font-semibold text-white" data-testid="wake-count">{log.wakes.length}</p>
+          </div>
+          <div class={`rounded-xl border px-4 py-3 ${pageWakes > 0 ? 'border-red-500/30 bg-red-500/10' : 'border-green-500/20 bg-green-500/5'}`}>
+            <p class="text-xs uppercase tracking-wider text-gray-500">Wakes from page reads</p>
+            <p class={`mt-1 text-2xl font-semibold ${pageWakes > 0 ? 'text-red-400' : 'text-green-400'}`} data-testid="page-wakes">{pageWakes}</p>
+            <p class="mt-1 text-xs text-gray-500">Target: 0</p>
+          </div>
+          <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-3">
+            <p class="text-xs uppercase tracking-wider text-gray-500">Retention</p>
+            <p class="mt-1 text-2xl font-semibold text-white">{retentionDays()}d</p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <span class="text-gray-500">Date:</span>
+          {[date, ...dates.filter((d) => d !== date)].slice(0, 10).map((d) => (
+            <a href={linkFor({ date: d })} class={`rounded-md border px-2.5 py-1 font-mono text-xs ${d === date ? 'border-blue-500/40 bg-blue-500/10 text-blue-300' : 'border-gray-800 text-gray-400 hover:text-white'}`}>{d}</a>
+          ))}
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <span class="text-gray-500">Level:</span>
+          {['', 'error', 'warn', 'info'].map((lvl) => (
+            <a href={linkFor({ level: lvl })} class={`rounded-md border px-2.5 py-1 text-xs ${lvl === levelFilter ? 'border-blue-500/40 bg-blue-500/10 text-blue-300' : 'border-gray-800 text-gray-400 hover:text-white'}`}>
+              {lvl || 'all'}{lvl && log.entriesByLevel[lvl] !== undefined ? ` (${log.entriesByLevel[lvl]})` : ''}
+            </a>
+          ))}
+        </div>
+
+        {Object.keys(log.wakesByReason).length > 0 && (
+          <div class="rounded-xl border border-gray-800 bg-gray-900/50 p-4">
+            <h2 class="text-sm font-semibold text-white">Wake-ups by cause</h2>
+            <ul class="mt-2 flex flex-wrap gap-3 text-sm text-gray-300">
+              {Object.entries(log.wakesByReason).map(([reason, count]) => (
+                <li class="font-mono">{reason}: <span class="text-white">{count}</span></li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {log.entries.length === 0 ? (
+          <div class="rounded-lg border border-gray-800 bg-gray-900/50 px-6 py-16 text-center text-gray-400" data-testid="no-errors">
+            No entries for {date}.
+          </div>
+        ) : (
+          <div class="overflow-x-auto rounded-xl border border-gray-800">
+            <table class="min-w-full divide-y divide-gray-800 text-sm">
+              <thead class="bg-gray-900/70 text-left text-xs uppercase tracking-wider text-gray-500">
+                <tr>
+                  <th class="px-4 py-3">Time</th>
+                  <th class="px-4 py-3">Level</th>
+                  <th class="px-4 py-3">Source</th>
+                  <th class="px-4 py-3">Route</th>
+                  <th class="px-4 py-3">Message</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-800 bg-gray-900/30">
+                {log.entries.map((e) => (
+                  <tr>
+                    <td class="whitespace-nowrap px-4 py-3 font-mono text-xs text-gray-400">{e.at.slice(11, 19)}</td>
+                    <td class="px-4 py-3">
+                      <span class={`inline-flex rounded-md border px-2 py-0.5 text-xs ${levelClass(e.level)}`}>{e.level}</span>
+                    </td>
+                    <td class="whitespace-nowrap px-4 py-3 font-mono text-xs text-gray-300">{e.source}</td>
+                    <td class="whitespace-nowrap px-4 py-3 font-mono text-xs text-gray-400">
+                      {e.route ? <a href={linkFor({ route: e.route })} class="hover:text-white">{e.route}</a> : '—'}
+                    </td>
+                    <td class="px-4 py-3 text-gray-300">
+                      {e.message}
+                      {e.context && (
+                        <span class="ml-2 font-mono text-xs text-gray-500">{JSON.stringify(e.context)}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )}
+  </div>
+</Layout>

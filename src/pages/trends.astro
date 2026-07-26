@@ -4,11 +4,17 @@ import TrendsTable from '../components/trends/TrendsTable.astro';
 import { TrendsFilters } from '../components/trends/TrendsFilters';
 import { Pagination } from '../components/trends/Pagination';
 import { trendsService } from '../lib/services/trends';
-import { isDbDown } from '../lib/db/client';
+import { getCategoriesFromSnapshot, getTrendsFromSnapshot } from '../lib/cache/snapshotReaders';
+import { readForPage } from '../lib/cache/readPath';
+import { applyPageCache, CACHE_PROFILES } from '../lib/cache/httpCache';
 import { getTranslations } from '../lib/i18n';
 import type { TrendsQueryParams } from '../types/index';
 
 export const prerender = false;
+
+// Served from the snapshot, so the edge can cache it for anonymous visitors and
+// crawlers; authenticated requests stay private.
+applyPageCache(Astro, CACHE_PROFILES.trends);
 
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
@@ -36,21 +42,51 @@ const params: TrendsQueryParams = {
   sortOrder: 'desc',
 };
 
-const categoriesResult = await trendsService.getCategories();
-let trendsResult = await trendsService.getTrends(params);
+const categoriesPage = await readForPage(
+  'trends:categories',
+  () => getCategoriesFromSnapshot(),
+  async () => {
+    const r = await trendsService.getCategories();
+    return r.success ? r.data : [];
+  }
+);
+
+let trendsPage = await readForPage(
+  'trends:list',
+  () => getTrendsFromSnapshot(params),
+  async () => {
+    const r = await trendsService.getTrends(params);
+    return r.success
+      ? r.data
+      : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize } };
+  }
+);
 let usedFallback = false;
 
-if (trendsResult.success && trendsResult.data.trends.length === 0 && urlTimeRange) {
-  trendsResult = await trendsService.getTrends({ ...params, timeRange: undefined });
-  usedFallback = trendsResult.success && trendsResult.data.trends.length > 0;
+// An explicit time-range filter that matches nothing falls back to all ranges,
+// so the page never looks empty just because one bucket wasn't collected.
+if (!trendsPage.pending && trendsPage.data.trends.length === 0 && urlTimeRange) {
+  const relaxed = await readForPage(
+    'trends:list:relaxed',
+    () => getTrendsFromSnapshot({ ...params, timeRange: undefined }),
+    async () => {
+      const r = await trendsService.getTrends({ ...params, timeRange: undefined });
+      return r.success
+        ? r.data
+        : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize } };
+    }
+  );
+  if (relaxed.data.trends.length > 0) {
+    trendsPage = relaxed;
+    usedFallback = true;
+  }
 }
 
 const timeRange = urlTimeRange || '4h';
-const trendsData = trendsResult.success
-  ? trendsResult.data
-  : { trends: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
-const categories = categoriesResult.success ? categoriesResult.data : [];
-const degraded = isDbDown() || !trendsResult.success;
+const trendsData = trendsPage.data;
+const categories = categoriesPage.data;
+const degraded = trendsPage.pending;
+const dataAsOf = trendsPage.generatedAt;
 const isLoggedIn = !!Astro.locals.user;
 const topTrend = trendsData.trends[0];
 
@@ -67,7 +103,11 @@ const timeLabel = usedFallback
     </div>
 
     {degraded && (
-      <div class="bg-amber-500/10 border border-amber-500/20 text-amber-300 px-4 py-3 rounded-lg" data-testid="degraded-notice">{t.common.serviceUnavailable}</div>
+      <div class="bg-amber-500/10 border border-amber-500/20 text-amber-300 px-4 py-3 rounded-lg" data-testid="degraded-notice">{t.common.dataPending}</div>
+    )}
+
+    {dataAsOf && (
+      <p class="text-xs text-gray-500" data-testid="data-as-of">{t.common.dataAsOf} {dataAsOf.toISOString()}</p>
     )}
 
     {topTrend && (

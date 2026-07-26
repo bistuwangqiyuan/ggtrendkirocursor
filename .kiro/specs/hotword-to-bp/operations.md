@@ -52,8 +52,8 @@
 
 ## 3. 定时关键词采集（零 LLM token）
 
-- 实现：[netlify/functions/trends-collector.ts](../../../netlify/functions/trends-collector.ts)，`schedule('50 */3 * * *', ...)`，UTC 每 3 小时的第 50 分（比 BP 批量生成早约 10 分钟，先补充词池）。
-- 行为：调用 `POST /api/trends/collect`（`Authorization: Bearer ${CRON_SECRET}`）→ `trendsCollector.collect()`：
+- 实现：并入 [netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts) 的**第 1 步**，在进程内直接调用 `trendsCollector.collect()`。原独立函数 `trends-collector`（`50 */3 * * *`）已于 2026-07-26 删除：Neon 免费版按**计算时长**计费，每个独立定时函数都会唤醒数据库并额外拖一条 5 分钟休眠尾（约 0.73 小时/天）。
+- 行为（等价于 `POST /api/trends/collect`，该端点保留供手动触发）：
   1. 抓取 Google Trends 实时热搜 RSS（`https://trends.google.com/trending/rss?geo=...`），默认地区 `US,GB,CA,AU,IN,SG`；
   2. 解析关键词与 `approx_traffic`（"200K+"→200000），按地区 24h 去重后写入活跃趋势表，采集时间戳 = `NOW()`；
   3. `growth_rate` 由流量分级保守估算（界定 74-100，仅作内部评分信号，避免乐观偏差），确保新词在 BP 选词器中 > `MIN_TREND_SCORE`。
@@ -68,8 +68,13 @@
 
 ## 3b. 定时批量自动生成
 
-- 实现：[netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts)，`schedule('0 */3 * * *', ...)`，UTC 每 3 小时整点（8 次/天 × 5 份 = 最多 40 份/天）。该触发器**仅异步拉起**后台批量函数并立即返回（不占用定时函数时长）。
-- 后台批量：[netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts)（`-background` 后缀 → 15 分钟时长上限）在进程内循环 `BP_BATCH_SIZE`（默认 5，钳制 1-10）次调用 `bpService.runScheduledGeneration()`，**每次生成 1 份 BP**；遇 `action=skipped`（词池耗尽）或连续 3 次失败则提前结束，调用间隔 1.5s。
+- 实现：[netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts)，`schedule('0 */3 * * *', ...)`，UTC 每 3 小时整点（8 次/天 × 5 份 = 最多 40 份/天）。这是全站**唯一**的定时触发器，**仅异步拉起**后台批量函数并立即返回（不占用定时函数时长）。
+- 后台批量：[netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts)（`-background` 后缀 → 15 分钟时长上限）是全站**唯一的数据库写入窗口**，一次调用内依次完成：①采集热词 → ②生成 BP 批次 → ③站点巡检 → ④保留期清理与补表 → ⑤重建快照。
+- BP 批次三阶段（[src/lib/services/bpBatchRunner.ts](../../../src/lib/services/bpBatchRunner.ts)）：
+  1. **PREPARE（唤醒 1 次）**：重放上次未 flush 的缓冲、`resetStaleGenerating()`、一次取齐去重集合/候选词/回避清单/全部规范商业模式；
+  2. **GENERATE（零数据库访问）**：仅调用 LLM，去重全在内存完成。每份生成完成后立刻写入 Netlify Blobs 缓冲（`bp/pending/<batchId>`）——这是崩溃安全点，取代了原先"先插占位行、后更新"的写法（那种写法每 ~2 分钟落一次查询，休眠计时器永远清零）；
+  3. **FLUSH（唤醒 1 次）**：单事务批量插入最终状态（completed/failed）。失败则保留缓冲，下次运行重放，绝不丢弃已付费的 LLM 产出。
+- 时间预算：生成阶段截止到第 10 分钟，尾部预留 3 分钟给 flush/巡检/清理/快照。
 - 单次 `POST /api/bp/cron` → `bpService.runScheduledGeneration()`：
   1. `resetStaleGenerating()` 把超过 15 分钟仍 `generating/pending` 的记录置为 `failed`；
   2. 按 `4h` 窗口、`search_volume` 降序扫描趋势（每页 50 条，最多 5 页）；
@@ -156,6 +161,6 @@ BP 相关探针：
 
 ## 7. 变更频率（如需调整）
 
-- 修改 [netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts) 与 [netlify/functions/trends-collector.ts](../../../netlify/functions/trends-collector.ts) 中的 cron 表达式（当前均为每 3 小时：`0 */3 * * *` / `50 */3 * * *`）。
+- 修改 [netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts) 中的 cron 表达式（当前每 3 小时：`0 */3 * * *`）。采集与巡检已并入同一窗口，无需单独调频；增加窗口数会线性增加 Neon 计算消耗，调整前先跑 `python scripts/neon-budget.py --cron-runs N`。
 - 调整批量产量：设置环境变量 `BP_BATCH_SIZE`（1-10，默认 5）。提升地区覆盖：修改 [src/lib/services/trendsCollector.ts](../../../src/lib/services/trendsCollector.ts) 中 `DEFAULT_GEOS`。
 - 去重为**全历史**（热词去重、手动复用与商业模式去重均不设时间窗，每个热词只分析一次）；`resetStaleGenerating(maxAgeMinutes)`（卡死阈值）仍在 [src/lib/services/bp.ts](../../../src/lib/services/bp.ts) 中调整。

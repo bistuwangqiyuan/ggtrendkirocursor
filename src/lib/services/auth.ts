@@ -104,6 +104,20 @@ export class AuthService {
   }
 
   async validateSession(token: string): Promise<Result<User, AuthError>> {
+    const detailed = await this.validateSessionDetailed(token);
+    return detailed.success
+      ? { success: true, data: detailed.data.user }
+      : { success: false, error: detailed.error };
+  }
+
+  /**
+   * Same check as validateSession, but also returns the session's absolute
+   * expiry. The middleware needs it to build a signed cookie whose stateless
+   * trust window can never outlive the session itself.
+   */
+  async validateSessionDetailed(
+    token: string
+  ): Promise<Result<{ user: User; expiresAt: Date }, AuthError>> {
     try {
       const result = await queryOne<User & { expires_at: Date }>(
         `SELECT u.id, u.username, u.email, u.locale, u.created_at as "createdAt", u.updated_at as "updatedAt", u.last_login_at as "lastLoginAt", s.expires_at 
@@ -117,14 +131,15 @@ export class AuthService {
         return { success: false, error: { code: 'INVALID_TOKEN', message: 'Session not found' } };
       }
 
-      if (new Date() > result.expires_at) {
+      const expiresAt = result.expires_at instanceof Date ? result.expires_at : new Date(result.expires_at);
+      if (new Date() > expiresAt) {
         // Clean up expired session
         await this.logout(token);
         return { success: false, error: { code: 'SESSION_EXPIRED', message: 'Session expired' } };
       }
 
       const { expires_at, ...user } = result;
-      return { success: true, data: user };
+      return { success: true, data: { user, expiresAt } };
     } catch (error) {
       console.error('Session validation error:', error);
       return { success: false, error: { code: 'INVALID_TOKEN', message: 'Validation failed' } };

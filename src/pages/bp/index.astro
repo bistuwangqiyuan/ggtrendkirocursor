@@ -2,11 +2,15 @@
 import Layout from '../../layouts/Layout.astro';
 import { bpService } from '../../lib/services/bp';
 import type { BpListSortBy, BpListSortOrder } from '../../lib/services/bp';
-import { isDbDown } from '../../lib/db/client';
+import { listBpFromSnapshot } from '../../lib/cache/snapshotReaders';
+import { readForPage } from '../../lib/cache/readPath';
+import { applyPageCache, CACHE_PROFILES } from '../../lib/cache/httpCache';
 import { getTranslations } from '../../lib/i18n';
 import { formatDateTime } from '../../lib/utils/format';
 
 export const prerender = false;
+
+applyPageCache(Astro, CACHE_PROFILES.bpList);
 
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
@@ -17,9 +21,18 @@ const orderParam = Astro.url.searchParams.get('order');
 const sortBy: BpListSortBy = sortParam === 'riskAdjusted' ? 'riskAdjusted' : 'createdAt';
 const sortOrder: BpListSortOrder = orderParam === 'asc' ? 'asc' : 'desc';
 
-const result = await bpService.list(page, 20, sortBy, sortOrder);
-const data = result.success ? result.data : { reports: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
-const degraded = isDbDown() || !result.success;
+const result = await readForPage(
+  'bp:list',
+  () => listBpFromSnapshot(page, 20, sortBy, sortOrder),
+  async () => {
+    const r = await bpService.list(page, 20, sortBy, sortOrder);
+    return r.success
+      ? r.data
+      : { reports: [], pagination: { currentPage: 1, totalPages: 1, totalItems: 0, pageSize: 20 } };
+  }
+);
+const data = result.data;
+const degraded = result.pending;
 
 const statusLabel = (s: string) => (t.bp.status as Record<string, string>)[s] || s;
 const statusClass = (s: string) =>
@@ -59,7 +72,7 @@ const pages = pageWindow(data.pagination.currentPage, data.pagination.totalPages
 ---
 
 <Layout title={t.bp.listTitle} description={t.bp.subtitle}>
-  <div class="space-y-6">
+  <div class="space-y-6" data-page="bp-list">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <h1 class="text-3xl font-bold tracking-tight text-white">{t.bp.listTitle}</h1>
@@ -69,7 +82,7 @@ const pages = pageWindow(data.pagination.currentPage, data.pagination.totalPages
     </div>
 
     {degraded && (
-      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.serviceUnavailable}</div>
+      <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-300" data-testid="degraded-notice">{t.common.dataPending}</div>
     )}
 
     <div class="overflow-x-auto rounded-lg border border-gray-800 bg-gray-900/50 shadow-xl">

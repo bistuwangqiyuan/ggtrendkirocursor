@@ -1,20 +1,35 @@
 import { clampBatchSize } from '../../src/lib/bpBatch';
-import { bpService } from '../../src/lib/services/bp';
+import { runBpBatch } from '../../src/lib/services/bpBatchRunner';
+import { trendsCollector } from '../../src/lib/services/trendsCollector';
+import { siteMonitorService } from '../../src/lib/services/siteMonitor';
+import { runMaintenance } from '../../src/lib/services/maintenance';
+import { rebuildAllSnapshots } from '../../src/lib/cache/snapshotBuilder';
 import { isLlmConfigured } from '../../src/lib/services/llm';
+import { flushErrorLog, recordError } from '../../src/lib/observability/errorLog';
+import { runWithDbContext } from '../../src/lib/observability/dbContext';
 
 /**
- * Background BP batch generator. The `-background` filename suffix gives this
- * function the 15-minute execution budget (vs. the 26s sync limit).
+ * The single scheduled window in which this site is allowed to touch Postgres.
  *
- * Generation runs IN-PROCESS via bpService (esbuild bundles src + pg, so the
- * DB is reachable directly). This is deliberate: the previous design called
- * the synchronous /api/bp/cron endpoint over HTTP, which is capped at 26s —
- * any LLM call slower than that got the SSR function killed mid-write and left
- * the report stuck at 'generating' forever (the root cause of the July 2026
- * all-failed streak). In here each generation may use the full LLM timeout.
+ * The `-background` filename suffix gives this function the 15-minute execution
+ * budget (vs. the 26s sync limit).
  *
- * Invoked (fire-and-forget) by the scheduled `bp-scheduled` function. Netlify
- * returns 202 to the caller immediately; this body keeps running.
+ * WHY EVERYTHING IS IN ONE FUNCTION
+ * Neon's free plan bills compute time, not queries, and auto-suspends after 5
+ * idle minutes. Three separate cron functions (collect at :50, BP at :00,
+ * monitor at :20) meant three separate wake-ups, each dragging a 5-minute idle
+ * tail behind it — roughly 0.73 wasted hours/day in suspend timers alone.
+ * Running collect -> generate -> monitor -> maintenance back to back in one
+ * invocation costs one wake-up and one idle tail.
+ *
+ * Generation runs IN-PROCESS (esbuild bundles src + pg, so the DB is reachable
+ * directly). This is deliberate: an earlier design called the synchronous
+ * /api/bp/cron endpoint over HTTP, which is capped at 26s — any LLM call slower
+ * than that got the SSR function killed mid-write and left the report stuck at
+ * 'generating' forever (the root cause of the July 2026 all-failed streak).
+ *
+ * Order matters: collect first so the keyword pool is fresh before generation
+ * picks candidates; snapshots last so they reflect everything this run wrote.
  *
  * Tunables:
  *   BP_BATCH_SIZE  number of BPs to attempt per run (default 5, clamped 1-10)
@@ -23,13 +38,13 @@ import { isLlmConfigured } from '../../src/lib/services/llm';
 
 /**
  * Stop starting new generations once this much of the 15-min budget is spent.
- * Reasoning-tier models (auto-upgraded, e.g. qwen3.7-max) take ~2min per BP,
- * so a full batch can overrun the budget; an iteration started after this
- * cutoff risks being killed mid-DB-write and leaving a row stuck at
- * 'generating' — the exact failure mode this function exists to avoid.
- * 11 min leaves >= one full LLM timeout (150s) plus write headroom.
+ * Reasoning-tier models (auto-upgraded, e.g. qwen3.7-max) take ~2min per BP, so
+ * a full batch can overrun the budget. The reserve after this cutoff covers the
+ * flush, monitoring, maintenance and snapshot rebuild that follow.
  */
-const BATCH_TIME_BUDGET_MS = 11 * 60 * 1000;
+const GENERATE_BUDGET_MS = 10 * 60 * 1000;
+/** Reserve for the post-generation steps, so they are never cut off. */
+const TAIL_BUDGET_MS = 3 * 60 * 1000;
 
 export const handler = async (event: { headers?: Record<string, string | undefined> }) => {
   const startedAt = Date.now();
@@ -50,74 +65,91 @@ export const handler = async (event: { headers?: Record<string, string | undefin
     return { statusCode: 401, body: 'unauthorized' };
   }
 
-  if (!isLlmConfigured()) {
-    console.error('[bp-batch] LLM not configured; skipping run');
-    return { statusCode: 200, body: 'skipped: LLM not configured' };
-  }
+  const parts: string[] = [];
 
-  const batchSize = clampBatchSize(process.env.BP_BATCH_SIZE);
-  let generated = 0;
-  let skipped = 0;
-  let failed = 0;
-  let reused = 0;
-  let consecutiveFailures = 0;
-  // Report ids already produced this run. findReusable returns an EXISTING id
-  // (same-keyword reuse); business-model dedup and fresh generations each yield
-  // a NEW id. A repeated id therefore means the picker can't advance to a new
-  // hotword (pool of genuinely-new keywords exhausted) -> stop early instead of
-  // spending the remaining iterations re-emitting the same report.
-  const seenReportIds = new Set<string>();
-
-  for (let i = 0; i < batchSize; i++) {
-    if (Date.now() - startedAt > BATCH_TIME_BUDGET_MS) {
-      console.log(`[bp-batch] time budget spent after ${i} iteration(s); stopping batch early`);
-      break;
-    }
+  return runWithDbContext({ reason: 'cron', route: 'bp-batch-background' }, async () => {
+    // --- 1. Trends collection (was: trends-collector at :50) --------------
     try {
-      // Full default LLM timeout is fine here (15-min budget).
-      const result = await bpService.runScheduledGeneration();
-
-      if (result.success && result.data.action === 'generated') {
-        generated++;
-        consecutiveFailures = 0;
-        const rid = result.data.report.id;
-        console.log(`[bp-batch] ${i + 1}/${batchSize} -> generated ${rid} "${result.data.report.keyword}"`);
-        if (seenReportIds.has(rid)) {
-          reused++;
-          console.log('[bp-batch] repeated report id (reuse-loop / new-keyword pool exhausted); stopping batch early');
-          break;
-        }
-        seenReportIds.add(rid);
-      } else if (result.success && result.data.action === 'skipped') {
-        // Keyword pool exhausted (no eligible trend); stop early.
-        skipped++;
-        console.log(`[bp-batch] ${i + 1}/${batchSize} -> skipped (${result.data.reason}); stopping batch early`);
-        break;
-      } else if (!result.success) {
-        failed++;
-        consecutiveFailures++;
-        console.error(`[bp-batch] ${i + 1}/${batchSize} -> failed: ${result.error.code} ${result.error.message}`);
-        // Several failures in a row usually means LLM/all-endpoints down; bail
-        // out. Tolerate transient single timeouts so one hiccup doesn't cut a
-        // 10-BP run short.
-        if (result.error.code === 'LLM_NOT_CONFIGURED') break;
-        if (consecutiveFailures >= 3) {
-          console.error('[bp-batch] 3 consecutive failures; stopping batch early');
-          break;
-        }
-      }
-    } catch (err) {
-      failed++;
-      consecutiveFailures++;
-      console.error(`[bp-batch] ${i + 1}/${batchSize} unexpected error:`, (err as Error).message);
-      if (consecutiveFailures >= 3) break;
+      const collected = await trendsCollector.collect();
+      parts.push(`collected=${collected.inserted}`);
+      console.log(
+        `[bp-batch] collect: inserted=${collected.inserted} skipped=${collected.skipped} errors=${collected.errors.length}`
+      );
+      // Rebuild the trends snapshot before generation, not with the others at the
+      // end: the candidate picker reads that snapshot, so without this the batch
+      // would select from keywords collected three hours ago and every new
+      // keyword would wait a full cycle.
+      const trendsSnapshot = await rebuildAllSnapshots({ only: ['trends'] });
+      parts.push(`trendsSnapshot=${trendsSnapshot.written.trends ?? 0}`);
+    } catch (error) {
+      parts.push('collect=error');
+      console.error('[bp-batch] collect failed:', (error as Error).message);
+      recordError('bp-batch', error, { context: { stage: 'collect' } });
     }
 
-    // Small spacing between calls to be gentle on the LLM endpoints / DB pool.
-    if (i < batchSize - 1) await new Promise((r) => setTimeout(r, 1500));
-  }
+    // --- 2. BP generation -------------------------------------------------
+    if (!isLlmConfigured()) {
+      parts.push('bp=skipped(no LLM)');
+      console.error('[bp-batch] LLM not configured; skipping generation');
+    } else {
+      const batchSize = clampBatchSize(process.env.BP_BATCH_SIZE);
+      const summary = await runBpBatch({
+        batchSize,
+        generateUntil: startedAt + GENERATE_BUDGET_MS,
+        spacingMs: 1500,
+      });
+      parts.push(
+        `generated=${summary.generated} dup=${summary.duplicates} failed=${summary.failed} replayed=${summary.replayed} of batchSize=${batchSize}`
+      );
+      console.log(
+        `[bp-batch] generation done: ${JSON.stringify({
+          ...summary,
+          errors: summary.errors.slice(0, 5),
+        })}`
+      );
+    }
 
-  const summary = `generated=${generated} reused=${reused} skipped=${skipped} failed=${failed} of batchSize=${batchSize}`;
-  console.log(`[bp-batch] done: ${summary}`);
-  return { statusCode: 200, body: summary };
+    // --- 3. Site monitoring (was: site-monitor at :20) --------------------
+    // Skipped if the batch already ate the budget; monitoring is the least
+    // time-critical step and runs again in 3 hours.
+    if (Date.now() - startedAt < 15 * 60 * 1000 - TAIL_BUDGET_MS) {
+      try {
+        const checks = await siteMonitorService.runChecks();
+        const down = checks.filter((c) => !c.ok).length;
+        parts.push(`monitored=${checks.length} down=${down}`);
+        console.log(`[bp-batch] monitor: ${checks.length} site(s), ${down} down`);
+      } catch (error) {
+        parts.push('monitor=error');
+        console.error('[bp-batch] monitor failed:', (error as Error).message);
+        recordError('bp-batch', error, { context: { stage: 'monitor' } });
+      }
+    } else {
+      parts.push('monitor=skipped(budget)');
+    }
+
+    // --- 4. Storage housekeeping -----------------------------------------
+    const maintenance = await runMaintenance();
+    parts.push(
+      `pruned=trends:${maintenance.trendsDeleted},checks:${maintenance.siteChecksDeleted},logs:${maintenance.logsDeleted}`
+    );
+
+    // --- 5. Snapshot rebuild (the whole point: read paths never touch DB) --
+    // Trends were already rebuilt in step 1 and nothing since then changed them.
+    try {
+      const snapshots = await rebuildAllSnapshots({ only: ['landing', 'bp', 'monitor'] });
+      const totalWritten = Object.values(snapshots.written).reduce((a, b) => a + b, 0);
+      parts.push(`snapshots=${totalWritten}`);
+      console.log(`[bp-batch] snapshots: ${JSON.stringify(snapshots)}`);
+    } catch (error) {
+      parts.push('snapshots=error');
+      console.error('[bp-batch] snapshot rebuild failed:', (error as Error).message);
+      recordError('bp-batch', error, { context: { stage: 'snapshots' } });
+    }
+
+    const body = `${parts.join(' ')} elapsed=${Math.round((Date.now() - startedAt) / 1000)}s`;
+    console.log(`[bp-batch] done: ${body}`);
+    // Persist buffered log entries; this must be the last thing we do.
+    await flushErrorLog();
+    return { statusCode: 200, body };
+  });
 };

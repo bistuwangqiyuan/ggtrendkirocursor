@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { bpService, SYNC_LLM_TIMEOUT_MS } from '../../../lib/services/bp';
 import { isLlmConfigured } from '../../../lib/services/llm';
+import { rebuildAllSnapshots } from '../../../lib/cache/snapshotBuilder';
 
 export const prerender = false;
 
@@ -58,6 +59,11 @@ export const POST: APIRoute = async ({ request, url }) => {
       }, 200);
     }
 
+    // A new report must reach the snapshots or /bp and /t/[slug] would not show
+    // it until the next collector run. Landing details carry the BP link, so
+    // they are refreshed too.
+    const snapshots = await rebuildAllSnapshots({ only: ['bp', 'landing'], budgetMs: 60_000 });
+
     return json({
       success: true,
       action: 'generated',
@@ -66,6 +72,7 @@ export const POST: APIRoute = async ({ request, url }) => {
       status: result.data.report.status,
       trendScore: result.data.trendScore,
       rank: result.data.rank,
+      snapshots,
     }, 200);
   } catch (error) {
     console.error('BP cron API error:', error);

@@ -2,23 +2,26 @@
 import Layout from '../layouts/Layout.astro';
 import { siteMonitorService, SEO_CHECK_KEYS } from '../lib/services/siteMonitor';
 import type { SiteWithLatestCheck } from '../lib/services/siteMonitor';
-import { isDbDown } from '../lib/db/client';
+import { listMonitorSitesFromSnapshot } from '../lib/cache/snapshotReaders';
+import { readForPage } from '../lib/cache/readPath';
+import { applyPageCache, CACHE_PROFILES } from '../lib/cache/httpCache';
 import { getTranslations } from '../lib/i18n';
 import { formatDateTime } from '../lib/utils/format';
 
 export const prerender = false;
 
+applyPageCache(Astro, CACHE_PROFILES.monitor);
+
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
 
-let sites: SiteWithLatestCheck[] = [];
-let degraded = false;
-try {
-  sites = await siteMonitorService.listSitesWithLatestCheck();
-} catch {
-  degraded = true;
-}
-degraded = degraded || isDbDown();
+const monitorRead = await readForPage(
+  'monitor:latest',
+  () => listMonitorSitesFromSnapshot(),
+  () => siteMonitorService.listSitesWithLatestCheck()
+);
+const sites: SiteWithLatestCheck[] = monitorRead.data;
+const degraded = monitorRead.pending;
 
 const upCount = sites.filter((s) => s.lastCheck?.ok).length;
 const downCount = sites.filter((s) => s.lastCheck && !s.lastCheck.ok).length;

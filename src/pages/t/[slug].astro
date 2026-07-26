@@ -1,22 +1,30 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { landingService } from '../../lib/services/landing';
+import { getLandingDataFromSnapshot } from '../../lib/cache/snapshotReaders';
+import { readForPage } from '../../lib/cache/readPath';
+import { applyPageCache, CACHE_PROFILES } from '../../lib/cache/httpCache';
 import { getTranslations } from '../../lib/i18n';
 import { formatNumber, formatGrowthRate, formatDateTime, formatRelativeTime } from '../../lib/utils/format';
 
 export const prerender = false;
 
+applyPageCache(Astro, CACHE_PROFILES.landingDetail);
+
 const locale = Astro.locals.locale || 'zh';
 const t = getTranslations(locale);
 
 const slug = Astro.params.slug || '';
-let data: Awaited<ReturnType<typeof landingService.getLandingData>> = null;
-try {
-  data = await landingService.getLandingData(slug);
-} catch {
-  data = null;
-}
+const result = await readForPage(
+  'landing:detail',
+  () => getLandingDataFromSnapshot(slug),
+  () => landingService.getLandingData(slug)
+);
+const data = result.data;
 
+// A missing snapshot for one slug is indistinguishable from an unknown keyword
+// from the visitor's point of view, and 404 is the honest answer either way: we
+// must not tell a crawler a page exists when we cannot render its content.
 if (!data) {
   return new Response(null, { status: 404 });
 }
