@@ -29,8 +29,13 @@ export const POST: APIRoute = async ({ request }) => {
     only = requested as SnapshotSection[];
   }
 
+  // This route is a synchronous function (~26s ceiling on Netlify), so it must
+  // default to a budget it can actually finish inside; without one, the first
+  // build over thousands of keywords 504s and the caller learns nothing about
+  // what got written. Sections left unfinished report `truncated` and resume on
+  // the next call — the cron path passes its own, much larger budget.
   const budgetRaw = Number(url.searchParams.get('budgetMs'));
-  const budgetMs = Number.isFinite(budgetRaw) && budgetRaw > 0 ? budgetRaw : undefined;
+  const budgetMs = Number.isFinite(budgetRaw) && budgetRaw > 0 ? budgetRaw : 20_000;
 
   try {
     const report = await rebuildAllSnapshots({ only, budgetMs });

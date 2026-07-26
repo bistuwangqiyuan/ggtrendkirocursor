@@ -661,12 +661,21 @@ async function run() {
 
   // CDN cache directives: anonymous reads must be edge-cacheable, and an
   // authenticated read must never be stored by a shared cache.
+  // Netlify consumes `Netlify-CDN-Cache-Control` at the edge and strips it from
+  // the client response, so the directive itself is not observable from here.
+  // What IS observable is the effect: a `Cache-Status` from the Netlify cache,
+  // our `Cache-Tag`, and browser revalidation left on. A hit (or an `age`)
+  // proves the edge is serving copies without invoking the function at all.
   const trendsAnon = await http('/trends');
-  const cdnHeader = trendsAnon.headers.get('netlify-cdn-cache-control') || '';
+  const cacheStatus = trendsAnon.headers.get('cache-status') || '';
+  const cacheTag = trendsAnon.headers.get('cache-tag') || '';
   const cacheControl = trendsAnon.headers.get('cache-control') || '';
-  expect(/s-maxage=\d+/.test(cdnHeader) || /s-maxage=\d+/.test(cacheControl),
-    'R-NEON3', '/trends sets a CDN cache TTL', `cdn=${cdnHeader || cacheControl}`,
-    `cdn=${cdnHeader || 'absent'} cache-control=${cacheControl || 'absent'}`);
+  const age = trendsAnon.headers.get('age') || '';
+  const edgeCached = /Netlify/i.test(cacheStatus) && (/hit/i.test(cacheStatus) || Number(age) > 0);
+  expect(edgeCached && cacheTag.length > 0 && /must-revalidate/.test(cacheControl),
+    'R-NEON3', '/trends is served from the Netlify edge cache',
+    `cache-status=${cacheStatus} age=${age} tag=${cacheTag}`,
+    `cache-status=${cacheStatus || 'absent'} age=${age || 'absent'} tag=${cacheTag || 'absent'} cache-control=${cacheControl || 'absent'}`);
   if (authCookie) {
     const trendsAuthed = await http('/trends', { headers: { Cookie: authCookie } });
     const authCache = trendsAuthed.headers.get('cache-control') || '';

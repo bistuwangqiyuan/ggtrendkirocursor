@@ -68,17 +68,34 @@ export interface SnapshotBuildReport {
   errors: Record<string, string>;
   /** Sections skipped because the time budget ran out. */
   skipped: string[];
+  /**
+   * Sections that started but stopped early at the deadline. Their remaining
+   * items are picked up by the next run, since both detail loops are driven by a
+   * manifest of what is already current.
+   */
+  truncated: string[];
   durationMs: number;
 }
 
 export interface BuildOptions {
-  /** Wall-clock budget; sections are skipped once exceeded. */
+  /**
+   * Wall-clock budget. Sections not yet started are skipped once it is spent,
+   * and the per-item detail loops stop at the same deadline — without that, a
+   * first build over thousands of keywords outlives any function timeout.
+   */
   budgetMs?: number;
   /** Restrict the build to these sections. */
   only?: SnapshotSection[];
 }
 
 export type SnapshotSection = 'trends' | 'landing' | 'bp' | 'monitor';
+
+/** What one section managed to do before its deadline. */
+interface SectionResult {
+  written: number;
+  /** True when items were left for the next run. */
+  truncated?: boolean;
+}
 
 const ALL_SECTIONS: SnapshotSection[] = ['trends', 'landing', 'bp', 'monitor'];
 
@@ -90,10 +107,13 @@ const ALL_SECTIONS: SnapshotSection[] = ['trends', 'landing', 'bp', 'monitor'];
 export async function rebuildAllSnapshots(options: BuildOptions = {}): Promise<SnapshotBuildReport> {
   const startedAt = Date.now();
   const budgetMs = options.budgetMs ?? 10 * 60 * 1000;
+  const deadline = startedAt + budgetMs;
   const sections = options.only ?? ALL_SECTIONS;
-  const report: SnapshotBuildReport = { ok: true, written: {}, errors: {}, skipped: [], durationMs: 0 };
+  const report: SnapshotBuildReport = {
+    ok: true, written: {}, errors: {}, skipped: [], truncated: [], durationMs: 0,
+  };
 
-  const builders: Record<SnapshotSection, () => Promise<number>> = {
+  const builders: Record<SnapshotSection, (deadline: number) => Promise<SectionResult>> = {
     trends: buildTrendsSnapshots,
     landing: buildLandingSnapshots,
     bp: buildBpSnapshots,
@@ -101,12 +121,14 @@ export async function rebuildAllSnapshots(options: BuildOptions = {}): Promise<S
   };
 
   for (const section of sections) {
-    if (Date.now() - startedAt > budgetMs) {
+    if (Date.now() > deadline) {
       report.skipped.push(section);
       continue;
     }
     try {
-      report.written[section] = await builders[section]();
+      const result = await builders[section](deadline);
+      report.written[section] = result.written;
+      if (result.truncated) report.truncated.push(section);
     } catch (error) {
       report.ok = false;
       report.errors[section] = (error as Error).message;
@@ -123,7 +145,7 @@ export async function rebuildAllSnapshots(options: BuildOptions = {}): Promise<S
 // trends
 // ---------------------------------------------------------------------------
 
-async function buildTrendsSnapshots(): Promise<number> {
+async function buildTrendsSnapshots(): Promise<SectionResult> {
   const tableName = await getTrendsTableName();
   const timestampCol = await getTimestampColumnName(tableName);
   const tsRef = timestampCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
@@ -165,14 +187,14 @@ async function buildTrendsSnapshots(): Promise<number> {
   const categoryList = categories.success ? categories.data.filter(Boolean) : [];
   if (await writeSnapshot<string[]>(SNAPSHOT_KEYS.trendsCategories, categoryList)) written++;
 
-  return written;
+  return { written };
 }
 
 // ---------------------------------------------------------------------------
 // landing (/t and /t/[slug])
 // ---------------------------------------------------------------------------
 
-async function buildLandingSnapshots(): Promise<number> {
+async function buildLandingSnapshots(deadline: number): Promise<SectionResult> {
   const tableName = await getTrendsTableName();
   const timestampCol = await getTimestampColumnName(tableName);
   const tsRef = timestampCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
@@ -215,7 +237,7 @@ async function buildLandingSnapshots(): Promise<number> {
   const batch = stale.slice(0, LANDING_DETAIL_WRITES_PER_RUN);
   if (batch.length === 0) {
     await pruneLandingDetails(keywords);
-    return written;
+    return { written };
   }
 
   const batchKeywords = batch.map((k) => k.keyword);
@@ -268,7 +290,12 @@ async function buildLandingSnapshots(): Promise<number> {
     });
   }
 
+  let truncated = false;
   for (const kw of batch) {
+    if (Date.now() > deadline) {
+      truncated = true;
+      break;
+    }
     const detail: LandingDetailSnapshot = {
       keyword: kw,
       history: historyByKeyword.get(kw.keyword) ?? [],
@@ -280,9 +307,11 @@ async function buildLandingSnapshots(): Promise<number> {
     }
   }
 
+  // The manifest records exactly what got written, so an interrupted run resumes
+  // where it stopped instead of redoing the whole batch.
   await writeSnapshot<LandingManifestSnapshot>(LANDING_MANIFEST_KEY, { slugs: manifest });
-  await pruneLandingDetails(keywords);
-  return written;
+  if (!truncated) await pruneLandingDetails(keywords);
+  return { written, truncated: truncated || stale.length > batch.length };
 }
 
 /** Matches bp.ts / landing.ts normalizeKeyword so BP lookup keys line up. */
@@ -352,14 +381,20 @@ async function refreshBpListSnapshot(): Promise<{ rows: any[]; written: number }
   return { rows, written };
 }
 
-async function buildBpSnapshots(): Promise<number> {
+async function buildBpSnapshots(deadline: number): Promise<SectionResult> {
   const { rows, written: listWritten } = await refreshBpListSnapshot();
   let written = listWritten;
 
   // Detail snapshots: only for reports whose updated_at moved (or that are new).
   const manifest = (await readSnapshot<BpManifestSnapshot>(BP_MANIFEST_KEY))?.data.reports ?? {};
   const stale = rows.filter((r) => manifest[r.id] !== toIso(r.updated_at));
-  for (const row of stale.slice(0, BP_DETAIL_WRITES_PER_RUN)) {
+  const batch = stale.slice(0, BP_DETAIL_WRITES_PER_RUN);
+  let truncated = stale.length > batch.length;
+  for (const row of batch) {
+    if (Date.now() > deadline) {
+      truncated = true;
+      break;
+    }
     const result = await bpService.getById(row.id);
     if (!result.success) continue;
     if (await writeBpDetail(result.data)) {
@@ -378,7 +413,7 @@ async function buildBpSnapshots(): Promise<number> {
   }
 
   await writeSnapshot<BpManifestSnapshot>(BP_MANIFEST_KEY, { reports: manifest });
-  return written;
+  return { written, truncated };
 }
 
 async function writeBpDetail(report: BpReport): Promise<boolean> {
@@ -415,7 +450,7 @@ export async function captureGeneratedBpReport(report: BpReport): Promise<void> 
 // monitor (/monitor)
 // ---------------------------------------------------------------------------
 
-async function buildMonitorSnapshot(): Promise<number> {
+async function buildMonitorSnapshot(): Promise<SectionResult> {
   const sites = await siteMonitorService.listSitesWithLatestCheck();
   const payload: MonitorSnapshot = {
     sites: sites.map((s) => ({
@@ -429,5 +464,5 @@ async function buildMonitorSnapshot(): Promise<number> {
         : null,
     })),
   };
-  return (await writeSnapshot<MonitorSnapshot>(SNAPSHOT_KEYS.monitorLatest, payload)) ? 1 : 0;
+  return { written: (await writeSnapshot<MonitorSnapshot>(SNAPSHOT_KEYS.monitorLatest, payload)) ? 1 : 0 };
 }
