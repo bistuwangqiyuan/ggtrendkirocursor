@@ -1,10 +1,8 @@
 import type { APIRoute } from 'astro';
 import { authorizeAdminRequest } from '../../../lib/utils/adminAuth';
-import { rebuildAllSnapshots, type SnapshotSection } from '../../../lib/cache/snapshotBuilder';
+import { ALL_SECTIONS, rebuildAllSnapshots, type SnapshotSection } from '../../../lib/cache/snapshotBuilder';
 
 export const prerender = false;
-
-const VALID_SECTIONS: SnapshotSection[] = ['trends', 'landing', 'bp', 'monitor'];
 
 /**
  * Force a snapshot rebuild. Needed to bootstrap a fresh deploy (before the first
@@ -22,7 +20,7 @@ export const POST: APIRoute = async ({ request }) => {
   let only: SnapshotSection[] | undefined;
   if (raw) {
     const requested = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    const invalid = requested.filter((s) => !VALID_SECTIONS.includes(s as SnapshotSection));
+    const invalid = requested.filter((s) => !ALL_SECTIONS.includes(s as SnapshotSection));
     if (invalid.length > 0) {
       return json({ success: false, error: `未知的 sections: ${invalid.join(', ')}` }, 400);
     }

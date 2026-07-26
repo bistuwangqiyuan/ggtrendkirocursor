@@ -55,6 +55,19 @@ describe('classifying from the keyword alone', () => {
     expect(topicOf({ keyword: 'stranger things season 3' })).toBe('entertainment');
   });
 
+  // India and Singapore are collected regions. These reached generation as
+  // `general` in production because both the fixture vocabulary and the
+  // publishers were local.
+  it.each([
+    ['ভারত বনাম জিম্বাবুয়ে', 'Bengali "India versus Zimbabwe"'],
+    ['భారత్ వర్సెస్ జింబాబ్వే', 'Telugu "India versus Zimbabwe"'],
+    ['भारत बनाम ऑस्ट्रेलिया', 'Hindi "India versus Australia"'],
+    ['ಕ್ರಿಕೆಟ್', 'Kannada "cricket"'],
+    ['क्रिकेट स्कोर', 'Hindi "cricket score"'],
+  ])('recognises a fixture written in a local script: %s (%s)', (keyword) => {
+    expect(topicOf({ keyword })).toBe('sports');
+  });
+
   it('leaves an ambiguous bare name alone rather than guessing', () => {
     // Under-blocking wastes one report; over-blocking loses an opportunity and
     // says nothing about it. The first failure is the cheaper one.

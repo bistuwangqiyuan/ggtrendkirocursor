@@ -112,6 +112,14 @@ export const SPORTS_STRONG_TERMS = [
   'trade deadline', 'free agency', 'draft pick', 'injury report',
   'playoff', 'playoffs', 'standings', 'matchday', 'kickoff', 'kick-off',
   'qualifying', 'pole position', 'grand slam', 'medal table',
+  // India and Singapore are collected regions, and cricket fixtures there
+  // trend in local scripts where none of the terms above can match — the
+  // publishers are local outlets too, so the keyword is the only signal left.
+  // Observed in production as "ভারত বনাম জিম্বাবুয়ে" and
+  // "భారత్ వర్సెస్ జింబాబ్వే" reaching generation as `general`.
+  'बनाम', 'বনাম', 'వర్సెస్', 'ವಿರುದ್ಧ', 'എതിരെ', 'எதிராக',      // "versus"
+  'क्रिकेट', 'ক্রিকেট', 'క్రికెట్', 'கிரிக்கெட்', 'ಕ್ರಿಕೆಟ್', 'ക്രിക്കറ്റ്',   // "cricket"
+  'फुटबॉल', 'ফুটবল', 'ఫుట్‌బాల్', 'கால்பந்து', 'ಫುಟ್‌ಬಾಲ್',            // "football"
 ];
 
 /** Suggestive in a headline but too common to classify alone. */

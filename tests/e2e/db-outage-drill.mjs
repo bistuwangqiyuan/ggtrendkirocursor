@@ -15,8 +15,9 @@
  *   DRILL_PORT=4331 node tests/e2e/db-outage-drill.mjs
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
@@ -207,6 +208,31 @@ function startServer(snapshotDir) {
   return { child, log };
 }
 
+/**
+ * `astro dev` runs the server in a grandchild, so killing the direct child
+ * leaves the port bound. A survivor is worse than a crash: it answers the next
+ * drill from a snapshot directory that has already been deleted, and every
+ * assertion fails for a reason that has nothing to do with the code.
+ */
+function stopServer(child) {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } else {
+    child.kill('SIGKILL');
+  }
+}
+
+function portInUse() {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: '127.0.0.1', port: PORT });
+    const done = (answer) => { socket.destroy(); resolve(answer); };
+    socket.setTimeout(1000);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+  });
+}
+
 async function waitForServer() {
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -235,6 +261,15 @@ async function get(path) {
 }
 
 async function run() {
+  if (await portInUse()) {
+    console.error(
+      `Port ${PORT} is already serving. Refusing to run: the drill would talk to ` +
+      `that server instead of its own and report meaningless failures.\n` +
+      `Stop it, or set DRILL_PORT to a free port.`
+    );
+    return 2;
+  }
+
   const snapshotDir = await mkdtemp(join(tmpdir(), 'drill-snapshots-'));
   await seedSnapshots(snapshotDir);
   console.log(`\n=== DB-outage drill ===\nDATABASE_URL: ${BROKEN_DATABASE_URL}\nSnapshots:    ${snapshotDir}\n`);
@@ -324,9 +359,7 @@ async function run() {
       exitCode = 1;
     }
   } finally {
-    child.kill('SIGTERM');
-    // Windows sometimes leaves the port bound if the child ignores SIGTERM.
-    setTimeout(() => child.kill('SIGKILL'), 3000).unref?.();
+    stopServer(child);
     await rm(snapshotDir, { recursive: true, force: true });
   }
   return exitCode;

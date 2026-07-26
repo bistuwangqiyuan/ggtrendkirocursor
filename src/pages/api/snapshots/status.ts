@@ -16,6 +16,7 @@ export const GET: APIRoute = async () => {
     landingIndex: SNAPSHOT_KEYS.landingIndex,
     bpList: SNAPSHOT_KEYS.bpList,
     monitorLatest: SNAPSHOT_KEYS.monitorLatest,
+    statsOverview: SNAPSHOT_KEYS.statsOverview,
   };
 
   const snapshots: Record<string, { present: boolean; generatedAt: string | null; ageSeconds: number | null; items: number | null }> = {};
@@ -48,7 +49,7 @@ export const GET: APIRoute = async () => {
 function countItems(data: unknown): number | null {
   if (Array.isArray(data)) return data.length;
   if (data && typeof data === 'object') {
-    for (const field of ['rows', 'keywords', 'reports', 'sites']) {
+    for (const field of ['rows', 'keywords', 'reports', 'sites', 'daily']) {
       const value = (data as Record<string, unknown>)[field];
       if (Array.isArray(value)) return value.length;
     }

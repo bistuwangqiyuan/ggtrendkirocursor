@@ -51,7 +51,8 @@ async function status() {
 // Sections are driven one at a time: each has its own manifest, and finishing
 // one before starting the next keeps the per-pass report easy to read.
 let failures = 0;
-for (const section of ['trends', 'landing', 'bp', 'monitor']) {
+// Stats last: it counts what the earlier sections just wrote.
+for (const section of ['trends', 'landing', 'bp', 'monitor', 'stats']) {
   for (let pass = 1; pass <= MAX_PASSES; pass++) {
     const r = await rebuild(section);
     if (r.status !== 200 || !r.json?.report) {

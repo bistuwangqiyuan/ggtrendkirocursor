@@ -62,6 +62,7 @@ async function main() {
     ['/t', 200],
     ['/bp', 200],
     ['/monitor', 200],
+    ['/stats', 200],
     ['/sitemap.xml', 200],
     ['/api/trends/list', 200],
     ['/api/bp/list', 200],

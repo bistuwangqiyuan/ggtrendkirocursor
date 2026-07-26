@@ -108,7 +108,7 @@ interface SectionResult {
 }
 
 // Stats last: it counts what the other sections just refreshed.
-const ALL_SECTIONS: SnapshotSection[] = ['trends', 'landing', 'bp', 'monitor', 'stats'];
+export const ALL_SECTIONS: SnapshotSection[] = ['trends', 'landing', 'bp', 'monitor', 'stats'];
 
 /**
  * Rebuild every snapshot the read path depends on. Never throws: a failing
