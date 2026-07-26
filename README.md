@@ -171,7 +171,15 @@ BASE_URL=https://<your-site> CRON_SECRET=<secret> node scripts/snapshot-bootstra
 
 ### Neon project isolation (one-time)
 
-The 100 CU-hour allowance and the 0.5 GB storage cap are both per *project*, and this project also hosts a sibling application. `scripts/neon-audit.mjs` measures the split without writing anything:
+The 100 CU-hour allowance and the 0.5 GB storage cap are both per *project*, and this project also hosts a sibling application.
+
+Two tools measure this from different angles, and both are read-only. `scripts/neon-provision.mjs` asks the Neon control plane what the allowance has actually been spent on — `cpu_used_sec` (compute-unit-seconds; 100 CU-hours is 360,000 of them) and `active_time` (wall-clock seconds awake), per project, resetting at `quota_reset_at`. This is the only way to attribute consumption, since nothing inside the database records it:
+
+```bash
+NEON_API_KEY=napi_... node scripts/neon-provision.mjs list
+```
+
+`scripts/neon-audit.mjs` looks inside a database instead, splitting tables by owner and reporting when each was last written:
 
 ```bash
 AUDIT_DATABASE_URL=<url> npx tsx scripts/neon-audit.mjs
@@ -202,7 +210,16 @@ BASE_URL=http://localhost:4399 ADMIN_SECRET=<secret> npm run test:migrated
 
 That rebuilds every snapshot from the new database and asserts each read route renders real content (not the "data pending" placeholder). Then set `DATABASE_URL` on this site in the Netlify dashboard, redeploy, `POST /api/db-init?secret=$ADMIN_SECRET` to confirm the schema, run `scripts/snapshot-bootstrap.mjs`, and keep the old project as a rollback path for a few days. `DATABASE_URL` takes precedence over `NETLIFY_DATABASE_URL` (see `src/lib/db/client.ts`), and setting it at *site* scope leaves the team-wide `NETLIFY_DATABASE_URL` — and therefore the sibling app — untouched.
 
-Provision the new project in the Neon console, not through `netlify database`. They are different products: Neon's own free plan gives 100 CU-hours per project on a compute that autoscales down to 0.25 CU (≈400 awake hours/month), while Netlify Database's free tier allows 48 compute units per billing period on a minimum of 1 CU (≈48 awake hours/month) — below this site's ~76 hours/month of scheduled write windows.
+Provision the new project through Neon, not `netlify database`. They are different products: Neon's own free plan gives 100 CU-hours per project on a compute that autoscales down to 0.25 CU (≈400 awake hours/month), while Netlify Database's free tier allows 48 compute units per billing period on a database pinned to a 1 CU minimum *and* maximum, not customizable below Pro (≈48 awake hours/month) — below this site's ~76 hours/month of scheduled write windows. Netlify's Free plan also stops every site on the account when its 300 monthly credits run out, and database compute spends those credits.
+
+With an API key, `create` provisions a correctly sized project without using the console — same region as the shared one so the copy stays in-region, a 0.25 CU floor to match the budget model, and a 1 CU ceiling so a runaway query cannot autoscale through the month's allowance:
+
+```bash
+NEON_API_KEY=napi_... node scripts/neon-provision.mjs create ggtrendkirocursor
+NEON_API_KEY=napi_... node scripts/neon-provision.mjs uri <project_id>   # if you need them again
+```
+
+It refuses to create a second project under a name that already exists, and prints both the pooled and direct connection strings. Use the pooled one for `DATABASE_URL` (serverless functions open short-lived connections) and the direct one for migrations and `psql`.
 
 You can verify the schedule under Netlify -> Functions -> `bp-scheduled`, or trigger it manually:
 

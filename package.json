@@ -14,6 +14,7 @@
     "test:migrated": "node tests/e2e/migrated-db-check.mjs",
     "test:coverage": "vitest run --coverage",
     "neon:audit": "tsx scripts/neon-audit.mjs",
+    "neon:projects": "node scripts/neon-provision.mjs",
     "neon:migrate": "tsx scripts/neon-migrate.mjs",
     "snapshots:bootstrap": "node scripts/snapshot-bootstrap.mjs"
   },
