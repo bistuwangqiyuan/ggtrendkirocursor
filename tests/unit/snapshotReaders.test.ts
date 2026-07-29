@@ -9,6 +9,7 @@ import {
   getTrendsFromSnapshot,
 } from '../../src/lib/cache/snapshotReaders';
 import type { BpListSnapshot, TrendsTopSnapshot } from '../../src/lib/cache/snapshotTypes';
+import { normalizeBpWindow, bpWindowDays } from '../../src/lib/utils/timeWindow';
 
 let dir: string;
 
@@ -67,6 +68,15 @@ describe('business plan recency window', () => {
 
   it('narrows further for a 7-day window', async () => {
     const read = await listBpFromSnapshot(1, 20, 'createdAt', 'desc', undefined, 7);
+    expect(read.data.reports.map((r) => r.id)).toEqual(['fresh']);
+  });
+
+  it('shows only the last 7 days when the visitor picks no window', async () => {
+    // The page default, exercised end to end: an absent query string must land
+    // on the same narrow window the UI marks as selected.
+    const days = bpWindowDays(normalizeBpWindow(undefined));
+    const read = await listBpFromSnapshot(1, 20, 'createdAt', 'desc', undefined, days);
+    expect(days).toBe(7);
     expect(read.data.reports.map((r) => r.id)).toEqual(['fresh']);
   });
 

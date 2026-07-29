@@ -21,7 +21,7 @@ const sortParam = Astro.url.searchParams.get('sort');
 const orderParam = Astro.url.searchParams.get('order');
 const sortBy: BpListSortBy = sortParam === 'riskAdjusted' ? 'riskAdjusted' : 'createdAt';
 const sortOrder: BpListSortOrder = orderParam === 'asc' ? 'asc' : 'desc';
-// Default to the last month so the newest opportunities are on the first
+// Default to the last week so the newest opportunities are on the first
 // screen; the archive stays reachable through the window selector.
 const timeWindow = normalizeBpWindow(Astro.url.searchParams.get('within'));
 const withinDays = bpWindowDays(timeWindow);
