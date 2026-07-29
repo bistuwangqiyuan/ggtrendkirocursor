@@ -11,6 +11,8 @@ import {
   deleteSnapshot,
   resetSnapshotStore,
   isDbReadFallbackAllowed,
+  snapshotBackend,
+  connectSnapshotStoreToLambda,
 } from '../../src/lib/cache/snapshot';
 
 let dir: string;
@@ -125,6 +127,59 @@ describe('isDbReadFallbackAllowed', () => {
     expect(isDbReadFallbackAllowed()).toBe(true);
     process.env.ALLOW_DB_READ_FALLBACK = 'yes';
     expect(isDbReadFallbackAllowed()).toBe(false);
+  });
+});
+
+/**
+ * The regression that froze every page for 44 hours: in a Lambda, Blobs was
+ * unreachable and this module answered by writing to the container's filesystem,
+ * so every write reported success and no reader ever saw it.
+ */
+describe('no snapshot store in a serverless runtime', () => {
+  beforeEach(() => {
+    // Not 'fs': the point is what happens when Blobs is *expected* and missing.
+    delete process.env.SNAPSHOT_BACKEND;
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'bp-batch-background';
+    resetSnapshotStore();
+  });
+
+  afterEach(() => {
+    delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    process.env.SNAPSHOT_BACKEND = 'fs';
+    resetSnapshotStore();
+  });
+
+  it('reports the backend as unavailable rather than filesystem', async () => {
+    await expect(snapshotBackend()).resolves.toBe('unavailable');
+  });
+
+  it('refuses a write instead of losing it in the container', async () => {
+    await expect(writeSnapshot('trends/top', [{ keyword: 'a' }])).resolves.toBe(false);
+  });
+
+  it('misses reads instead of serving whatever the container happens to hold', async () => {
+    await expect(readSnapshot('trends/top')).resolves.toBeNull();
+    await expect(listSnapshotKeys('landing/detail/')).resolves.toEqual([]);
+    await expect(deleteSnapshot('trends/top')).resolves.toBe(false);
+  });
+
+  it('still uses the filesystem outside a function, where the disk persists', async () => {
+    delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    resetSnapshotStore();
+    await expect(snapshotBackend()).resolves.toBe('filesystem');
+  });
+});
+
+describe('connectSnapshotStoreToLambda', () => {
+  it('does nothing when the event carries no credentials', async () => {
+    await expect(connectSnapshotStoreToLambda({ headers: {} })).resolves.toBe(false);
+    await expect(connectSnapshotStoreToLambda(null)).resolves.toBe(false);
+    await expect(connectSnapshotStoreToLambda({ blobs: '' })).resolves.toBe(false);
+  });
+
+  it('reports failure rather than throwing on a malformed payload', async () => {
+    // A handler must not 500 because the runtime handed it something unexpected.
+    await expect(connectSnapshotStoreToLambda({ blobs: 'not-base64-json', headers: {} })).resolves.toBe(false);
   });
 });
 

@@ -33,6 +33,9 @@ const KEYWORD = 'drill fixture keyword';
 const SLUG = 'drill-fixture-keyword';
 const BP_ID = '11111111-2222-3333-4444-555555555555';
 const NOW = new Date().toISOString();
+const ADMIN_SECRET = 'drill-admin-secret';
+/** Hotwords harvested during the outage, waiting in the intake queue. */
+const QUEUED_KEYWORDS = ['drill queued alpha', 'drill queued beta'];
 
 const results = [];
 function record(name, ok, detail) {
@@ -182,6 +185,36 @@ async function seedSnapshots(dir) {
     monitor: { sites: 1, up: 1, down: 0, avgSeoScore: 90 },
     freshness: { latestTrendAt: NOW, latestBpAt: NOW },
   });
+
+  // The write-side backlog an outage produces. Both live in Blobs, so the ops
+  // surface that reports them must work with no database at all — which is
+  // exactly when an operator needs to know the hotwords were not lost.
+  await writeFixture(dir, 'trends/pending/2026-07-28T00-00-00-000Z-drill1', {
+    batchId: '2026-07-28T00-00-00-000Z-drill1',
+    harvestedAt: NOW,
+    rows: QUEUED_KEYWORDS.map((keyword, i) => ({
+      id: `drill-queued-${i}`,
+      keyword,
+      searchVolume: 90_000,
+      growthRate: 80,
+      category: 'trending',
+      timeRange: '4h',
+      region: 'US',
+      topicClass: 'general',
+    })),
+  });
+  await writeFixture(dir, 'bp/pending/drill-unflushed-run', {
+    batchId: 'drill-unflushed-run',
+    startedAt: NOW,
+    results: [{ snapshot: { keyword: 'drill buffered keyword' }, status: 'completed', title: 'Buffered plan' }],
+  });
+  await writeFixture(dir, 'ops/pipeline-state', {
+    lastRunStartedAt: NOW,
+    lastHealthyRunAt: null,
+    lastFlushAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+    consecutiveDegradedRuns: 3,
+    lastRecoveryTriggerAt: null,
+  });
 }
 
 function startServer(snapshotDir) {
@@ -196,6 +229,7 @@ function startServer(snapshotDir) {
         SNAPSHOT_DIR: snapshotDir,
         // The drill fails if a page quietly reverts to querying Postgres.
         ALLOW_DB_READ_FALLBACK: 'false',
+        ADMIN_SECRET,
         NODE_ENV: 'development',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -315,13 +349,20 @@ async function run() {
       `status=${sitemap.status}`
     );
 
+    // Answers 200 here because the fixtures were just written: the endpoint judges
+    // the READ side, which an outage does not touch. It is also the watchdog signal
+    // for the opposite case (a store the write job cannot reach), where it must 503
+    // — proven in tests/unit/snapshotDelivery.test.ts.
     const status = await get('/api/snapshots/status');
     let statusJson = null;
     try { statusJson = JSON.parse(status.body); } catch { /* reported below */ }
     record(
-      '/api/snapshots/status answers during outage',
-      status.status === 200 && statusJson?.snapshots?.trendsTop?.present === true,
-      `status=${status.status} ok=${statusJson?.ok}`
+      '/api/snapshots/status answers during outage without a false freeze alarm',
+      status.status === 200 &&
+        statusJson?.snapshots?.trendsTop?.present === true &&
+        statusJson?.stale === false &&
+        typeof statusJson?.maxAgeSeconds === 'number',
+      `status=${status.status} ok=${statusJson?.ok} stale=${statusJson?.stale} maxAge=${statusJson?.maxAgeSeconds}`
     );
 
     // Read-only JSON APIs.
@@ -333,6 +374,44 @@ async function run() {
       const r = await get(path);
       record(`${path} serves from snapshot`, r.status === 200 && r.body.includes(needle), `status=${r.status}`);
     }
+
+    // The backlog an outage creates has to be visible DURING the outage, or an
+    // operator cannot tell "hotwords were queued" from "hotwords were lost".
+    const backlogApi = await get(`/api/admin/errors?secret=${ADMIN_SECRET}`);
+    let backlogJson = null;
+    try { backlogJson = JSON.parse(backlogApi.body); } catch { /* reported below */ }
+    const pipeline = backlogJson?.pipeline;
+    record(
+      '/api/admin/errors reports the write backlog during an outage',
+      backlogApi.status === 200 &&
+        pipeline?.queuedTrendRows === QUEUED_KEYWORDS.length &&
+        pipeline?.bufferedReports === 1 &&
+        pipeline?.missedRuns >= 7,
+      `status=${backlogApi.status} queued=${pipeline?.queuedTrendRows} buffered=${pipeline?.bufferedReports} missed=${pipeline?.missedRuns}`
+    );
+
+    record(
+      '/api/admin/errors reports read-side freshness without touching Postgres',
+      backlogApi.status === 200 && backlogJson?.snapshots?.stale === false && backlogJson?.opsAlerts === null,
+      `stale=${backlogJson?.snapshots?.stale} opsAlerts=${JSON.stringify(backlogJson?.opsAlerts)}`
+    );
+
+    const backlogPage = await get(`/admin/errors?secret=${ADMIN_SECRET}`);
+    record(
+      '/admin/errors renders the write backlog during an outage',
+      backlogPage.status === 200 && backlogPage.body.includes('data-testid="pipeline-backlog"'),
+      `status=${backlogPage.status}`
+    );
+
+    // The read-side panel is the surface that would have shown the July 2026
+    // freeze; like everything else here it has to work with no database.
+    record(
+      '/admin/errors renders read-side freshness during an outage',
+      backlogPage.status === 200 &&
+        backlogPage.body.includes('data-testid="read-side-freshness"') &&
+        backlogPage.body.includes('data-testid="ops-alerts"'),
+      `status=${backlogPage.status}`
+    );
 
     // An unknown slug must still 404 rather than 500 while the DB is unreachable:
     // otherwise crawlers would index placeholder pages during an outage.

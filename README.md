@@ -149,6 +149,33 @@ curl -X POST "https://<your-site>/api/db-init?secret=$ADMIN_SECRET&migrate=bp" -
 
 `bp-batch-background` is the site's only database write window. In one invocation it collects trends, generates the BP batch, probes the monitored sites, applies data retention, and rebuilds the read snapshots. The separate `trends-collector` and `site-monitor` schedules were folded into it because Neon's free plan bills compute *time* — each extra schedule woke the database and left a 5-minute idle timer behind it.
 
+### Surviving a Neon outage
+
+Neon's free plan is periodically unavailable (quota exhausted, suspended, cold). The Google Trends RSS feed is a rolling window, so a harvest thrown away during an outage was a **permanently lost** set of hotwords, and the plans they would have produced never existed. The write path is therefore built to defer work rather than drop it:
+
+| Step | Without a database | When it returns |
+| --- | --- | --- |
+| Harvest hotwords | Queued in Blobs with the real observation time ([`trendIntake.ts`](src/lib/services/trendIntake.ts)) | Replayed and de-duplicated; kept up to `TRENDS_INTAKE_TTL_HOURS` (48h — as long as the picker would still consider them) |
+| Pick candidates | Cached dedupe sets ([`bpDedupeCache.ts`](src/lib/services/bpDedupeCache.ts)) plus the queue and the last trends snapshot | Live sets again; the cache is refreshed each healthy run |
+| Generate plans | Runs normally; each finished plan is buffered in Blobs | Flushed, re-checked against the live archive so a stale cache cannot create a duplicate |
+| Catch up | — | Missed windows are inferred from the last flush and the batch asks for extra candidates, capped at 12 |
+
+[`pipeline-recovery.ts`](netlify/functions/pipeline-recovery.ts) runs hourly and drains that backlog as soon as Postgres answers, so recovery is not delayed until the next three-hourly window. It reads only Blobs, so on a healthy site it finds nothing and never wakes the database. The backlog is visible at `/admin/errors` and in `GET /api/admin/errors` (`pipeline` block) — both of which also work during the outage they describe.
+
+### Surviving a broken snapshot store
+
+The mirror image of a Neon outage, and a worse one because it hides: on 2026-07-26 the scheduled job kept writing reports to Postgres while **every page stayed frozen for 44 hours**. The job is a Lambda-compatible (v1) function, and `@netlify/blobs` only reads the credentials such a function receives once [`connectLambda(event)`](https://docs.netlify.com/build/data-and-storage/netlify-blobs/) has run. Without it `getStore()` raises `MissingBlobsEnvironmentError`, which the snapshot layer answered by falling back to the filesystem — inside a Lambda that is a throwaway directory, so every write reported success and reached no reader. Nothing complained, because the error log is a blob too.
+
+Three changes, because any one of them alone would have left the failure silent:
+
+| Layer | Before | Now |
+| --- | --- | --- |
+| Credentials | v1 functions never called `connectLambda` | First statement of every v1 handler that touches snapshots |
+| Store resolution | Missing Blobs silently became "filesystem" | In a function that is `unavailable`: writes are **refused**, so the caller learns ([`snapshot.ts`](src/lib/cache/snapshot.ts)) |
+| Evidence | "the write returned true" | A nonce is written, the store re-resolved, and the nonce read back ([`snapshotDelivery.ts`](src/lib/cache/snapshotDelivery.ts)) |
+
+When that round trip fails the job repairs the read side over HTTP through `/api/snapshots/rebuild`, which runs in the SSR function where Netlify injects the environment automatically, and records the incident in **Postgres** (`ops_alerts`) — the one store proven writable in that state. Independently, the hourly watchdog checks how old the snapshots readers actually see are and rebuilds anything past `SNAPSHOT_MAX_AGE_SECONDS` (default 7h — two missed windows plus slack), rate-limited to one attempt an hour so a structural failure cannot turn into continuous database load. `/api/snapshots/status` answers **503** in that state, so an external uptime monitor catches a freeze without reading the body.
+
 ### Read path and Neon compute budget
 
 Pages and read-only APIs never query Postgres. Scheduled jobs write JSON snapshots to Netlify Blobs (`src/lib/cache/`), pages read those, and Netlify's CDN caches the result (`src/lib/cache/httpCache.ts`). `ALLOW_DB_READ_FALLBACK` (default `false`) controls whether a missing snapshot may fall back to a query; leaving it off is what keeps crawler traffic from pinning the compute awake.
@@ -192,7 +219,7 @@ On 2026-07-26 it reported the sibling holding 53.9 MB of 61.0 MB (88% of stored 
 
 The audit also flags foreign keys that cross the boundary. Two do: `subscriptions.user_id` and `opportunity_pushes.user_id` both point at `users`, and the sibling has added its own auth columns to that table (`encrypted_password`, `avatar_url`, `full_name`, `last_sign_in_at`). **`users` is therefore co-owned.** Migrating forks it: each side keeps a full copy and they stop converging. That is acceptable here only because the two apps already authenticate independently — this app uses `password_hash` plus the `sessions` table, the sibling uses its own columns and never touches `sessions` — but it is a deliberate decision, not a detail.
 
-`scripts/neon-migrate.mjs` copies only the nine tables this site owns into a new project, using the shared schema in `src/lib/db/schema.ts`. It never modifies the source and is safe to re-run.
+`scripts/neon-migrate.mjs` copies only the ten tables this site owns into a new project, using the shared schema in `src/lib/db/schema.ts`. It never modifies the source and is safe to re-run.
 
 ```bash
 SOURCE_DATABASE_URL=<old> npx tsx scripts/neon-migrate.mjs --dry-run   # counts + schema drift

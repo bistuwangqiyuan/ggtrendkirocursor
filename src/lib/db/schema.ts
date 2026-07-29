@@ -1,5 +1,5 @@
 /**
- * The nine tables this site owns, as executable DDL.
+ * The ten tables this site owns, as executable DDL.
  *
  * Single source of truth, shared by `/api/db-init` (provision / repair), the
  * maintenance job (which backfills tables missing in production) and
@@ -23,6 +23,7 @@ export const OWNED_TABLES = [
   'newsletter_subscribers',
   'monitored_sites',
   'site_checks',
+  'ops_alerts',
 ] as const;
 
 export type OwnedTable = (typeof OWNED_TABLES)[number];
@@ -42,6 +43,26 @@ export type OwnedTable = (typeof OWNED_TABLES)[number];
 export const ADDITIVE_STATEMENTS = [
   `ALTER TABLE google_trends ADD COLUMN IF NOT EXISTS topic_class VARCHAR(20)`,
   `ALTER TABLE trends_trending_now ADD COLUMN IF NOT EXISTS topic_class VARCHAR(20)`,
+];
+
+/**
+ * Incidents that must outlive the storage they describe.
+ *
+ * The day log lives in Netlify Blobs, so it cannot record the one failure that
+ * hides best: Blobs being unreachable from the scheduled job that writes
+ * everything. Postgres is the only store that job is proven able to write in
+ * that state, so a handful of rows go here instead. Written rarely and read only
+ * on request, so it costs no routine database wake-up.
+ */
+export const OPS_ALERT_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS ops_alerts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source VARCHAR(64) NOT NULL,
+    message TEXT NOT NULL,
+    context JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_ops_alerts_created_at ON ops_alerts(created_at DESC)`,
 ];
 
 export const NEWSLETTER_STATEMENTS = [
@@ -186,6 +207,7 @@ export const BASE_STATEMENTS = [
     checked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE INDEX IF NOT EXISTS idx_site_checks_site_id_checked_at ON site_checks(site_id, checked_at DESC)`,
+  ...OPS_ALERT_STATEMENTS,
 ];
 
 // Columns the application code requires on each table.
@@ -198,6 +220,7 @@ export const REQUIRED_COLUMNS: Record<string, string[]> = {
   newsletter_subscribers: ['id', 'email', 'created_at'],
   monitored_sites: ['id', 'name', 'url', 'enabled', 'created_at'],
   site_checks: ['id', 'site_id', 'ok', 'http_status', 'response_ms', 'seo_score', 'seo_checks', 'error', 'checked_at'],
+  ops_alerts: ['id', 'source', 'message', 'context', 'created_at'],
 };
 
 // Destructive recreate of the auth/feedback tables (drops mismatched legacy schema).

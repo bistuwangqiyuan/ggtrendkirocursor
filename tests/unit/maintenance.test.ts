@@ -12,7 +12,8 @@ vi.mock('../../src/lib/db/client', () => ({
 
 vi.mock('../../src/lib/observability/errorLog', () => ({
   recordError: vi.fn(),
-  pruneOldLogs: vi.fn(async () => 0),
+  pruneOldLogs: vi.fn(async () => [] as string[]),
+  retentionDays: vi.fn(() => 30),
 }));
 
 const {
@@ -30,11 +31,22 @@ function sqlCalls(): string[] {
   return query.mock.calls.map((c) => String(c[0]).replace(/\s+/g, ' '));
 }
 
+/**
+ * `query()` resolves to the ROWS, not to a pg result object. Deleting N rows with
+ * RETURNING therefore looks like an N-element array — and reading `.rowCount` off
+ * it, as this suite used to mock, silently yields undefined. That mismatch is why
+ * production reported "0 pruned" on every run while actually deleting thousands.
+ */
+function rows(count: number): { id: string }[] {
+  return Array.from({ length: count }, (_, i) => ({ id: `row-${i}` }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  query.mockResolvedValue({ rowCount: 0, rows: [] });
+  query.mockResolvedValue(rows(0));
   getTrendsTableName.mockResolvedValue('google_trends');
   getTimestampColumnName.mockResolvedValue('trend_timestamp');
+  vi.mocked(pruneOldLogs).mockResolvedValue([]);
   delete process.env.TRENDS_RETENTION_DAYS;
   delete process.env.SITE_CHECKS_RETENTION_DAYS;
 });
@@ -55,7 +67,7 @@ describe('ensureNewsletterTable', () => {
 
 describe('pruneTrends', () => {
   it('deletes by the trend timestamp, falling back to created_at', async () => {
-    query.mockResolvedValue({ rowCount: 42, rows: [] });
+    query.mockResolvedValue(rows(42));
 
     const deleted = await pruneTrends(30);
 
@@ -65,6 +77,14 @@ describe('pruneTrends', () => {
       'DELETE FROM google_trends WHERE COALESCE(trend_timestamp, created_at)'
     );
     expect(params).toEqual(['30']);
+  });
+
+  it('counts deleted rows via RETURNING, not a row count field', async () => {
+    // The bug this guards: `.rowCount` on a rows array is undefined, so every
+    // prune reported 0 and storage growth looked like a retention failure.
+    query.mockResolvedValue(rows(7));
+    expect(await pruneTrends(30)).toBe(7);
+    expect(String(query.mock.calls[0][0])).toContain('RETURNING');
   });
 
   it('uses the quoted legacy "timestamp" column when that is the schema', async () => {
@@ -101,7 +121,7 @@ describe('pruneTrends', () => {
 
 describe('pruneSiteChecks', () => {
   it('always keeps the newest check per site', async () => {
-    query.mockResolvedValue({ rowCount: 5, rows: [] });
+    query.mockResolvedValue(rows(5));
 
     const deleted = await pruneSiteChecks(90);
 
@@ -121,22 +141,28 @@ describe('pruneSiteChecks', () => {
 
 describe('runMaintenance', () => {
   it('reports what each step did', async () => {
-    query.mockResolvedValue({ rowCount: 3, rows: [] });
-    vi.mocked(pruneOldLogs).mockResolvedValue(2);
+    query.mockResolvedValue(rows(3));
+    vi.mocked(pruneOldLogs).mockResolvedValue(['2026-06-01', '2026-06-02']);
 
     const result = await runMaintenance();
 
     expect(result.newsletterTableEnsured).toBe(true);
     expect(result.trendsDeleted).toBe(3);
     expect(result.siteChecksDeleted).toBe(3);
+    expect(result.opsAlertsDeleted).toBe(3);
     expect(result.logsDeleted).toBe(2);
     expect(result.errors).toEqual([]);
+  });
+
+  it('creates the durable incident table, which older databases lack', async () => {
+    await runMaintenance();
+    expect(sqlCalls().some((s) => s.includes('CREATE TABLE IF NOT EXISTS ops_alerts'))).toBe(true);
   });
 
   it('isolates a failing step so the rest still run', async () => {
     // First call is the newsletter CREATE EXTENSION; fail it and nothing else.
     query.mockRejectedValueOnce(new Error('permission denied for schema public'));
-    query.mockResolvedValue({ rowCount: 1, rows: [] });
+    query.mockResolvedValue(rows(1));
 
     const result = await runMaintenance();
 
@@ -147,13 +173,16 @@ describe('runMaintenance', () => {
     expect(result.siteChecksDeleted).toBe(1);
   });
 
-  it('never throws, even when every step fails', async () => {
+  it('never throws, even when every database step fails', async () => {
     query.mockRejectedValue(new Error('connection terminated unexpectedly'));
     vi.mocked(pruneOldLogs).mockRejectedValue(new Error('blobs unavailable'));
 
     const result = await runMaintenance();
 
-    expect(result.errors).toHaveLength(4);
+    // newsletter, ops-alerts, trends, site-checks, error-log, ops-alert-retention.
+    // Additive migrations swallow per-statement failures by design, and the intake
+    // queue lives in Blobs rather than Postgres.
+    expect(result.errors).toHaveLength(6);
     expect(result.trendsDeleted).toBe(0);
   });
 });

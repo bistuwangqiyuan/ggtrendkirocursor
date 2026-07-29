@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Copy this site's nine tables into a fresh Neon project, so its compute quota
+ * Copy this site's ten tables into a fresh Neon project, so its compute quota
  * stops being shared with the sibling application.
  *
  * WHY THIS EXISTS

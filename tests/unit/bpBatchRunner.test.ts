@@ -13,6 +13,7 @@ const bpServiceMock = {
   resetStaleGenerating: vi.fn(async () => 0),
   getRecentlyCompletedKeywordNorms: vi.fn(async () => new Set<string>()),
   getRecentlyFailedKeywordNorms: vi.fn(async () => new Set<string>()),
+  getCompletedKeywordNormsAmong: vi.fn(async () => new Set<string>()),
   pickEligibleTrendCandidates: vi.fn(async () => [] as any[]),
   getRecentBusinessModels: vi.fn(async () => [] as string[]),
   listCanonicalBusinessModels: vi.fn(async () => new Map()),
@@ -29,9 +30,13 @@ vi.mock('../../src/lib/services/bp', async () => {
   return { ...actual, bpService: bpServiceMock };
 });
 
-const { runBpBatch, replayPendingBatches, trailingFailures } = await import(
-  '../../src/lib/services/bpBatchRunner'
-);
+const {
+  runBpBatch,
+  replayPendingBatches,
+  trailingFailures,
+  bufferedKeywordNorms,
+  pendingBufferedReports,
+} = await import('../../src/lib/services/bpBatchRunner');
 const { listSnapshotKeys, readSnapshot, writeSnapshot, resetSnapshotStore } = await import(
   '../../src/lib/cache/snapshot'
 );
@@ -88,6 +93,7 @@ beforeEach(async () => {
   bpServiceMock.resetStaleGenerating.mockResolvedValue(0);
   bpServiceMock.getRecentlyCompletedKeywordNorms.mockResolvedValue(new Set());
   bpServiceMock.getRecentlyFailedKeywordNorms.mockResolvedValue(new Set());
+  bpServiceMock.getCompletedKeywordNormsAmong.mockResolvedValue(new Set());
   bpServiceMock.getRecentBusinessModels.mockResolvedValue([]);
   bpServiceMock.listCanonicalBusinessModels.mockResolvedValue(new Map());
   bpServiceMock.insertBatchResults.mockImplementation(async (items: any[]) => ({
@@ -281,6 +287,180 @@ describe('write-behind buffer', () => {
     const summary = await runBpBatch(options);
 
     expect(summary.replayed).toBe(1);
+  });
+});
+
+/** Populate the DB-free dedupe cache the degraded path reads. */
+async function seedDedupeCache(
+  overrides: Partial<{
+    capturedAt: string;
+    completedKeywordNorms: string[];
+    failedKeywordNorms: string[];
+    avoidModels: string[];
+    canonicalModels: any[];
+  }> = {}
+) {
+  await writeSnapshot('bp/dedupe-state', {
+    capturedAt: new Date().toISOString(),
+    completedKeywordNorms: [],
+    failedKeywordNorms: [],
+    avoidModels: [],
+    canonicalModels: [],
+    ...overrides,
+  });
+}
+
+/** Make the prepare phase fail the way a quota-exhausted Neon does. */
+function breakDatabase() {
+  bpServiceMock.resetStaleGenerating.mockRejectedValue(new Error('DB unavailable (circuit breaker open)'));
+  bpServiceMock.insertBatchResults.mockRejectedValue(new Error('DB unavailable (circuit breaker open)'));
+}
+
+describe('generating through a database outage', () => {
+  it('plans from the cached dedupe state and buffers the result', async () => {
+    await seedDedupeCache();
+    breakDatabase();
+    bpServiceMock.pickEligibleTrendCandidates.mockResolvedValue([candidate('gamma')]);
+    generateJson.mockResolvedValue({ data: validBpPayload('模式G'), model: 'm' });
+
+    const summary = await runBpBatch(options);
+
+    expect(summary.degraded).toBe(true);
+    expect(summary.buffered).toBe(true);
+    // The LLM ran and its output survived, which is the whole point.
+    expect(generateJson).toHaveBeenCalledTimes(1);
+    const buffers = await listSnapshotKeys('bp/pending/');
+    expect(buffers).toHaveLength(1);
+    expect((await readSnapshot<any>(buffers[0]))?.data.results).toHaveLength(1);
+    // No database scan may be attempted while it is known to be down.
+    expect(bpServiceMock.pickEligibleTrendCandidates.mock.calls[0][3]).toMatchObject({ allowDbScan: false });
+  });
+
+  it('does not guess at what is already analyzed when no cache exists', async () => {
+    breakDatabase();
+    bpServiceMock.pickEligibleTrendCandidates.mockResolvedValue([candidate('gamma')]);
+
+    const summary = await runBpBatch(options);
+
+    expect(summary.degraded).toBe(false);
+    expect(summary.generated).toBe(0);
+    expect(generateJson).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cache that has missed too many days of writes', async () => {
+    await seedDedupeCache({ capturedAt: new Date(Date.now() - 100 * 3_600_000).toISOString() });
+    breakDatabase();
+    bpServiceMock.pickEligibleTrendCandidates.mockResolvedValue([candidate('gamma')]);
+
+    const summary = await runBpBatch(options);
+
+    expect(summary.degraded).toBe(false);
+    expect(generateJson).not.toHaveBeenCalled();
+  });
+
+  it('skips keywords a previous outage run already buffered', async () => {
+    await seedDedupeCache({ completedKeywordNorms: ['history'] });
+    await writeSnapshot('bp/pending/earlier-outage-run', {
+      batchId: 'earlier-outage-run',
+      startedAt: new Date().toISOString(),
+      results: [{ snapshot: candidate('Alpha').snapshot, status: 'completed', title: 't' }],
+    });
+    breakDatabase();
+    bpServiceMock.pickEligibleTrendCandidates.mockResolvedValue([]);
+
+    await runBpBatch(options);
+
+    const skip: Set<string> = bpServiceMock.pickEligibleTrendCandidates.mock.calls[0][1];
+    // Without this the same hotword would be re-analyzed in every outage window.
+    expect(skip.has('alpha')).toBe(true);
+    expect(skip.has('history')).toBe(true);
+  });
+
+  it('re-checks the live archive before flushing cache-planned work', async () => {
+    await seedDedupeCache();
+    // Prepare fails, then the database comes back before the flush — so the
+    // cached dedupe decision has to be re-validated.
+    bpServiceMock.resetStaleGenerating.mockRejectedValue(new Error('DB unavailable'));
+    bpServiceMock.pickEligibleTrendCandidates.mockResolvedValue([candidate('gamma')]);
+    generateJson.mockResolvedValue({ data: validBpPayload('模式G'), model: 'm' });
+    bpServiceMock.getCompletedKeywordNormsAmong.mockResolvedValue(new Set(['gamma']));
+
+    await runBpBatch(options);
+
+    expect(bpServiceMock.insertBatchResults.mock.calls[0][0]).toEqual([]);
+  });
+
+  it('caches the dedupe state on a healthy run, for the next outage', async () => {
+    bpServiceMock.getRecentlyCompletedKeywordNorms.mockResolvedValue(new Set(['done']));
+    bpServiceMock.getRecentBusinessModels.mockResolvedValue(['模式旧']);
+    bpServiceMock.pickEligibleTrendCandidates.mockResolvedValue([]);
+
+    await runBpBatch(options);
+
+    const cached = await readSnapshot<any>('bp/dedupe-state');
+    expect(cached?.data.completedKeywordNorms).toEqual(['done']);
+    expect(cached?.data.avoidModels).toEqual(['模式旧']);
+  });
+});
+
+describe('buffer inspection (used by the recovery job)', () => {
+  it('reports buffered keywords and counts without touching the database', async () => {
+    await writeSnapshot('bp/pending/run-a', {
+      batchId: 'run-a',
+      startedAt: new Date().toISOString(),
+      results: [
+        { snapshot: candidate('Alpha One').snapshot, status: 'completed', title: 't' },
+        { snapshot: candidate('beta').snapshot, status: 'failed', error: 'e' },
+      ],
+    });
+
+    expect([...(await bufferedKeywordNorms())].sort()).toEqual(['alpha one', 'beta']);
+    expect(await pendingBufferedReports()).toEqual({ batches: 1, reports: 2 });
+  });
+
+  it('ignores empty buffers when reporting a backlog', async () => {
+    await writeSnapshot('bp/pending/run-empty', {
+      batchId: 'run-empty',
+      startedAt: new Date().toISOString(),
+      results: [],
+    });
+
+    expect(await pendingBufferedReports()).toEqual({ batches: 0, reports: 0 });
+  });
+});
+
+describe('replay dedupe guard', () => {
+  it('drops a buffered plan whose keyword was analyzed in the meantime', async () => {
+    await writeSnapshot('bp/pending/stale-run', {
+      batchId: 'stale-run',
+      startedAt: new Date().toISOString(),
+      results: [{ snapshot: candidate('orphan').snapshot, status: 'completed', title: 't' }],
+    });
+    bpServiceMock.getCompletedKeywordNormsAmong.mockResolvedValue(new Set(['orphan']));
+
+    await replayPendingBatches();
+
+    expect(bpServiceMock.insertBatchResults.mock.calls[0][0]).toEqual([]);
+    // The buffer is still cleared: its work is accounted for either way.
+    expect(await listSnapshotKeys('bp/pending/')).toHaveLength(0);
+  });
+
+  it('still writes failed placeholders, which carry the failure counter', async () => {
+    await writeSnapshot('bp/pending/stale-run', {
+      batchId: 'stale-run',
+      startedAt: new Date().toISOString(),
+      results: [
+        { snapshot: candidate('orphan').snapshot, status: 'completed', title: 't' },
+        { snapshot: candidate('orphan').snapshot, status: 'failed', error: 'boom' },
+      ],
+    });
+    bpServiceMock.getCompletedKeywordNormsAmong.mockResolvedValue(new Set(['orphan']));
+
+    await replayPendingBatches();
+
+    const inserted = bpServiceMock.insertBatchResults.mock.calls[0][0];
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].status).toBe('failed');
   });
 });
 

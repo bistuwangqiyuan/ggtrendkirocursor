@@ -4,8 +4,15 @@ import {
   getTrendsTableName,
   getTimestampColumnName,
   trendsTableHasColumn,
+  isDbDown,
 } from '../db/client';
 import { classifyTrendTopic, type TopicClass } from './trendTriage';
+import {
+  drainPendingTrends,
+  enqueueTrendHarvest,
+  type DrainSummary,
+  type QueuedTrendRow,
+} from './trendIntake';
 
 /**
  * Google Trends "Daily Trending Searches" RSS collector.
@@ -18,6 +25,13 @@ import { classifyTrendTopic, type TopicClass } from './trendTriage';
  *
  * The RSS feed is public and unauthenticated:
  *   https://trends.google.com/trending/rss?geo=US
+ *
+ * HARVEST AND STORE ARE SEPARATE STEPS
+ * `harvest()` talks only to Google; `persist()` talks only to Postgres. When the
+ * database is unavailable the harvest is parked in the Blobs intake queue instead
+ * of being discarded, because the RSS feed is a rolling window — a dropped
+ * harvest is a permanently lost set of hotwords, not a delayed one. See
+ * trendIntake.ts.
  */
 
 /** Geographies to harvest (English-language markets keep keywords usable). */
@@ -222,14 +236,33 @@ async function fetchRss(geo: string): Promise<string | null> {
   }
 }
 
-export interface CollectSummary {
+export interface HarvestSummary {
+  rows: QueuedTrendRow[];
+  /** How the harvested rows were classified. */
+  topics: Record<TopicClass, number>;
+  geos: Record<string, { fetched: number }>;
+  errors: string[];
+}
+
+export interface PersistSummary {
   inserted: number;
   skipped: number;
   table: string;
   timestampColumn: string;
   /** False when the database predates the topic_class column. */
   topicClassStored: boolean;
-  /** How the freshly inserted rows were classified. */
+}
+
+export interface CollectSummary {
+  inserted: number;
+  skipped: number;
+  /** Rows parked in the intake queue because the store was unavailable. */
+  deferred: number;
+  table: string;
+  timestampColumn: string;
+  /** False when the database predates the topic_class column. */
+  topicClassStored: boolean;
+  /** How the freshly harvested rows were classified. */
   topics: Record<TopicClass, number>;
   geos: Record<string, { fetched: number; inserted: number; skipped: number }>;
   errors: string[];
@@ -237,107 +270,185 @@ export interface CollectSummary {
 
 export class TrendsCollector {
   /**
-   * Harvest trending keywords across geos and persist fresh rows into the active
-   * trends table. Per-region 24h dedupe avoids piling duplicates each run.
+   * Read every geo's feed and turn it into storable rows. Touches no database, so
+   * it succeeds during an outage and its output can be queued.
    */
-  async collect(geos: string[] = DEFAULT_GEOS): Promise<CollectSummary> {
-    const table = await getTrendsTableName();
-    const tsCol = await getTimestampColumnName(table);
-    const tsRef = tsCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
-    const withTopicClass = await trendsTableHasColumn(table, 'topic_class');
-
-    const summary: CollectSummary = {
-      inserted: 0,
-      skipped: 0,
-      table,
-      timestampColumn: tsCol,
-      topicClassStored: withTopicClass,
+  async harvest(geos: string[] = DEFAULT_GEOS): Promise<HarvestSummary> {
+    const summary: HarvestSummary = {
+      rows: [],
       topics: { sports: 0, entertainment: 0, general: 0 },
       geos: {},
       errors: [],
     };
 
     for (const geo of geos) {
-      const geoStat = { fetched: 0, inserted: 0, skipped: 0 };
-      summary.geos[geo] = geoStat;
-
+      summary.geos[geo] = { fetched: 0 };
       const xml = await fetchRss(geo);
       if (xml === null) {
         summary.errors.push(`${geo}: fetch failed`);
         continue;
       }
-
       const items = dedupeRssItems(parseTrendsRss(xml));
-      geoStat.fetched = items.length;
-      if (items.length === 0) continue;
-
-      // Existing keywords for this region collected within the dedupe window.
-      const existingRows = await query<{ keyword: string }>(
-        `SELECT DISTINCT keyword FROM "${table}"
-         WHERE region = $1 AND ${tsRef} >= NOW() - make_interval(hours => $2)`,
-        [geo, COLLECTOR_DEDUPE_HOURS]
-      );
-      const existing = new Set(existingRows.map((r) => r.keyword.trim().toLowerCase()));
-
-      const fresh = items
-        .map((it) => mapRssItemToRow(it, geo))
-        .filter((row) => {
-          if (existing.has(row.keyword.trim().toLowerCase())) {
-            geoStat.skipped++;
-            return false;
-          }
-          return true;
-        });
-
-      if (fresh.length === 0) continue;
-      for (const row of fresh) summary.topics[row.topicClass]++;
-
-      // Parameterized multi-row insert. id is generated in-app because the
-      // google_trends table has no UUID default (trends_trending_now ignores
-      // the explicit id). Each tuple ends with NOW(),NOW() for the collection
-      // timestamp column and created_at, so the remaining columns are the only
-      // parameterized ones. topic_class is included only where it exists, so a
-      // database that has not run the additive migration still collects.
-      const cols = withTopicClass ? 8 : 7;
-      const valuesSql: string[] = [];
-      const params: any[] = [];
-      fresh.forEach((row, i) => {
-        const b = i * cols;
-        const placeholders = Array.from({ length: cols }, (_, j) => `$${b + j + 1}`).join(',');
-        valuesSql.push(`(${placeholders},NOW(),NOW())`);
-        params.push(
-          crypto.randomUUID(),
-          row.keyword,
-          row.searchVolume,
-          row.growthRate,
-          row.category,
-          row.timeRange,
-          row.region
-        );
-        if (withTopicClass) params.push(row.topicClass);
-      });
-
-      const insertSql = `INSERT INTO "${table}"
-        (id, keyword, search_volume, growth_rate, category, time_range, region,${withTopicClass ? ' topic_class,' : ''} ${tsRef}, created_at)
-        VALUES ${valuesSql.join(',')}`;
-      // Use a raw client so INSERT errors surface (the shared query() helper
-      // swallows errors and returns [], which would mask a failed insert).
-      const client = await getClient();
-      try {
-        const res = await client.query(insertSql, params);
-        const n = res.rowCount ?? fresh.length;
-        geoStat.inserted = n;
-        summary.inserted += n;
-      } catch (err) {
-        summary.errors.push(`${geo}: insert failed: ${(err as Error).message}`);
-      } finally {
-        client.release();
+      summary.geos[geo].fetched = items.length;
+      for (const item of items) {
+        // id is assigned here, not at insert time, so a plan generated from this
+        // row while the database is down can already reference it.
+        const row: QueuedTrendRow = { id: crypto.randomUUID(), ...mapRssItemToRow(item, geo) };
+        summary.topics[row.topicClass]++;
+        summary.rows.push(row);
       }
-      summary.skipped += geoStat.skipped;
     }
-
     return summary;
   }
+
+  /**
+   * Write harvested rows into the active trends table, skipping keywords already
+   * stored for the same region inside the dedupe window.
+   *
+   * `collectedAt` is the time the feed was READ, which for a replayed batch is
+   * hours before now. Storing the real observation time keeps /trends honest and
+   * lets the row age out of the analysis window on schedule; `created_at` records
+   * when it actually landed in Postgres.
+   *
+   * Throws when the database is unavailable, so callers can queue instead.
+   */
+  async persist(rows: QueuedTrendRow[], collectedAt: Date = new Date()): Promise<PersistSummary> {
+    // Bail out before doing any of the schema probing. While the breaker is open
+    // `query()` returns an empty result instead of throwing, which would silently
+    // empty the dedupe set and let this insert duplicate every row it retries.
+    if (isDbDown()) throw new Error('DB unavailable (circuit breaker open)');
+
+    const table = await getTrendsTableName();
+    const tsCol = await getTimestampColumnName(table);
+    const tsRef = tsCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
+    const withTopicClass = await trendsTableHasColumn(table, 'topic_class');
+    const result: PersistSummary = {
+      inserted: 0,
+      skipped: 0,
+      table,
+      timestampColumn: tsCol,
+      topicClassStored: withTopicClass,
+    };
+    if (rows.length === 0) return result;
+
+    // One dedupe query for every region in the batch, rather than one per geo:
+    // same answer, fewer round trips inside the wake window.
+    const regions = [...new Set(rows.map((r) => r.region))];
+    const existingRows = await query<{ region: string; keyword: string }>(
+      `SELECT DISTINCT region, keyword FROM "${table}"
+       WHERE region = ANY($1::text[]) AND ${tsRef} >= NOW() - make_interval(hours => $2)`,
+      [regions, COLLECTOR_DEDUPE_HOURS]
+    );
+    const seen = new Set(existingRows.map((r) => dedupeKey(r.region, r.keyword)));
+
+    const fresh: QueuedTrendRow[] = [];
+    for (const row of rows) {
+      const key = dedupeKey(row.region, row.keyword);
+      if (seen.has(key)) {
+        result.skipped++;
+        continue;
+      }
+      seen.add(key);
+      fresh.push(row);
+    }
+    if (fresh.length === 0) return result;
+
+    // Parameterized multi-row insert. id comes from the row because the
+    // google_trends table has no UUID default (trends_trending_now ignores the
+    // explicit id). topic_class is included only where it exists, so a database
+    // that has not run the additive migration still collects.
+    const cols = withTopicClass ? 9 : 8;
+    const valuesSql: string[] = [];
+    const params: any[] = [];
+    fresh.forEach((row, i) => {
+      const b = i * cols;
+      const placeholders = Array.from({ length: cols }, (_, j) => `$${b + j + 1}`).join(',');
+      valuesSql.push(`(${placeholders},NOW())`);
+      params.push(
+        row.id,
+        row.keyword,
+        row.searchVolume,
+        row.growthRate,
+        row.category,
+        row.timeRange,
+        row.region
+      );
+      if (withTopicClass) params.push(row.topicClass);
+      params.push(collectedAt);
+    });
+
+    const insertSql = `INSERT INTO "${table}"
+      (id, keyword, search_volume, growth_rate, category, time_range, region,${withTopicClass ? ' topic_class,' : ''} ${tsRef}, created_at)
+      VALUES ${valuesSql.join(',')}`;
+    // Use a raw client so INSERT errors surface (the shared query() helper
+    // swallows errors and returns [], which would mask a failed insert).
+    const client = await getClient();
+    try {
+      const res = await client.query(insertSql, params);
+      result.inserted = res.rowCount ?? fresh.length;
+    } finally {
+      client.release();
+    }
+    return result;
+  }
+
+  /**
+   * Harvest, then store. A store failure parks the harvest in the intake queue
+   * rather than losing it, and is reported as `deferred` instead of as a silent
+   * zero-insert run.
+   */
+  async collect(geos: string[] = DEFAULT_GEOS): Promise<CollectSummary> {
+    const harvestedAt = new Date();
+    const harvest = await this.harvest(geos);
+
+    const summary: CollectSummary = {
+      inserted: 0,
+      skipped: 0,
+      deferred: 0,
+      table: '',
+      timestampColumn: '',
+      topicClassStored: false,
+      topics: harvest.topics,
+      geos: {},
+      errors: [...harvest.errors],
+    };
+    for (const [geo, stat] of Object.entries(harvest.geos)) {
+      summary.geos[geo] = { fetched: stat.fetched, inserted: 0, skipped: 0 };
+    }
+    if (harvest.rows.length === 0) return summary;
+
+    try {
+      const persisted = await this.persist(harvest.rows, harvestedAt);
+      summary.inserted = persisted.inserted;
+      summary.skipped = persisted.skipped;
+      summary.table = persisted.table;
+      summary.timestampColumn = persisted.timestampColumn;
+      summary.topicClassStored = persisted.topicClassStored;
+    } catch (error) {
+      const queued = await enqueueTrendHarvest(harvest.rows, harvestedAt);
+      summary.deferred = queued ? harvest.rows.length : 0;
+      summary.errors.push(
+        queued
+          ? `store unavailable, queued ${harvest.rows.length} row(s): ${(error as Error).message}`
+          : `store unavailable and queue write failed: ${(error as Error).message}`
+      );
+    }
+    return summary;
+  }
+
+  /**
+   * Replay queued harvests into Postgres. Called at the start of the write window
+   * and by the recovery job, so hotwords gathered during an outage land as soon as
+   * the database is reachable again.
+   */
+  async drainPending(now: Date = new Date()): Promise<DrainSummary> {
+    return drainPendingTrends((rows, harvestedAt) => this.persist(rows, harvestedAt), now);
+  }
+}
+
+/** Region-scoped dedupe identity. Dedupe is per region, so US and GB may both hold a keyword. */
+function dedupeKey(region: string, keyword: string): string {
+  return `${region}\u0000${keyword.trim().toLowerCase()}`;
 }
 
 export const trendsCollector = new TrendsCollector();

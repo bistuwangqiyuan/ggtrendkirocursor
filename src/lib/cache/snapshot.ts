@@ -42,6 +42,16 @@ export const SNAPSHOT_KEYS = {
 const STORE_NAME = 'snapshots';
 
 /**
+ * Which store actually answered.
+ *
+ * `unavailable` is not the same as `filesystem`: inside a Lambda there is no
+ * durable disk, so treating the filesystem as a snapshot store means every write
+ * reports success into a directory that dies with the container. Distinguishing
+ * the two is what lets a caller notice that its rebuild never reached a reader.
+ */
+export type SnapshotBackend = 'blobs' | 'filesystem' | 'unavailable';
+
+/**
  * Per-instance micro-cache. A warm Lambda serving a burst of requests would
  * otherwise re-fetch the same blob every time. Kept deliberately short so a
  * fresh snapshot propagates quickly.
@@ -57,16 +67,32 @@ type BlobStore = {
 };
 
 let storePromise: Promise<BlobStore | null> | null = null;
+let resolvedBackend: SnapshotBackend | null = null;
+let backendError: string | null = null;
 
 /**
- * Resolve the Netlify Blobs store. Returns null when unavailable (e.g. plain
- * `astro dev` with no Netlify credentials), which makes callers fall back to the
- * filesystem backend.
+ * Whether this process is a serverless function, where the working directory is
+ * read-only and anything written to it is discarded when the container exits.
+ * Netlify sets both variables in the Lambda runtime.
+ */
+function isServerless(): boolean {
+  return !!process.env.AWS_LAMBDA_FUNCTION_NAME || !!process.env.LAMBDA_TASK_ROOT;
+}
+
+/**
+ * Resolve the Netlify Blobs store. Returns null when unavailable — outside a
+ * function that means the filesystem backend takes over (plain `astro dev`,
+ * tests, the outage drill); inside one it means snapshots cannot be served or
+ * stored at all, and callers are told so rather than being handed a store that
+ * quietly loses everything.
  */
 async function getBlobStore(): Promise<BlobStore | null> {
   if (!storePromise) {
     storePromise = (async () => {
-      if (process.env.SNAPSHOT_BACKEND === 'fs') return null;
+      if (process.env.SNAPSHOT_BACKEND === 'fs') {
+        resolvedBackend = 'filesystem';
+        return null;
+      }
       try {
         const { getStore } = await import('@netlify/blobs');
         // Site-wide store (not deploy-scoped) so snapshots survive deploys.
@@ -74,9 +100,15 @@ async function getBlobStore(): Promise<BlobStore | null> {
         // Probe once: getStore() is lazy, so credential problems only surface on
         // the first real call.
         await store.get('__probe__', { type: 'text' });
+        resolvedBackend = 'blobs';
+        backendError = null;
         return store;
       } catch (error) {
-        console.warn('[snapshot] Netlify Blobs unavailable, using filesystem backend:', (error as Error).message);
+        backendError = (error as Error).message;
+        resolvedBackend = isServerless() ? 'unavailable' : 'filesystem';
+        console.warn(
+          `[snapshot] Netlify Blobs unavailable (${backendError}); backend=${resolvedBackend}`
+        );
         return null;
       }
     })();
@@ -84,9 +116,57 @@ async function getBlobStore(): Promise<BlobStore | null> {
   return storePromise;
 }
 
+/** Which backend serves snapshots in this process. Resolves it if needed. */
+export async function snapshotBackend(): Promise<SnapshotBackend> {
+  await getBlobStore();
+  return resolvedBackend ?? 'unavailable';
+}
+
+/** Why Blobs was rejected, when it was. Null once a store is in use. */
+export function snapshotBackendError(): string | null {
+  return backendError;
+}
+
+/**
+ * Give `@netlify/blobs` the credentials a Lambda-compatible (v1) function
+ * receives on its event, and re-resolve the store.
+ *
+ * Netlify injects the Blobs environment automatically into v2 functions and the
+ * Astro SSR handler, but a v1 handler gets it as `event.blobs` plus two request
+ * headers, which the library only reads once `connectLambda(event)` has run.
+ * Skipping this call raises MissingBlobsEnvironmentError on the first store
+ * access — and until 2026-07-29 this module answered that by switching to the
+ * filesystem, so the scheduled job's snapshot rebuild wrote into a throwaway
+ * Lambda directory. Postgres kept receiving every report while all pages stayed
+ * frozen on the last snapshot an SSR request happened to write, for 44 hours,
+ * with nothing logged: the error log is itself a blob.
+ *
+ * Call it as the first statement of any v1 handler that touches snapshots.
+ * Returns whether the environment is now wired up.
+ */
+export async function connectSnapshotStoreToLambda(event: unknown): Promise<boolean> {
+  const blobs = (event as { blobs?: unknown } | null)?.blobs;
+  if (typeof blobs !== 'string' || blobs.length === 0) {
+    // Local invocation, or a runtime that injects the environment directly.
+    return false;
+  }
+  try {
+    const { connectLambda } = await import('@netlify/blobs');
+    connectLambda(event as Parameters<typeof connectLambda>[0]);
+    // Drop any resolution made before the credentials existed.
+    resetSnapshotStore();
+    return true;
+  } catch (error) {
+    console.error('[snapshot] connectLambda failed:', (error as Error).message);
+    return false;
+  }
+}
+
 /** For tests: drop cached backend resolution and micro-cache. */
 export function resetSnapshotStore(): void {
   storePromise = null;
+  resolvedBackend = null;
+  backendError = null;
   microCache.clear();
 }
 
@@ -167,7 +247,9 @@ export async function readSnapshot<T>(key: string): Promise<Snapshot<T> | null> 
   let raw: string | null = null;
   try {
     const store = await getBlobStore();
-    raw = store ? await store.get(key, { type: 'text' }) : await fsRead(key);
+    if (store) raw = await store.get(key, { type: 'text' });
+    else if (resolvedBackend === 'unavailable') return null;
+    else raw = await fsRead(key);
   } catch (error) {
     console.error('[snapshot] read failed', key, (error as Error).message);
     return null;
@@ -205,7 +287,12 @@ export async function writeSnapshot<T>(key: string, data: T): Promise<boolean> {
   try {
     const store = await getBlobStore();
     if (store) await store.set(key, body);
-    else await fsWrite(key, body);
+    else if (resolvedBackend === 'unavailable') {
+      // Writing to the container's filesystem would report success and lose the
+      // data; the caller needs to know so it can repair through another path.
+      console.error(`[snapshot] write refused, no store available: ${key} (${backendError})`);
+      return false;
+    } else await fsWrite(key, body);
     microCache.set(key, { at: Date.now(), value: payload as Snapshot<unknown> });
     return true;
   } catch (error) {
@@ -218,7 +305,7 @@ export async function writeSnapshot<T>(key: string, data: T): Promise<boolean> {
 export async function listSnapshotKeys(prefix: string): Promise<string[]> {
   try {
     const store = await getBlobStore();
-    if (!store) return await fsList(prefix);
+    if (!store) return resolvedBackend === 'unavailable' ? [] : await fsList(prefix);
     const { blobs } = await store.list({ prefix });
     return blobs.map((b) => b.key);
   } catch (error) {
@@ -232,6 +319,7 @@ export async function deleteSnapshot(key: string): Promise<boolean> {
   try {
     const store = await getBlobStore();
     if (store) await store.delete(key);
+    else if (resolvedBackend === 'unavailable') return false;
     else await fsDelete(key);
     microCache.delete(key);
     return true;

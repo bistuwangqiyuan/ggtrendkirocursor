@@ -364,7 +364,7 @@ export function validateAndNormalizeBpContent(raw: any): BpContent {
   };
 }
 
-function normalizeKeyword(k: string): string {
+export function normalizeKeyword(k: string): string {
   return k.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
@@ -821,6 +821,26 @@ export class BpService {
   }
 
   /**
+   * Which of `norms` already have a completed plan. Used as a last check before
+   * inserting work that was selected from the cached dedupe state (during a
+   * database outage) or buffered by an earlier run: those decisions were made
+   * against a snapshot of the past, and this is the live answer.
+   *
+   * Asks only about the handful of keywords in hand, unlike the all-history set
+   * the prepare phase pulls.
+   */
+  async getCompletedKeywordNormsAmong(norms: string[]): Promise<Set<string>> {
+    const wanted = [...new Set(norms.filter(Boolean))];
+    if (wanted.length === 0) return new Set();
+    const rows = await query<{ keyword_norm: string }>(
+      `SELECT DISTINCT keyword_norm FROM bp_reports
+       WHERE status = 'completed' AND keyword_norm = ANY($1::text[])`,
+      [wanted]
+    );
+    return new Set(rows.map((r) => r.keyword_norm).filter(Boolean));
+  }
+
+  /**
    * Circuit-broken keywords: keyword_norms with >= FAILURE_SKIP_MIN_COUNT failed
    * reports in the last FAILURE_SKIP_WINDOW_HOURS. The picker skips these so one
    * keyword that keeps failing (e.g. LLM timeouts) can't wedge the pipeline into
@@ -919,10 +939,21 @@ export class BpService {
   async pickEligibleTrendCandidates(
     count: number,
     skip: Set<string>,
-    timeRange = '4h'
+    timeRange = '4h',
+    options: {
+      /**
+       * Hotwords not in the snapshot yet — currently the intake queue, whose rows
+       * were harvested while the database was unavailable. Including them is what
+       * lets a degraded run analyze the very keywords the outage would have cost.
+       */
+      extraTrends?: Trend[];
+      /** Set false when the database is known to be down, so no scan is attempted. */
+      allowDbScan?: boolean;
+    } = {}
   ): Promise<{ snapshot: BpTrendSnapshot; trendScore: number }[]> {
     const picks: { snapshot: BpTrendSnapshot; trendScore: number }[] = [];
     if (count <= 0) return picks;
+    const allowDbScan = options.allowDbScan !== false;
 
     const snapshotRead = await getTrendsFromSnapshot({
       timeRange,
@@ -948,7 +979,7 @@ export class BpService {
       trends = relaxed.data.trends;
     }
 
-    if (!snapshotRead.hit) {
+    if (!snapshotRead.hit && allowDbScan) {
       // No snapshot yet (fresh deploy): fall back to the paged DB scan.
       for (let page = 1; page <= SCHEDULED_SCAN_MAX_PAGES && picks.length < count; page++) {
         const res = await trendsService.getTrends({
@@ -962,6 +993,15 @@ export class BpService {
         if (!res.success || res.data.trends.length === 0) break;
         trends.push(...res.data.trends);
         if (res.data.pagination.currentPage >= res.data.pagination.totalPages) break;
+      }
+    }
+
+    if (options.extraTrends?.length) {
+      const known = new Set(trends.map((t) => normalizeKeyword(t.keyword)));
+      for (const trend of options.extraTrends) {
+        if (known.has(normalizeKeyword(trend.keyword))) continue;
+        known.add(normalizeKeyword(trend.keyword));
+        trends.push(trend);
       }
     }
 

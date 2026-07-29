@@ -11,7 +11,9 @@
  */
 import { query, getTrendsTableName, getTimestampColumnName } from '../db/client';
 import { ADDITIVE_STATEMENTS, NEWSLETTER_STATEMENTS } from '../db/schema';
-import { recordError, pruneOldLogs } from '../observability/errorLog';
+import { recordError, pruneOldLogs, retentionDays } from '../observability/errorLog';
+import { ensureOpsAlertsTable, pruneOpsAlerts } from '../observability/opsAlerts';
+import { pruneExpiredTrendBatches } from './trendIntake';
 
 export const TRENDS_RETENTION_DEFAULT_DAYS = 30;
 export const SITE_CHECKS_RETENTION_DEFAULT_DAYS = 90;
@@ -28,6 +30,9 @@ export interface MaintenanceResult {
   trendsDeleted: number;
   siteChecksDeleted: number;
   logsDeleted: number;
+  /** Queued harvests dropped for being older than the analysis window. */
+  intakeBatchesDropped: number;
+  opsAlertsDeleted: number;
   errors: string[];
 }
 
@@ -67,11 +72,15 @@ export async function pruneTrends(days = retention('TRENDS_RETENTION_DAYS', TREN
   const tsRef = tsCol === 'timestamp' ? '"timestamp"' : 'trend_timestamp';
   // Keyed on the trend timestamp rather than created_at so backfilled rows are
   // judged by the data's age, not the row's.
-  const res = await query(
-    `DELETE FROM ${table} WHERE COALESCE(${tsRef}, created_at) < NOW() - ($1 || ' days')::interval`,
+  //
+  // RETURNING, because `query()` resolves to the rows rather than to a pg result
+  // object: reading `.rowCount` off it yielded undefined, so every run reported
+  // "0 deleted" no matter how much it had actually pruned.
+  const rows = await query(
+    `DELETE FROM ${table} WHERE COALESCE(${tsRef}, created_at) < NOW() - ($1 || ' days')::interval RETURNING id`,
     [String(days)]
   );
-  return res.rowCount ?? 0;
+  return rows.length;
 }
 
 export async function pruneSiteChecks(
@@ -80,17 +89,18 @@ export async function pruneSiteChecks(
   // The newest check per site is always kept: the monitor dashboard reads the
   // latest row, and a site that has been quiet longer than the retention window
   // would otherwise lose its status entirely.
-  const res = await query(
+  const rows = await query(
     `DELETE FROM site_checks sc
       WHERE sc.checked_at < NOW() - ($1 || ' days')::interval
         AND sc.id <> (
           SELECT id FROM site_checks newest
            WHERE newest.site_id = sc.site_id
            ORDER BY checked_at DESC LIMIT 1
-        )`,
+        )
+      RETURNING sc.id`,
     [String(days)]
   );
-  return res.rowCount ?? 0;
+  return rows.length;
 }
 
 /**
@@ -104,15 +114,21 @@ export async function runMaintenance(): Promise<MaintenanceResult> {
     trendsDeleted: 0,
     siteChecksDeleted: 0,
     logsDeleted: 0,
+    intakeBatchesDropped: 0,
+    opsAlertsDeleted: 0,
     errors: [],
   };
 
   const steps: [string, () => Promise<void>][] = [
     ['newsletter', async () => { result.newsletterTableEnsured = await ensureNewsletterTable(); }],
+    ['ops-alerts', async () => { await ensureOpsAlertsTable(); }],
     ['additive-migrations', async () => { result.columnsAdded = await applyAdditiveMigrations(); }],
     ['trends-retention', async () => { result.trendsDeleted = await pruneTrends(); }],
     ['site-checks-retention', async () => { result.siteChecksDeleted = await pruneSiteChecks(); }],
-    ['error-log-retention', async () => { result.logsDeleted = await pruneOldLogs(); }],
+    ['error-log-retention', async () => { result.logsDeleted = (await pruneOldLogs()).length; }],
+    ['intake-retention', async () => { result.intakeBatchesDropped = await pruneExpiredTrendBatches(); }],
+    // Same window as the blob log: the two are read side by side.
+    ['ops-alert-retention', async () => { result.opsAlertsDeleted = await pruneOpsAlerts(retentionDays()); }],
   ];
 
   for (const [name, run] of steps) {

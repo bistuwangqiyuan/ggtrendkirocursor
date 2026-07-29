@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
-import { SNAPSHOT_KEYS, readSnapshot, listSnapshotKeys } from '../../../lib/cache/snapshot';
+import { SNAPSHOT_KEYS, readSnapshot, listSnapshotKeys, snapshotBackend } from '../../../lib/cache/snapshot';
+import { snapshotStaleness } from '../../../lib/cache/snapshotDelivery';
 
 export const prerender = false;
 
@@ -8,6 +9,11 @@ export const prerender = false;
  * check for the layer that keeps page reads off Neon, so it must stay readable
  * even while the database is suspended. Exposes only key names, counts and
  * timestamps.
+ *
+ * Returns 503 when a snapshot is missing or frozen past `SNAPSHOT_MAX_AGE_SECONDS`,
+ * so any uptime monitor pointed here catches a read side that stopped being
+ * refreshed. Before this, the endpoint answered 200 with a 44-hour-old timestamp
+ * in the body and nothing was watching the body.
  */
 export const GET: APIRoute = async () => {
   const singles: Record<string, string> = {
@@ -36,13 +42,23 @@ export const GET: APIRoute = async () => {
   ]);
 
   const allPresent = Object.values(snapshots).every((s) => s.present);
+  const freshness = await snapshotStaleness();
+  const ok = allPresent && !freshness.stale;
   return new Response(
     JSON.stringify({
-      ok: allPresent,
+      ok,
+      backend: await snapshotBackend(),
+      stale: freshness.stale,
+      maxAgeSeconds: freshness.maxAgeSeconds,
+      staleAfterSeconds: freshness.staleAfterSeconds,
+      staleSections: freshness.staleSections,
       snapshots,
       detailCounts: { landing: landingDetails.length, bp: bpDetails.length },
     }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
+    {
+      status: ok ? 200 : 503,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    }
   );
 };
 

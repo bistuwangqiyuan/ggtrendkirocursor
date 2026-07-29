@@ -24,12 +24,21 @@
  * and the next run replays any buffer whose flush never happened. That is
  * strictly better than the old behaviour, where a crash lost the LLM spend AND
  * left a stuck row.
+ *
+ * DEGRADED MODE
+ * The same buffer is what keeps the pipeline productive through a Neon outage.
+ * When phase 1 cannot reach the database, it falls back to the cached dedupe
+ * state (bpDedupeCache.ts) and picks candidates from the last trends snapshot
+ * plus the intake queue, phase 2 runs normally, and phase 3's failed flush leaves
+ * the buffer for the next run. The outage costs a delay in storing plans, not the
+ * plans themselves.
  */
 import {
   buildAvoidModelsLine,
   buildUserPrompt,
   bpService,
   normalizeBusinessModel,
+  normalizeKeyword,
   validateAndNormalizeBpContent,
   BpValidationError,
   SYSTEM_PROMPT,
@@ -39,6 +48,8 @@ import {
 import { generateJson, isLlmConfigured, LlmError } from './llm';
 import { deleteSnapshot, listSnapshotKeys, readSnapshot, writeSnapshot } from '../cache/snapshot';
 import { recordError } from '../observability/errorLog';
+import { loadBpDedupeState, saveBpDedupeState } from './bpDedupeCache';
+import { pendingTrendsAsTrends } from './trendIntake';
 import type { BpTrendSnapshot } from '../../types';
 
 const BUFFER_PREFIX = 'bp/pending/';
@@ -59,6 +70,10 @@ export interface BatchRunSummary {
   /** Wall-clock ms spent with the database in use (phases 1 and 3 only). */
   dbPhaseMs: number;
   llmPhaseMs: number;
+  /** True when the run planned from cached dedupe state because the DB was down. */
+  degraded: boolean;
+  /** True when finished plans are sitting in the buffer, awaiting a later flush. */
+  buffered: boolean;
   errors: string[];
 }
 
@@ -72,8 +87,9 @@ export interface BatchRunOptions {
 }
 
 /**
- * Replay buffers left behind by a crashed run. Called at the start of a batch so
- * completed-but-unflushed plans reach Postgres instead of being lost.
+ * Replay buffers left behind by a crashed or database-starved run. Called at the
+ * start of a batch, and by the recovery job, so completed-but-unflushed plans
+ * reach Postgres instead of being lost.
  */
 export async function replayPendingBatches(currentBatchId?: string): Promise<number> {
   let replayed = 0;
@@ -86,10 +102,16 @@ export async function replayPendingBatches(currentBatchId?: string): Promise<num
       continue;
     }
     try {
-      const { inserted } = await bpService.insertBatchResults(results);
+      // A buffer can be hours old, and it may have been planned from cached
+      // dedupe state, so check against the live archive before inserting.
+      const deduped = await dropAlreadyAnalyzed(results);
+      const { inserted } = await bpService.insertBatchResults(deduped);
       replayed += inserted;
       await deleteSnapshot(key);
-      console.log(`[bp-batch] replayed ${inserted} unflushed report(s) from ${key}`);
+      console.log(
+        `[bp-batch] replayed ${inserted} unflushed report(s) from ${key}` +
+        (deduped.length < results.length ? ` (${results.length - deduped.length} already analyzed)` : '')
+      );
     } catch (error) {
       // Keep the buffer: the next run tries again. Losing paid LLM output is
       // worse than carrying a buffer for another 3 hours.
@@ -98,6 +120,61 @@ export async function replayPendingBatches(currentBatchId?: string): Promise<num
     }
   }
   return replayed;
+}
+
+/**
+ * Drop results whose keyword already has a completed plan in Postgres.
+ *
+ * Only completed plans are filtered: a failed placeholder must still be written,
+ * because it is what advances the keyword's failure counter. Falls back to
+ * inserting everything if the check itself fails — an occasional duplicate is a
+ * smaller loss than discarding finished work.
+ */
+async function dropAlreadyAnalyzed(results: BatchResultInput[]): Promise<BatchResultInput[]> {
+  const norms = results
+    .filter((r) => r.status === 'completed')
+    .map((r) => normalizeKeyword(r.snapshot.keyword));
+  if (norms.length === 0) return results;
+  let existing: Set<string>;
+  try {
+    existing = await bpService.getCompletedKeywordNormsAmong(norms);
+  } catch {
+    return results;
+  }
+  if (existing.size === 0) return results;
+  return results.filter(
+    (r) => r.status !== 'completed' || !existing.has(normalizeKeyword(r.snapshot.keyword))
+  );
+}
+
+/**
+ * Keywords sitting in unflushed buffers. A second outage run must skip these:
+ * the cached dedupe state predates them, so without this the same hotword would
+ * be analyzed again in every window until the database came back.
+ */
+export async function bufferedKeywordNorms(): Promise<Set<string>> {
+  const norms = new Set<string>();
+  for (const key of await listSnapshotKeys(BUFFER_PREFIX)) {
+    const buffered = await readSnapshot<BufferedBatch>(key);
+    for (const result of buffered?.data.results ?? []) {
+      norms.add(normalizeKeyword(result.snapshot.keyword));
+    }
+  }
+  return norms;
+}
+
+/** Whether any finished plans are waiting to be flushed. Blobs only, no DB. */
+export async function pendingBufferedReports(): Promise<{ batches: number; reports: number }> {
+  let batches = 0;
+  let reports = 0;
+  for (const key of await listSnapshotKeys(BUFFER_PREFIX)) {
+    const buffered = await readSnapshot<BufferedBatch>(key);
+    const count = buffered?.data.results?.length ?? 0;
+    if (count === 0) continue;
+    batches++;
+    reports += count;
+  }
+  return { batches, reports };
 }
 
 export async function runBpBatch(options: BatchRunOptions): Promise<BatchRunSummary> {
@@ -110,6 +187,8 @@ export async function runBpBatch(options: BatchRunOptions): Promise<BatchRunSumm
     candidates: 0,
     dbPhaseMs: 0,
     llmPhaseMs: 0,
+    degraded: false,
+    buffered: false,
     errors: [],
   };
 
@@ -138,17 +217,41 @@ export async function runBpBatch(options: BatchRunOptions): Promise<BatchRunSumm
     ]);
     const skip = new Set<string>([...completed, ...recentlyFailed]);
 
-    candidates = await bpService.pickEligibleTrendCandidates(options.batchSize, skip);
-    summary.candidates = candidates.length;
-
     const avoidModels = await bpService.getRecentBusinessModels().catch(() => [] as string[]);
     avoidLine = buildAvoidModelsLine(avoidModels);
     canonicalByModel = await bpService.listCanonicalBusinessModels();
+
+    // Anything still queued was harvested while the store was unavailable and is
+    // not in the trends snapshot yet, so offer it alongside the snapshot.
+    const extraTrends = await pendingTrendsAsTrends();
+    candidates = await bpService.pickEligibleTrendCandidates(options.batchSize, skip, '4h', { extraTrends });
+    summary.candidates = candidates.length;
+
+    // Keep the DB-free copy current, so the next outage has fresh state to work
+    // from. Failing to cache must not fail the run.
+    await saveBpDedupeState({
+      completedKeywordNorms: completed,
+      failedKeywordNorms: recentlyFailed,
+      avoidModels,
+      canonicalModels: canonicalByModel.values(),
+    }).catch(() => false);
   } catch (error) {
     summary.errors.push(`prepare: ${(error as Error).message}`);
     recordError('bp-batch', error, { context: { stage: 'prepare', batchId } });
-    summary.dbPhaseMs += Date.now() - prepareStart;
-    return summary;
+    const fallback = await prepareFromCache(options.batchSize);
+    if (!fallback) {
+      summary.dbPhaseMs += Date.now() - prepareStart;
+      return summary;
+    }
+    summary.degraded = true;
+    candidates = fallback.candidates;
+    summary.candidates = candidates.length;
+    avoidLine = fallback.avoidLine;
+    canonicalByModel = fallback.canonicalByModel;
+    console.log(
+      `[bp-batch] degraded prepare: ${candidates.length} candidate(s) from cached state ` +
+      `(${Math.round(fallback.cacheAgeMs / 60_000)}min old)`
+    );
   }
   summary.dbPhaseMs += Date.now() - prepareStart;
 
@@ -257,7 +360,10 @@ export async function runBpBatch(options: BatchRunOptions): Promise<BatchRunSumm
   }
   const flushStart = Date.now();
   try {
-    const { inserted } = await bpService.insertBatchResults(results);
+    // A degraded run selected against a cached dedupe set; ask the live archive
+    // before writing, in case the database came back mid-run.
+    const toInsert = summary.degraded ? await dropAlreadyAnalyzed(results) : results;
+    const { inserted } = await bpService.insertBatchResults(toInsert);
     console.log(`[bp-batch] flushed ${inserted} report(s) to Postgres`);
     await deleteSnapshot(bufferKey);
   } catch (error) {
@@ -266,12 +372,67 @@ export async function runBpBatch(options: BatchRunOptions): Promise<BatchRunSumm
     summary.errors.push(`flush: ${(error as Error).message}`);
     recordError('bp-batch', error, { context: { stage: 'flush', batchId, pending: results.length } });
     console.error('[bp-batch] flush failed, buffer retained for replay:', (error as Error).message);
+    summary.buffered = true;
     summary.generated = 0;
     summary.duplicates = 0;
   }
   summary.dbPhaseMs += Date.now() - flushStart;
 
   return summary;
+}
+
+/**
+ * Rebuild the prepare phase's inputs without the database, for use when it is
+ * unavailable. Returns null when there is no usable cached state, which is the
+ * signal to skip generation rather than guess at what has already been analyzed.
+ */
+async function prepareFromCache(batchSize: number): Promise<{
+  candidates: { snapshot: BpTrendSnapshot; trendScore: number }[];
+  avoidLine: string;
+  canonicalByModel: Map<string, CanonicalBusinessModel>;
+  cacheAgeMs: number;
+} | null> {
+  const loaded = await loadBpDedupeState();
+  if (!loaded) {
+    console.error('[bp-batch] no cached dedupe state; cannot generate while the store is down');
+    return null;
+  }
+  if (loaded.stale) {
+    const hours = Math.round(loaded.ageMs / 3_600_000);
+    console.error(`[bp-batch] cached dedupe state is ${hours}h old; refusing to generate from it`);
+    recordError('bp-batch', `dedupe cache too old (${hours}h)`, {
+      level: 'warn',
+      context: { stage: 'prepare-cache', ageHours: hours },
+    });
+    return null;
+  }
+
+  const { state } = loaded;
+  const skip = new Set<string>([
+    ...state.completedKeywordNorms,
+    ...state.failedKeywordNorms,
+    // The cache predates anything an earlier outage run generated, so the buffer
+    // is the only record that those keywords are already taken.
+    ...(await bufferedKeywordNorms()),
+  ]);
+
+  const extraTrends = await pendingTrendsAsTrends();
+  const candidates = await bpService.pickEligibleTrendCandidates(batchSize, skip, '4h', {
+    extraTrends,
+    allowDbScan: false,
+  });
+
+  const canonicalByModel = new Map<string, CanonicalBusinessModel>();
+  for (const model of state.canonicalModels) {
+    if (model?.businessModelNorm) canonicalByModel.set(model.businessModelNorm, model);
+  }
+
+  return {
+    candidates,
+    avoidLine: buildAvoidModelsLine(state.avoidModels),
+    canonicalByModel,
+    cacheAgeMs: loaded.ageMs,
+  };
 }
 
 function buildCompletedResult(

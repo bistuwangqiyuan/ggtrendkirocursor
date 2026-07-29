@@ -16,8 +16,14 @@
 | `LLM_MODELS_CACHE_TTL_MS` | 否 | `43200000`（12h） | 自动选型探测结果缓存时长 |
 | `LLM_PROVIDER_RANK` | 否 | 内置排名 | 跨供应商优先级覆盖（JSON：`{"glm":99,"qwen":80}`），数值越大越优先尝试 |
 | `CRON_SECRET` | 是（启用定时） | — | 定时任务鉴权密钥，建议 32+ 位随机串（采集与批量生成共用） |
-| `BP_BATCH_SIZE` | 否 | `5` | 每次定时批量生成的 BP 数量（自动钳制到 1-10）。8 次/天 × 5 = 40 份/天 |
+| `BP_BATCH_SIZE` | 否 | `5` | 每次定时批量生成的 BP 数量（自动钳制到 1-10）。8 次/天 × 5 = 40 份/天。错过窗口后自动上浮补产，上限 12 |
 | `TRENDS_TABLE` | 否 | 自动探测 | 强制指定趋势表名（默认在 `google_trends` / `trends_trending_now` 间按行数自动选择） |
+| `TRENDS_INTAKE_TTL_HOURS` | 否 | `48` | 断库时已抓取热词在 Blobs 队列中的保留时长，与选词器时效窗口对齐（§3c） |
+| `BP_DEDUPE_CACHE_MAX_AGE_HOURS` | 否 | `72` | 断库降级生成所用去重缓存的可用上限，超期则拒绝降级生成 |
+| `PIPELINE_RECOVERY_ENABLED` | 否 | `true` | 小时级恢复任务开关，设 `false` 关闭（它同时兼任快照冻结看门狗，见 §3d） |
+| `PIPELINE_RECOVERY_MIN_INTERVAL_MINUTES` | 否 | `55` | 有积压时两次补录尝试的最小间隔；快照重建复用同一间隔 |
+| `SNAPSHOT_MAX_AGE_SECONDS` | 否 | `25200`（7h） | 读取侧被判定为「冻结」的年龄阈值（两个写入窗口 + 1h 余量）。超过后 `/api/snapshots/status` 返回 503，看门狗自动重建（§3d） |
+| `ADMIN_SECRET` | 否 | 回退到 `CRON_SECRET` | 运维接口/页面（`/admin/errors`、`/api/admin/*`）鉴权密钥。未设置时用 `CRON_SECRET`，但两者分离更安全 |
 
 > 二选一：`LLM_API_KEY` 与 `LLM_API_ENDPOINTS` 至少配置其一，否则 BP 生成端点返回 503（fail-closed，不做模板回退）。
 
@@ -53,9 +59,10 @@
 ## 3. 定时关键词采集（零 LLM token）
 
 - 实现：并入 [netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts) 的**第 1 步**，在进程内直接调用 `trendsCollector.collect()`。原独立函数 `trends-collector`（`50 */3 * * *`）已于 2026-07-26 删除：Neon 免费版按**计算时长**计费，每个独立定时函数都会唤醒数据库并额外拖一条 5 分钟休眠尾（约 0.73 小时/天）。
+- **抓取与入库解耦**：`harvest()` 只访问 Google，`persist()` 只访问 Postgres。数据库不可用时，已抓取的热词写入 Blobs 待入库队列（[src/lib/services/trendIntake.ts](../../../src/lib/services/trendIntake.ts)）而**不是丢弃**——RSS 是滚动窗口，丢掉的一批热词是永久损失而非延迟。详见 §3c。
 - 行为（等价于 `POST /api/trends/collect`，该端点保留供手动触发）：
   1. 抓取 Google Trends 实时热搜 RSS（`https://trends.google.com/trending/rss?geo=...`），默认地区 `US,GB,CA,AU,IN,SG`；
-  2. 解析关键词与 `approx_traffic`（"200K+"→200000），按地区 24h 去重后写入活跃趋势表，采集时间戳 = `NOW()`；
+  2. 解析关键词与 `approx_traffic`（"200K+"→200000），按地区 24h 去重后写入活跃趋势表，采集时间戳 = 读取 RSS 的时刻（补录的批次保留其真实采集时刻，`created_at` 才是落库时刻）；
   3. `growth_rate` 由流量分级保守估算（界定 74-100，仅作内部评分信号，避免乐观偏差），确保新词在 BP 选词器中 > `MIN_TREND_SCORE`；
   4. **主题分类**：同时解析 RSS 里每个热词附带的新闻标题与来源域名，由 [src/lib/services/trendTriage.ts](../../../src/lib/services/trendTriage.ts) 判定 `sports` / `entertainment` / `general` 三类，写入 `google_trends.topic_class`。来源域名（espn.com、variety.com 等）是最强信号，其次是新闻标题里的赛事/娱乐词，最后才是热词本身，避免仅凭人名误判。该列由 `applyAdditiveMigrations()` 在每次 cron 开头自动补齐，老数据 `topic_class` 为空时在选词阶段按热词即时重分类。
 - 成本：**0 LLM token**。解决「词池静态、全历史去重后无新词可用」与 R3 采集时效问题（每词只分析一次，词池必须持续供应新词）。
@@ -67,12 +74,41 @@
   # 可选 ?geos=US,GB 覆盖默认地区
   ```
 
+## 3c. Neon 达到限额时不漏掉热词与分析
+
+Neon 免费版会周期性不可用（额度耗尽、休眠、冷启动）。此前一次不可用意味着该窗口的热词与商业机会**双重损失**：RSS 已滚动过去，抓不回来；PREPARE 阶段读不到去重集合，整批不生成。现在每一步都假定数据库随时可能不可用：
+
+| 环节 | 断库时 | 恢复后 |
+|---|---|---|
+| 采集热词 | 按真实采集时刻写入 Blobs 队列 `trends/pending/*` | 按原采集时刻补录并按地区 24h 去重；保留期 `TRENDS_INTAKE_TTL_HOURS`（默认 48h，与选词器 `SCHEDULED_FRESHNESS_WINDOW` 对齐——超出这个窗口选词器本就不会选，留着没有意义） |
+| 选候选词 | 用 Blobs 缓存的去重集合（[bpDedupeCache.ts](../../../src/lib/services/bpDedupeCache.ts)）+ 待入库队列 + 上一份趋势快照；缓存超过 `BP_DEDUPE_CACHE_MAX_AGE_HOURS`（默认 72h）则**拒绝**降级生成，如实报告无候选，不靠猜 | 恢复为实时集合，每次健康运行刷新缓存 |
+| 生成 BP | 正常调用 LLM，每份落 `bp/pending/<batchId>` 缓冲 | 补写落库；落库前用 `getCompletedKeywordNormsAmong()` 对活库复核，缓存过期也不会产生重复报告（`failed` 占位行仍写入，它承载失败计数） |
+| 补产量 | — | 由上次成功 flush 的时间推算错过了几个窗口，本次批量相应加大，上限 `MAX_CATCHUP_BATCH_SIZE`（12）。生成循环仍受 10 分钟截止时间约束，所以加大只会用掉剩余预算，不会超时 |
+
+- **小时级恢复任务**：[netlify/functions/pipeline-recovery.ts](../../../netlify/functions/pipeline-recovery.ts)（`25 * * * *`）只读 Blobs 判断有无积压：无积压则**零数据库访问**直接返回；有积压才拉起 [pipeline-drain-background.ts](../../../netlify/functions/pipeline-drain-background.ts) 落库并重建快照。该函数不花 LLM 额度，且每小时最多触发一次（`PIPELINE_RECOVERY_MIN_INTERVAL_MINUTES`），所以真正宕库时是稳定重试而非猛打。`PIPELINE_RECOVERY_ENABLED=false` 可关闭。
+- **积压可见**：`/admin/errors` 页面与 `GET /api/admin/errors` 的 `pipeline` 块给出待入库热词数、未落库报告数、错过窗口数、上次健康运行/上次落库时间。两者都只读 Blobs，因此在它们所描述的那次故障期间依然可用。
+- 验证：`npx vitest run tests/unit/trendIntake.test.ts tests/unit/bpDedupeCache.test.ts tests/unit/pipelineState.test.ts tests/unit/trendsCollectorStore.test.ts tests/unit/bpBatchRunner.test.ts`；断库演练 `npm run test:outage` 会断言积压在断库期间可读。
+
+## 3d. 快照写不进去时不让页面冻结
+
+与「断库」相反、也更隐蔽的一类故障：**数据库一直在写，页面却停止更新**。2026-07-26 就是这样冻了 44 小时——`bp_reports` 每天正常新增 40 份，而所有页面停在 07-26 20:03（北京时间）。
+
+- **根因**：后台批量是 v1（Lambda 兼容）函数，Netlify 把 Blobs 凭据放在 `event.blobs` 与请求头里，`@netlify/blobs` 只有在调用过 `connectLambda(event)` 之后才会读取它们。没调用 → `getStore()` 抛 `MissingBlobsEnvironmentError` → 快照层原先**静默回退到文件系统**；在 Lambda 里那是随容器销毁的临时目录，于是每次写入都"成功"且无人可读。错误日志本身也存在 Blobs，所以那两天连一条错误都没有。SSR 是 v2 函数，环境由平台自动注入，因此 `/api/snapshots/rebuild` 一直是好的——这也正是当时手工恢复页面所走的路径。
+- **三层修复**（缺任何一层，故障仍会静默）：
+  1. `connectSnapshotStoreToLambda(event)` 作为每个碰快照的 v1 handler 的第一条语句（bp-batch-background / pipeline-drain-background / pipeline-recovery）；
+  2. 函数内 Blobs 不可用时状态为 `unavailable`，**拒绝写入**并让调用方拿到 `false`，不再假装成功（[src/lib/cache/snapshot.ts](../../../src/lib/cache/snapshot.ts)）；
+  3. 批量结束时做**回读校验**：写入一个随机串 → 重置存储解析 → 读回比对（[src/lib/cache/snapshotDelivery.ts](../../../src/lib/cache/snapshotDelivery.ts)）。"写入返回 true"不算证据，只有回读到同一个串才算。
+- **自愈**：回读失败时，批量改走已验证可用的 SSR 路径 `POST /api/snapshots/rebuild?sections=<段>`（分段多轮，直到不再 `truncated`），并把事故写入 **Postgres 的 `ops_alerts` 表**——那是这种状态下唯一确定可写的存储。运行摘要里会出现 `store=BROKEN(...) repair=ok`。
+- **看门狗**：小时级 [pipeline-recovery.ts](../../../netlify/functions/pipeline-recovery.ts) 顺带检查读取侧年龄（只读 Blobs，零数据库访问）：超过 `SNAPSHOT_MAX_AGE_SECONDS`（默认 25200 秒 = 7h，两个窗口 + 1h 余量）就带 `?repairSnapshots=<段>` 参数拉起后台函数重建，每小时最多一次，避免结构性故障变成持续读库。
+- **外部可见**：`GET /api/snapshots/status` 在陈旧或缺失时返回 **503**（正常 200），任何 uptime 监控指向它即可发现冻结，不需要解析响应体。`/admin/errors` 的 "Read side" 面板显示最旧快照年龄、当前存储后端与上次自动修复时间；"Storage incidents" 面板按需（`?alerts=1`）从 Postgres 读取 `ops_alerts`——默认不读，保持运维页面零数据库唤醒。
+- 验证：`npx vitest run tests/unit/snapshot.test.ts tests/unit/snapshotDelivery.test.ts`（含 503 看门狗与"函数内拒绝写入"用例）；`npm run test:outage` 断言 503 不会误报，且运维页面在断库时仍渲染这两个面板。
+
 ## 3b. 定时批量自动生成
 
 - 实现：[netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts)，`schedule('0 */3 * * *', ...)`，UTC 每 3 小时整点（8 次/天 × 5 份 = 最多 40 份/天）。这是全站**唯一**的定时触发器，**仅异步拉起**后台批量函数并立即返回（不占用定时函数时长）。
 - 后台批量：[netlify/functions/bp-batch-background.ts](../../../netlify/functions/bp-batch-background.ts)（`-background` 后缀 → 15 分钟时长上限）是全站**唯一的数据库写入窗口**，一次调用内依次完成：①采集热词 → ②生成 BP 批次 → ③站点巡检 → ④保留期清理与补表 → ⑤重建快照。
 - BP 批次三阶段（[src/lib/services/bpBatchRunner.ts](../../../src/lib/services/bpBatchRunner.ts)）：
-  1. **PREPARE（唤醒 1 次）**：重放上次未 flush 的缓冲、`resetStaleGenerating()`、一次取齐去重集合/候选词/回避清单/全部规范商业模式；
+  1. **PREPARE（唤醒 1 次）**：重放上次未 flush 的缓冲、`resetStaleGenerating()`、一次取齐去重集合/候选词/回避清单/全部规范商业模式，并把去重状态缓存到 Blobs 供断库时使用；数据库不可用时改用该缓存降级运行（§3c）；
   2. **GENERATE（零数据库访问）**：仅调用 LLM，去重全在内存完成。每份生成完成后立刻写入 Netlify Blobs 缓冲（`bp/pending/<batchId>`）——这是崩溃安全点，取代了原先"先插占位行、后更新"的写法（那种写法每 ~2 分钟落一次查询，休眠计时器永远清零）；
   3. **FLUSH（唤醒 1 次）**：单事务批量插入最终状态（completed/failed）。失败则保留缓冲，下次运行重放，绝不丢弃已付费的 LLM 产出。
 - 时间预算：生成阶段截止到第 10 分钟，尾部预留 3 分钟给 flush/巡检/清理/快照。
@@ -156,6 +192,32 @@ BP 相关探针：
 ### D. 定时任务未执行
 - 检查：Netlify → Functions → `bp-scheduled` 是否存在且有调用记录；`CRON_SECRET` 是否已配置；时区为 UTC。
 
+### E. Neon 达到限额，连不上数据库
+- 症状：函数日志出现 `[DB] circuit breaker opened`；`bp-batch` 日志出现 `queued=N`（热词进队列）与 `bp=degraded` / `bp=buffered`（降级生成、产出待落库）。
+- 判断损失范围：`GET /api/admin/errors?secret=$ADMIN_SECRET` 的 `pipeline` 块，或直接看 `/admin/errors` 页面。`queuedTrendRows` / `bufferedReports` 是**已保住**的工作量，`missedRuns` 是仍需补产的窗口数。
+- 处置：通常无需人工干预——小时级恢复任务会在数据库恢复后自动落库，下一个批量窗口自动加大产量补回落下的分析（机制见 §3c）。
+- 需要立即补录时：
+  ```bash
+  curl -X POST "https://<your-site>/.netlify/functions/pipeline-drain-background" \
+    -H "Authorization: Bearer $CRON_SECRET"
+  ```
+- 唯一真正的损失是超过 `TRENDS_INTAKE_TTL_HOURS`（48h）的队列批次：那些热词已超出选词窗口，补录也不会被分析，会记为 `expired` 并丢弃。若单次故障可能超过两天，先临时上调该变量。
+
+### F. 数据库在写、页面却不更新（快照冻结）
+
+区分这一类与 E 的判据只有一条：**库里有新数据，页面没有**。
+
+1. 先看读取侧年龄：`curl -i https://<your-site>/api/snapshots/status`。返回 **503** 且 `stale:true` 即为冻结；`generatedAt` 停在某一刻不动是同一个症状。
+2. 再确认写入侧其实是好的：`GET /api/stats/overview` 或直接查库 `SELECT count(*) FROM bp_reports WHERE created_at > NOW() - interval '1 day'`。若库在增长而快照不动，就是本节的故障，与 Neon 额度无关。
+3. 看后台函数摘要里的 `blobs=` 与 `store=` 字段（Netlify → Functions → `bp-batch-background`）：`blobs=ambient:unavailable` 说明 `connectLambda` 没拿到凭据，`store=BROKEN(...)` 说明回读校验失败。
+4. 取事故记录（这一步会唤醒数据库）：`GET /api/admin/errors?secret=$ADMIN_SECRET&alerts=1` 的 `opsAlerts`，或 `/admin/errors?...&alerts=1` 的 "Storage incidents" 面板。
+- 处置：通常无需人工干预——批量在同一次运行内改走 SSR 路径重建，小时级看门狗最多 1 小时内也会重建（机制见 §3d）。
+- 需要立刻恢复页面时（这条路径与看门狗走的完全相同，2026-07-28 手工恢复用的就是它）：
+  ```bash
+  BASE_URL=https://<your-site> CRON_SECRET=$CRON_SECRET node scripts/snapshot-bootstrap.mjs
+  ```
+- 建议：把外部 uptime 监控指向 `/api/snapshots/status`。它是 DB-free 的，陈旧即 503，这样下一次同类故障不必等到有人肉眼发现内容没更新。
+
 ## 6. 成本与安全
 
 - **成本控制**：全历史去重（每词只分析一次）+ `max_tokens` 限制 + 失败不重复落库；精简提示词 + 商业模式回避清单减少无效调用；关键词采集 0 token；定时频率默认 3h。批量产量由 `BP_BATCH_SIZE`（默认 5 → 约 40 份/天）控制。
@@ -164,12 +226,12 @@ BP 相关探针：
 ## 7. 变更频率（如需调整）
 
 - 修改 [netlify/functions/bp-scheduled.ts](../../../netlify/functions/bp-scheduled.ts) 中的 cron 表达式（当前每 3 小时：`0 */3 * * *`）。采集与巡检已并入同一窗口，无需单独调频；增加窗口数会线性增加 Neon 计算消耗，调整前先跑 `python scripts/neon-budget.py --cron-runs N`。
-- 调整批量产量：设置环境变量 `BP_BATCH_SIZE`（1-10，默认 5）。提升地区覆盖：修改 [src/lib/services/trendsCollector.ts](../../../src/lib/services/trendsCollector.ts) 中 `DEFAULT_GEOS`。
+- 调整批量产量：设置环境变量 `BP_BATCH_SIZE`（1-10，默认 5）。错过窗口后本次批量会自动上浮到最多 12（见 §3c），这个上限在 [src/lib/services/pipelineState.ts](../../../src/lib/services/pipelineState.ts) 的 `MAX_CATCHUP_BATCH_SIZE`。提升地区覆盖：修改 [src/lib/services/trendsCollector.ts](../../../src/lib/services/trendsCollector.ts) 中 `DEFAULT_GEOS`。
 - 去重为**全历史**（热词去重、手动复用与商业模式去重均不设时间窗，每个热词只分析一次）；`resetStaleGenerating(maxAgeMinutes)`（卡死阈值）仍在 [src/lib/services/bp.ts](../../../src/lib/services/bp.ts) 中调整。
 
 ## 8. 迁移到独立 Neon 项目
 
-100 CU-hours 按**项目**计，当前项目还有兄弟应用的 10 张表，节省下来的额度可能被它吃掉，且用量无法归因。[scripts/neon-migrate.mjs](../../../scripts/neon-migrate.mjs) 只复制本站拥有的 9 张表（表清单与 DDL 来自 [src/lib/db/schema.ts](../../../src/lib/db/schema.ts)），只读源库，可重复执行。
+100 CU-hours 按**项目**计，当前项目还有兄弟应用的 10 张表，节省下来的额度可能被它吃掉，且用量无法归因。[scripts/neon-migrate.mjs](../../../scripts/neon-migrate.mjs) 只复制本站拥有的 10 张表（表清单与 DDL 来自 [src/lib/db/schema.ts](../../../src/lib/db/schema.ts)），只读源库，可重复执行。
 
 步骤：
 

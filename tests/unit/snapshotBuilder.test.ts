@@ -57,18 +57,28 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+/**
+ * A budget that is still open when the section starts and spent by the time its
+ * detail loop begins, without depending on how fast the machine is: the keyword
+ * query takes longer than the whole budget, exactly as a slow database read would.
+ */
+const SLOW_QUERY_MS = 40;
+const SPENT_BY_QUERY_BUDGET_MS = 20;
+
 describe('time budget', () => {
   it('stops writing landing details at the deadline and reports the section as truncated', async () => {
     // The aggregate query returns the keyword list; history and BP lookups are
     // irrelevant to this test, so an empty result is fine for both.
     query.mockImplementation(async (sql: string) => {
-      if (String(sql).includes('GROUP BY keyword')) return keywordAggregates(50);
+      if (String(sql).includes('GROUP BY keyword')) {
+        await new Promise((r) => setTimeout(r, SLOW_QUERY_MS));
+        return keywordAggregates(50);
+      }
       return [];
     });
 
-    // A budget of zero means the deadline has already passed by the time the
-    // detail loop starts: the index must still be written, no detail may be.
-    const report = await rebuildAllSnapshots({ only: ['landing'], budgetMs: 0 });
+    // The index must still be written; no detail may be.
+    const report = await rebuildAllSnapshots({ only: ['landing'], budgetMs: SPENT_BY_QUERY_BUDGET_MS });
 
     expect(report.ok).toBe(true);
     expect(report.truncated).toContain('landing');
@@ -78,13 +88,18 @@ describe('time budget', () => {
   });
 
   it('finishes the leftover details on the next run', async () => {
+    let slow = true;
     query.mockImplementation(async (sql: string) => {
-      if (String(sql).includes('GROUP BY keyword')) return keywordAggregates(5);
+      if (String(sql).includes('GROUP BY keyword')) {
+        if (slow) await new Promise((r) => setTimeout(r, SLOW_QUERY_MS));
+        return keywordAggregates(5);
+      }
       return [];
     });
 
-    const interrupted = await rebuildAllSnapshots({ only: ['landing'], budgetMs: 0 });
+    const interrupted = await rebuildAllSnapshots({ only: ['landing'], budgetMs: SPENT_BY_QUERY_BUDGET_MS });
     expect(interrupted.truncated).toContain('landing');
+    slow = false;
     expect(await listSnapshotKeys('landing/detail/')).toHaveLength(0);
 
     const resumed = await rebuildAllSnapshots({ only: ['landing'] });

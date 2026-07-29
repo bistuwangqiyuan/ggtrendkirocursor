@@ -3,6 +3,12 @@ import Layout from '../../layouts/Layout.astro';
 import { authorizeAdminRequest } from '../../lib/utils/adminAuth';
 import { listLogDates, readDayLog, retentionDays } from '../../lib/observability/errorLog';
 import { NO_STORE_HEADERS } from '../../lib/cache/httpCache';
+import { pendingTrendBacklog } from '../../lib/services/trendIntake';
+import { pendingBufferedReports } from '../../lib/services/bpBatchRunner';
+import { loadPipelineState, missedRuns } from '../../lib/services/pipelineState';
+import { snapshotStaleness } from '../../lib/cache/snapshotDelivery';
+import { snapshotBackend } from '../../lib/cache/snapshot';
+import { recentOpsAlerts } from '../../lib/observability/opsAlerts';
 
 export const prerender = false;
 
@@ -31,6 +37,26 @@ const log = auth.ok
 // Wakes attributed to `page` are the regression signal: after the snapshot
 // migration, a page render must never reach Postgres.
 const pageWakes = log?.wakesByReason.page ?? 0;
+
+// What the pipeline is still carrying. Non-zero means an outage deferred work
+// rather than losing it — the queue is the receipt.
+const queuedTrends = auth.ok ? await pendingTrendBacklog() : null;
+const bufferedReports = auth.ok ? await pendingBufferedReports() : null;
+const pipeline = auth.ok ? await loadPipelineState() : null;
+const missed = pipeline ? missedRuns(pipeline) : 0;
+const backlog = (queuedTrends?.rows ?? 0) + (bufferedReports?.reports ?? 0);
+const fmt = (iso: string | null) => (iso ? iso.replace('T', ' ').slice(0, 16) + 'Z' : '—');
+
+// How old what visitors actually see is. A frozen read side used to be invisible
+// here: the job reported writing snapshots that never reached a reader.
+const freshness = auth.ok ? await snapshotStaleness() : null;
+const backend = auth.ok ? await snapshotBackend() : null;
+
+// Durable incidents live in Postgres because they describe Blobs being down.
+// Reading them wakes the database, so it happens only when explicitly requested.
+const showAlerts = Astro.url.searchParams.get('alerts') === '1';
+const opsAlerts = auth.ok && showAlerts ? await recentOpsAlerts(20) : null;
+const hours = (s: number | null) => (s === null ? '—' : `${(s / 3600).toFixed(1)}h`);
 
 const linkFor = (params: Record<string, string>) => {
   const q = new URLSearchParams({ secret, date, ...(levelFilter ? { level: levelFilter } : {}), ...(routeFilter ? { route: routeFilter } : {}), ...params });
@@ -78,6 +104,114 @@ const levelClass = (level: string) =>
             <p class="text-xs uppercase tracking-wider text-gray-500">Retention</p>
             <p class="mt-1 text-2xl font-semibold text-white">{retentionDays()}d</p>
           </div>
+        </div>
+
+        <div class={`rounded-xl border p-4 ${backlog > 0 ? 'border-amber-500/30 bg-amber-500/5' : 'border-gray-800 bg-gray-900/50'}`} data-testid="pipeline-backlog">
+          <h2 class="text-sm font-semibold text-white">Write pipeline</h2>
+          <p class="mt-1 text-xs text-gray-500">
+            Work an outage deferred. Hotwords are queued in Blobs the moment they are harvested, so a
+            database outage delays them instead of losing them.
+          </p>
+          <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Queued hotwords</dt>
+              <dd class="font-mono text-white" data-testid="queued-trends">
+                {queuedTrends?.rows ?? 0}
+                <span class="text-xs text-gray-500"> in {queuedTrends?.batches ?? 0} batch(es)</span>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Unflushed reports</dt>
+              <dd class="font-mono text-white" data-testid="buffered-reports">{bufferedReports?.reports ?? 0}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Missed windows</dt>
+              <dd class={`font-mono ${missed > 0 ? 'text-amber-300' : 'text-white'}`} data-testid="missed-runs">{missed}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Last healthy run</dt>
+              <dd class="font-mono text-xs text-gray-300">{fmt(pipeline?.lastHealthyRunAt ?? null)}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Last flush</dt>
+              <dd class="font-mono text-xs text-gray-300">{fmt(pipeline?.lastFlushAt ?? null)}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Degraded streak</dt>
+              <dd class="font-mono text-xs text-gray-300">{pipeline?.consecutiveDegradedRuns ?? 0}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div
+          class={`rounded-xl border p-4 ${freshness?.stale ? 'border-red-500/30 bg-red-500/10' : 'border-gray-800 bg-gray-900/50'}`}
+          data-testid="read-side-freshness"
+        >
+          <h2 class="text-sm font-semibold text-white">Read side</h2>
+          <p class="mt-1 text-xs text-gray-500">
+            Age of what visitors see. The scheduled job rebuilds these every three hours; if the age keeps
+            growing while reports keep landing in Postgres, its snapshot writes are not reaching readers.
+            <code class="font-mono">/api/snapshots/status</code> answers 503 in that state, for an external monitor.
+          </p>
+          <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Oldest snapshot</dt>
+              <dd class={`font-mono ${freshness?.stale ? 'text-red-400' : 'text-white'}`} data-testid="snapshot-max-age">
+                {hours(freshness?.maxAgeSeconds ?? null)}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Frozen after</dt>
+              <dd class="font-mono text-gray-300">{hours(freshness?.staleAfterSeconds ?? null)}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Store</dt>
+              <dd class={`font-mono ${backend === 'blobs' ? 'text-white' : 'text-amber-300'}`}>{backend ?? '—'}</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-gray-500">Last auto-repair</dt>
+              <dd class="font-mono text-xs text-gray-300">{fmt(pipeline?.lastSnapshotRepairAt ?? null)}</dd>
+            </div>
+          </dl>
+          {freshness?.stale && (
+            <p class="mt-3 text-xs text-red-300">
+              Stale: {freshness.staleSections.join(', ')}
+              {freshness.missing.length > 0 && <> · missing: {freshness.missing.join(', ')}</>}
+              . The hourly watchdog rebuilds through the SSR route; it is rate-limited to one attempt an hour.
+            </p>
+          )}
+        </div>
+
+        <div class="rounded-xl border border-gray-800 bg-gray-900/50 p-4" data-testid="ops-alerts">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-sm font-semibold text-white">Storage incidents</h2>
+            {!showAlerts && (
+              <a href={linkFor({ alerts: '1' })} class="text-xs text-blue-400 hover:text-blue-300">
+                Load from Postgres (wakes the database)
+              </a>
+            )}
+          </div>
+          <p class="mt-1 text-xs text-gray-500">
+            Kept in Postgres, not Blobs, because they record Blobs being unusable — the one failure this log
+            cannot describe itself.
+          </p>
+          {opsAlerts === null ? (
+            <p class="mt-3 text-xs text-gray-500">Not loaded.</p>
+          ) : opsAlerts.length === 0 ? (
+            <p class="mt-3 text-xs text-green-400" data-testid="ops-alerts-empty">No incidents recorded.</p>
+          ) : (
+            <ul class="mt-3 space-y-2">
+              {opsAlerts.map((alert) => (
+                <li class="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
+                  <p class="font-mono text-xs text-gray-400">{fmt(alert.at)} · {alert.source}</p>
+                  <p class="mt-0.5 text-sm text-red-300">{alert.message}</p>
+                  {alert.context && (
+                    <pre class="mt-1 overflow-x-auto text-xs text-gray-500">{JSON.stringify(alert.context)}</pre>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div class="flex flex-wrap items-center gap-2 text-sm">
