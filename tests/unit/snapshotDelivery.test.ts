@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SNAPSHOT_KEYS, resetSnapshotStore, writeSnapshot } from '../../src/lib/cache/snapshot';
+import {
+  SNAPSHOT_KEYS,
+  deleteSnapshot,
+  resetSnapshotStore,
+  writeSnapshot,
+} from '../../src/lib/cache/snapshot';
 import {
   ensureSnapshotsDelivered,
   probeSnapshotStore,
@@ -35,9 +40,10 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-/** All five witnesses, written now, so the read side looks freshly rebuilt. */
+/** Every witness, written now, so the read side looks freshly rebuilt. */
 async function seedAllWitnesses(): Promise<void> {
   await writeSnapshot(SNAPSHOT_KEYS.trendsTop, { rows: [] });
+  await writeSnapshot(SNAPSHOT_KEYS.trendsCategories, { rows: [] });
   await writeSnapshot(SNAPSHOT_KEYS.landingIndex, { keywords: [] });
   await writeSnapshot(SNAPSHOT_KEYS.bpList, { reports: [] });
   await writeSnapshot(SNAPSHOT_KEYS.monitorLatest, { sites: [] });
@@ -87,6 +93,7 @@ describe('snapshotStaleness', () => {
 
   it('treats a missing snapshot as stale, and names it', async () => {
     await writeSnapshot(SNAPSHOT_KEYS.trendsTop, { rows: [] });
+    await writeSnapshot(SNAPSHOT_KEYS.trendsCategories, { rows: [] });
     resetSnapshotStore();
     const freshness = await snapshotStaleness();
     expect(freshness.stale).toBe(true);
@@ -219,7 +226,8 @@ describe('/api/snapshots/status as a watchdog signal', () => {
     process.env.SNAPSHOT_MAX_AGE_SECONDS = '1';
     await seedAllWitnesses();
     resetSnapshotStore();
-    await new Promise((r) => setTimeout(r, 1100));
+    // Ages are whole seconds, so clear the threshold by a full second.
+    await new Promise((r) => setTimeout(r, 2100));
     const res = await callStatus();
     expect(res.status).toBe(503);
     expect(res.body.ok).toBe(false);
@@ -234,6 +242,19 @@ describe('/api/snapshots/status as a watchdog signal', () => {
     const res = await callStatus();
     expect(res.status).toBe(503);
     expect(res.body.staleSections).toContain('bp');
+  });
+
+  it('never reports a problem the repair job would disagree about', async () => {
+    // A 503 whose staleSections are empty is unfixable: the watchdog rebuilds
+    // whatever this names, so anything that fails the check has to be named.
+    await seedAllWitnesses();
+    await deleteSnapshot(SNAPSHOT_KEYS.trendsCategories);
+    resetSnapshotStore();
+
+    const res = await callStatus();
+    expect(res.status).toBe(503);
+    expect(res.body.stale).toBe(true);
+    expect(res.body.staleSections).toEqual(['trends']);
   });
 });
 

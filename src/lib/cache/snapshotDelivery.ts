@@ -43,9 +43,14 @@ export function snapshotMaxAgeSeconds(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 7 * 3600;
 }
 
-/** The snapshot each section publishes last, used to judge that section's age. */
+/**
+ * Every snapshot a page reads, mapped to the section that rebuilds it. This is
+ * the one list that decides "frozen", so a key left out here is a key no monitor
+ * reports and no repair job restores.
+ */
 const WITNESSES: [SnapshotSection, string, string][] = [
   ['trends', 'trendsTop', SNAPSHOT_KEYS.trendsTop],
+  ['trends', 'trendsCategories', SNAPSHOT_KEYS.trendsCategories],
   ['landing', 'landingIndex', SNAPSHOT_KEYS.landingIndex],
   ['bp', 'bpList', SNAPSHOT_KEYS.bpList],
   ['monitor', 'monitorLatest', SNAPSHOT_KEYS.monitorLatest],
@@ -81,20 +86,24 @@ export async function snapshotStaleness(now: Date = new Date()): Promise<Snapsho
     ages: {},
   };
 
+  // A section with several witnesses must still be named once, so that callers
+  // can pass staleSections straight to the rebuild endpoint.
+  const staleSections = new Set<SnapshotSection>();
   for (const [section, name, key] of WITNESSES) {
     const snap = await readSnapshot<unknown>(key);
     if (!snap) {
       result.ages[name] = null;
       result.missing.push(name);
-      result.staleSections.push(section);
+      staleSections.add(section);
       continue;
     }
     const age = Math.round((now.getTime() - Date.parse(snap.generatedAt)) / 1000);
     result.ages[name] = age;
     result.maxAgeSeconds = Math.max(result.maxAgeSeconds ?? 0, age);
-    if (age > threshold) result.staleSections.push(section);
+    if (age > threshold) staleSections.add(section);
   }
 
+  result.staleSections = [...staleSections];
   result.stale = result.staleSections.length > 0;
   return result;
 }

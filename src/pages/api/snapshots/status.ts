@@ -41,9 +41,11 @@ export const GET: APIRoute = async () => {
     listSnapshotKeys('bp/detail/'),
   ]);
 
-  const allPresent = Object.values(snapshots).every((s) => s.present);
+  // snapshotStaleness already counts a missing witness as stale, and it is what
+  // the hourly repair job acts on. Judging freshness here any other way would let
+  // this endpoint report a problem that nothing goes on to fix.
   const freshness = await snapshotStaleness();
-  const ok = allPresent && !freshness.stale;
+  const ok = !freshness.stale;
   return new Response(
     JSON.stringify({
       ok,
