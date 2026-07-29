@@ -16,7 +16,8 @@
     "neon:audit": "tsx scripts/neon-audit.mjs",
     "neon:projects": "node scripts/neon-provision.mjs",
     "neon:migrate": "tsx scripts/neon-migrate.mjs",
-    "snapshots:bootstrap": "node scripts/snapshot-bootstrap.mjs"
+    "snapshots:bootstrap": "node scripts/snapshot-bootstrap.mjs",
+    "snapshots:check": "node scripts/snapshot-freshness.mjs"
   },
   "dependencies": {
     "@astrojs/netlify": "^6.6.0",

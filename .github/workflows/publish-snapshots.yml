@@ -1,0 +1,59 @@
+name: Publish snapshots
+
+# Publisher and watchdog for the read side, deliberately outside Netlify.
+#
+# The scheduled function normally refreshes its own snapshots, but that assumes
+# two things the site cannot guarantee for itself: that the write pipeline can
+# reach the snapshot store, and that the current code is deployed at all. Neither
+# held this week — a store that refused writes froze every page for 44 hours
+# while Postgres kept collecting reports, and an exhausted Netlify credit balance
+# blocks deploys while the running site keeps serving traffic.
+#
+# So this drives the SSR rebuild endpoint (v2 runtime, environment injected
+# automatically, proven to work throughout the freeze) and then checks the ages
+# readers actually see. A failing run mails the repository owner, which is the
+# alert the site could not raise about itself.
+#
+# Runs ~25 minutes after each scheduled batch (0 */3 * * * UTC) so it publishes
+# what that batch just wrote.
+
+on:
+  schedule:
+    - cron: '25 0,3,6,9,12,15,18,21 * * *'
+  workflow_dispatch:
+    inputs:
+      max_age_minutes:
+        description: Fail if any snapshot is older than this many minutes
+        required: false
+        default: '240'
+
+concurrency:
+  group: publish-snapshots
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Each pass wakes Neon, so the pass count is capped: a routine run needs
+      # one or two, and a deep backlog is a bootstrap job, not a cron job.
+      - name: Rebuild snapshots
+        env:
+          BASE_URL: https://ioni.top
+          CRON_SECRET: ${{ secrets.SNAPSHOT_REBUILD_SECRET }}
+          MAX_PASSES: '8'
+        run: node scripts/snapshot-bootstrap.mjs
+
+      - name: Verify what readers see
+        if: always()
+        env:
+          BASE_URL: https://ioni.top
+          MAX_AGE_MINUTES: ${{ github.event.inputs.max_age_minutes || '240' }}
+        run: node scripts/snapshot-freshness.mjs

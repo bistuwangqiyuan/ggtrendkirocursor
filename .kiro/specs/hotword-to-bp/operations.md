@@ -217,6 +217,20 @@ BP 相关探针：
   BASE_URL=https://<your-site> CRON_SECRET=$CRON_SECRET node scripts/snapshot-bootstrap.mjs
   ```
 - 建议：把外部 uptime 监控指向 `/api/snapshots/status`。它是 DB-free 的，陈旧即 503，这样下一次同类故障不必等到有人肉眼发现内容没更新。
+- 站外兜底已常态化：GitHub Actions 工作流 [.github/workflows/publish-snapshots.yml](../../../.github/workflows/publish-snapshots.yml) 在每个批量窗口后 25 分钟跑同一条 SSR 重建路径，再断言读取侧年龄（`npm run snapshots:check`，超过 4 小时即失败并邮件通知仓库所有者）。它不依赖 Netlify 构建与站内看门狗，因此上述两种"站内自己救不了自己"的情形都能兜住；只需一个仓库 Secret：`SNAPSHOT_REBUILD_SECRET`（填站点的 `ADMIN_SECRET` 或 `CRON_SECRET`）。
+
+### G. Netlify 额度耗尽：部署被拒（站点仍在运行）
+
+- 症状：`git push` 后 Netlify 出现 `error` 状态的部署，`error_message` 为 `Skipped due to account credit usage exceeded`；`netlify deploy` 也会以 `JSONHTTPError: Forbidden` 失败。站点本身照常服务，函数照常执行。
+- 判断：
+  ```bash
+  # 部署状态与拒绝原因
+  npx netlify api listSiteDeploys --data "{\"site_id\":\"<site-id>\"}"
+  # 计费周期与套餐额度（credits 按周期计，周期见 current_usage_period_start）
+  curl -H "Authorization: Bearer <netlify-token>" https://api.netlify.com/api/v1/accounts/<slug>
+  ```
+- 影响：**代码改不动**。此时环境变量的新增/修改也不会生效——Netlify 只在部署时注入，正在运行的函数仍持有旧值（2026-07-29 就是这样：当天新设的 `ADMIN_SECRET` 对线上无效，运维接口只能继续用 `CRON_SECRET`）。
+- 处置：额度靠充值或等下一个周期恢复；在此期间页面更新靠 §F 的站外工作流维持，它只用运行中的 SSR 端点，不需要部署。
 
 ## 6. 成本与安全
 
