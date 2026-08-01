@@ -1,4 +1,5 @@
 import { schedule } from '@netlify/functions';
+import { isWriter, siteRole } from '../../src/lib/utils/siteRole';
 
 /**
  * The site's only cron trigger. Runs every 3 hours (UTC) and fires the
@@ -14,8 +15,17 @@ import { schedule } from '@netlify/functions';
  *
  * This trigger only kicks off the background job and returns immediately, so it
  * stays well within the scheduled-function time limit. Requires CRON_SECRET.
+ *
+ * Only the writer deployment runs it: the standby account deploys this same code
+ * but with SITE_ROLE=reader, and a second batch against the same database would
+ * duplicate the Neon wake window and the LLM spend for no extra reports.
  */
 export const handler = schedule('0 */3 * * *', async () => {
+  if (!isWriter()) {
+    console.log(`[bp-scheduled] role=${siteRole()}; the writer deployment owns this batch`);
+    return { statusCode: 200, body: 'skipped: reader role' };
+  }
+
   const secret = process.env.CRON_SECRET?.trim();
   // Netlify provides URL (production) / DEPLOY_URL (deploy previews).
   const base = (process.env.URL || process.env.DEPLOY_URL || 'https://ggtrendkirocursor.netlify.app').replace(/\/$/, '');

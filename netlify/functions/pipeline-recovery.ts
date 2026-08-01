@@ -9,6 +9,8 @@ import {
 } from '../../src/lib/services/pipelineState';
 import { connectSnapshotStoreToLambda } from '../../src/lib/cache/snapshot';
 import { snapshotStaleness } from '../../src/lib/cache/snapshotDelivery';
+import { bufferedPaymentBacklog } from '../../src/lib/payments/orderBuffer';
+import { isWriter, siteRole } from '../../src/lib/utils/siteRole';
 
 /**
  * Hourly check for work an outage left behind, and for a read side that stopped
@@ -34,6 +36,15 @@ import { snapshotStaleness } from '../../src/lib/cache/snapshotDelivery';
  * something wrong, and at most once an hour, so a genuinely broken state is
  * retried steadily rather than hammered.
  *
+ * ON THE STANDBY DEPLOYMENT
+ * A reader (SITE_ROLE=reader) keeps the snapshot watchdog, because its whole job
+ * is serving pages that must not freeze, and repairing its own snapshots is a
+ * read against an already-awake database rather than a duplicate write. It also
+ * lands its own buffered payments, since it is the deployment providers post
+ * webhooks to and Blobs are per-site. What it never does is drain the intake
+ * queues: those are filled by the batch, which only the writer runs, so a reader
+ * draining them would land the same hotwords twice.
+ *
  * Set PIPELINE_RECOVERY_ENABLED=false to switch it off.
  */
 export const handler = schedule('25 * * * *', async (event: { blobs?: string }) => {
@@ -51,12 +62,16 @@ export const handler = schedule('25 * * * *', async (event: { blobs?: string }) 
     return { statusCode: 200, body: 'skipped: no CRON_SECRET' };
   }
 
-  const [trends, reports, freshness] = await Promise.all([
+  const [trends, reports, payments, freshness] = await Promise.all([
     pendingTrendBacklog(),
     pendingBufferedReports(),
+    bufferedPaymentBacklog(),
     snapshotStaleness(),
   ]);
-  const backlog = trends.rows + reports.reports;
+  // Buffered payments count towards the backlog even though they publish nothing:
+  // a purchase that only exists in Blobs is invisible in the buyer's downloads
+  // list, so it deserves the same hourly nudge as unlanded hotwords.
+  const backlog = trends.rows + reports.reports + payments.events;
   const state = await loadPipelineState();
 
   // Two independent reasons to act, deliberately kept separate: a store that the
@@ -64,7 +79,18 @@ export const handler = schedule('25 * * * *', async (event: { blobs?: string }) 
   // gating the freshness check on a backlog would miss exactly the incident this
   // watchdog exists for.
   const repairSnapshots = freshness.stale && snapshotRepairDue(state);
-  const drainBacklog = backlog > 0 && recoveryDue(state);
+  // Queued hotwords and buffered plans belong to the writer's batch. Buffered
+  // payments do not: they were received by whichever deployment the provider
+  // posted to, and Blobs are per-site, so the site holding them is the only one
+  // that can land them.
+  const queuedForWriter = trends.rows + reports.reports;
+  const drainable = isWriter() ? backlog : payments.events;
+  const drainBacklog = drainable > 0 && recoveryDue(state);
+  if (queuedForWriter > 0 && !isWriter()) {
+    console.warn(
+      `[pipeline-recovery] role=${siteRole()}; leaving ${queuedForWriter} queued item(s) to the writer`
+    );
+  }
 
   if (freshness.stale) {
     console.error(
@@ -74,14 +100,16 @@ export const handler = schedule('25 * * * *', async (event: { blobs?: string }) 
     );
   }
   if (!repairSnapshots && !drainBacklog) {
-    const why = freshness.stale || backlog > 0 ? 'throttled' : 'nothing to do';
+    const why = freshness.stale || drainable > 0 ? 'throttled' : 'nothing to do';
     console.log(`[pipeline-recovery] ${why}; backlog=${backlog} stale=${freshness.stale}`);
     return { statusCode: 200, body: `${why} backlog=${backlog} stale=${freshness.stale}` };
   }
 
   console.log(
     `[pipeline-recovery] triggering drain: ${trends.rows} hotword(s) in ${trends.batches} batch(es), ` +
-    `${reports.reports} report(s) in ${reports.batches} buffer(s), repairSnapshots=${repairSnapshots}`
+    `${reports.reports} report(s) in ${reports.batches} buffer(s), ${payments.events} payment(s)` +
+    (payments.oldestReceivedAt ? ` oldest=${payments.oldestReceivedAt}` : '') +
+    `, repairSnapshots=${repairSnapshots}`
   );
   const now = new Date().toISOString();
   await savePipelineState({

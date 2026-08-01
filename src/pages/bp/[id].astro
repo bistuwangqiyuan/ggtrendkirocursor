@@ -6,6 +6,7 @@ import { readForPage } from '../../lib/cache/readPath';
 import { applyPageCache, CACHE_PROFILES, NO_STORE_HEADERS } from '../../lib/cache/httpCache';
 import { getTranslations } from '../../lib/i18n';
 import { formatNumber, formatDateTime } from '../../lib/utils/format';
+import { paymentsEnabled, priceLabel } from '../../lib/payments';
 
 export const prerender = false;
 
@@ -65,6 +66,15 @@ const scoreRows: { key: string; label: string }[] = [
   { key: 'moat', label: t.bp.scores.moat },
 ];
 
+// The buy panel is rendered from configuration only — no database access — so the
+// page cost is unchanged whether payments are on or off.
+const canSell = paymentsEnabled() && report?.status === 'completed' && !!content;
+const price = priceLabel();
+const buyer = Astro.locals.user;
+// Present when the buyer has just come back from the hosted checkout. Treated as
+// the purchase reference, not as proof on its own: /api/pay/status verifies it.
+const purchaseReference = Astro.url.searchParams.get('purchase') || '';
+
 const pageTitle = content?.title || report?.keyword || t.bp.title;
 const selectedOpp = opportunities.find((o) => o.isSelected);
 // Per-report meta description (fallback to the site default via Layout).
@@ -78,19 +88,92 @@ const pageDescription = content?.summary
 <Layout title={pageTitle} description={pageDescription}>
   <div class="bp-page" data-report-id={report?.id} data-status={report?.status}>
     <!-- Toolbar (hidden when printing) -->
-    <div class="no-print mb-6 flex items-center justify-between">
+    <div class="no-print mb-6 flex items-center justify-between gap-3">
       <a href="/bp" class="text-sm font-medium text-blue-400 hover:text-blue-300">← {t.bp.backToList}</a>
-      {report && report.status === 'completed' && (
-        <button
-          id="bp-export-pdf"
-          type="button"
-          class="inline-flex items-center gap-2 rounded-full bg-white/95 px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-black/5 transition hover:bg-white"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16"/></svg>
-          {t.bp.exportPdf}
-        </button>
-      )}
+      <div class="flex items-center gap-2">
+        {canSell && (
+          <a href="/orders" class="text-sm font-medium text-gray-400 hover:text-gray-200">{t.pay.myDownloads}</a>
+        )}
+        {report && report.status === 'completed' && (
+          <button
+            id="bp-export-pdf"
+            type="button"
+            title={t.bp.exportHint}
+            class="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/15 transition hover:bg-white/20"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9V4h12v5M6 18H4v-6h16v6h-2M8 14h8v6H8z"/></svg>
+            {t.bp.exportPdf}
+          </button>
+        )}
+      </div>
     </div>
+
+    {canSell && (
+      <section
+        id="bp-buy"
+        class="no-print mb-6 rounded-2xl border border-white/10 bg-gradient-to-br from-blue-950/60 to-gray-900/60 p-6"
+        data-report-id={report!.id}
+        data-reference={purchaseReference}
+        data-signed-in={buyer ? '1' : ''}
+        data-copy={JSON.stringify({
+          processing: t.pay.processing,
+          waiting: t.pay.waiting,
+          paid: t.pay.paid,
+          refunded: t.pay.refunded,
+          failed: t.pay.failed,
+          invalidEmail: t.pay.invalidEmail,
+          unavailable: t.pay.unavailable,
+        })}
+      >
+        <div class="flex flex-wrap items-start justify-between gap-6">
+          <div class="max-w-xl">
+            <h2 class="text-lg font-semibold text-white">{t.pay.buyTitle}</h2>
+            <p class="mt-2 text-sm leading-relaxed text-gray-400">{t.pay.buyDesc}</p>
+            <p class="mt-3 text-xs text-gray-500">{t.pay.secureNote}</p>
+          </div>
+
+          <div class="w-full max-w-sm">
+            {buyer ? (
+              <p class="mb-3 text-xs text-gray-400">{t.pay.loggedInAs.replace('{email}', buyer.email)}</p>
+            ) : (
+              <label class="mb-3 block">
+                <span class="mb-1 block text-xs font-medium text-gray-300">{t.pay.emailLabel}</span>
+                <input
+                  id="bp-buy-email"
+                  type="email"
+                  inputmode="email"
+                  autocomplete="email"
+                  required
+                  placeholder={t.pay.emailPlaceholder}
+                  class="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                />
+                <span class="mt-1 block text-[11px] text-gray-500">{t.pay.emailHint}</span>
+              </label>
+            )}
+
+            <button
+              id="bp-buy-button"
+              type="button"
+              class="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {t.pay.buyCta.replace('{price}', price)}
+            </button>
+
+            <a
+              id="bp-download-link"
+              href="#"
+              hidden
+              class="mt-3 block w-full rounded-xl bg-emerald-600 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-emerald-500"
+            >
+              {t.pay.downloadNow}
+            </a>
+
+            <p id="bp-buy-status" class="mt-3 text-xs text-gray-400" role="status" aria-live="polite"></p>
+            <a href="/orders" class="mt-2 block text-[11px] text-gray-500 underline hover:text-gray-300">{t.pay.lookupCta}</a>
+          </div>
+        </div>
+      </section>
+    )}
 
     {!report && (
       <div class="rounded-lg border border-amber-500/20 bg-amber-500/10 px-6 py-12 text-center text-amber-300" data-testid="degraded-notice">
@@ -417,5 +500,117 @@ const pageDescription = content?.summary
       setTimeout(poll, 3000);
     };
     setTimeout(poll, 3000);
+  }
+
+  // --- Buy / download panel -------------------------------------------------
+  const buy = document.getElementById('bp-buy') as HTMLElement | null;
+  if (buy) {
+    const reportId = buy.dataset.reportId!;
+    const copy = JSON.parse(buy.dataset.copy || '{}') as Record<string, string>;
+    const button = document.getElementById('bp-buy-button') as HTMLButtonElement;
+    const emailInput = document.getElementById('bp-buy-email') as HTMLInputElement | null;
+    const statusEl = document.getElementById('bp-buy-status') as HTMLElement;
+    const downloadLink = document.getElementById('bp-download-link') as HTMLAnchorElement;
+
+    const say = (message: string, tone: 'info' | 'ok' | 'error' = 'info') => {
+      statusEl.textContent = message;
+      statusEl.className =
+        'mt-3 text-xs ' +
+        (tone === 'ok' ? 'text-emerald-400' : tone === 'error' ? 'text-red-400' : 'text-gray-400');
+    };
+
+    const showDownload = (url: string) => {
+      downloadLink.href = url;
+      downloadLink.hidden = false;
+      button.hidden = true;
+      if (emailInput) emailInput.closest('label')!.hidden = true;
+      say(copy.paid, 'ok');
+    };
+
+    button.addEventListener('click', async () => {
+      const email = emailInput?.value.trim() || '';
+      if (emailInput && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        say(copy.invalidEmail, 'error');
+        emailInput.focus();
+        return;
+      }
+      button.disabled = true;
+      say(copy.processing);
+      try {
+        const res = await fetch('/api/pay/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reportId, email: email || undefined }),
+        });
+        const data = await res.json().catch(() => ({}) as Record<string, unknown>);
+        if (res.ok && typeof data.url === 'string') {
+          window.location.href = data.url;
+          return;
+        }
+        say(
+          data.error === 'invalid_email'
+            ? copy.invalidEmail
+            : data.error === 'payments_unavailable' || res.status === 503
+              ? copy.unavailable
+              : copy.failed,
+          'error'
+        );
+      } catch {
+        say(copy.failed, 'error');
+      }
+      button.disabled = false;
+    });
+
+    const reference = buy.dataset.reference;
+
+    // A signed-in visitor who already bought this report must not be offered it
+    // again: they would pay twice for the same file, and asking for a refund is a
+    // worse experience than one extra request per page view. Costs a single
+    // entitlement lookup, and only for logged-in readers of a finished report.
+    if (!reference && buy.dataset.signedIn) {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/pay/status?reportId=${encodeURIComponent(reportId)}`);
+          const data = await res.json().catch(() => ({}) as Record<string, unknown>);
+          if (data.status === 'paid' && typeof data.downloadUrl === 'string') showDownload(data.downloadUrl);
+        } catch {
+          // Leave the buy button as it is: a failed check must not block a sale.
+        }
+      })();
+    }
+
+    // Returning from the hosted checkout: poll until the webhook lands. The
+    // webhook usually beats the redirect, but never assume it.
+    if (reference) {
+      button.disabled = true;
+      say(copy.waiting);
+      const deadline = Date.now() + 180_000;
+      const check = async () => {
+        try {
+          const res = await fetch(
+            `/api/pay/status?reportId=${encodeURIComponent(reportId)}&reference=${encodeURIComponent(reference)}`
+          );
+          const data = await res.json().catch(() => ({}) as Record<string, unknown>);
+          const state = data.status;
+          if (state === 'paid' && typeof data.downloadUrl === 'string') {
+            showDownload(data.downloadUrl);
+            return;
+          }
+          if (state === 'refunded') {
+            say(copy.refunded, 'error');
+            return;
+          }
+        } catch {
+          // transient; keep polling until the deadline
+        }
+        if (Date.now() < deadline) {
+          setTimeout(check, 3000);
+        } else {
+          say(copy.waiting + ' ' + (copy.unavailable || ''), 'error');
+          button.disabled = false;
+        }
+      };
+      check();
+    }
   }
 </script>

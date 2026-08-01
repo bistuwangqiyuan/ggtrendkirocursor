@@ -1,0 +1,68 @@
+name: Domain failover
+
+# Keeps the public domain pointed at a deployment that answers.
+#
+# The site is on two Netlify accounts because an account can stop serving the
+# product for billing reasons alone. This checks the live domain every 15 minutes
+# and, only when it is hard-down while the other deployment is healthy, moves the
+# custom domain and the DNS records across. See scripts/failover.mjs for what
+# counts as down and why staleness deliberately does not.
+#
+# The workflow stays inert until the standby secrets exist, so it can be merged
+# before the second account is set up.
+#
+# Configuration:
+#   secrets.NETLIFY_TOKEN_PRIMARY / NETLIFY_SITE_ID_PRIMARY
+#   secrets.NETLIFY_TOKEN_STANDBY / NETLIFY_SITE_ID_STANDBY
+#   secrets.ALIYUN_ACCESS_KEY_ID / ALIYUN_ACCESS_KEY_SECRET  (optional: without
+#     them the Netlify half runs and the DNS change is printed for a manual edit)
+#   vars.PRIMARY_DOMAIN   default ioni.top
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      to:
+        description: Force a switch (primary or standby). Leave empty to probe only.
+        required: false
+        default: ''
+      dry_run:
+        description: Report the decision without changing anything
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: domain-failover
+  cancel-in-progress: false
+
+jobs:
+  failover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Probe and fail over if needed
+        env:
+          DOMAIN: ${{ vars.PRIMARY_DOMAIN || 'ioni.top' }}
+          NETLIFY_TOKEN_PRIMARY: ${{ secrets.NETLIFY_TOKEN_PRIMARY }}
+          NETLIFY_SITE_ID_PRIMARY: ${{ secrets.NETLIFY_SITE_ID_PRIMARY }}
+          NETLIFY_TOKEN_STANDBY: ${{ secrets.NETLIFY_TOKEN_STANDBY }}
+          NETLIFY_SITE_ID_STANDBY: ${{ secrets.NETLIFY_SITE_ID_STANDBY }}
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        run: |
+          if [ -z "$NETLIFY_TOKEN_STANDBY" ] || [ -z "$NETLIFY_SITE_ID_STANDBY" ]; then
+            echo "Standby account not configured yet; nothing to fail over to."
+            exit 0
+          fi
+          FLAGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then FLAGS="$FLAGS --dry-run"; fi
+          if [ -n "${{ github.event.inputs.to }}" ]; then FLAGS="$FLAGS --to=${{ github.event.inputs.to }}"; fi
+          node scripts/failover.mjs $FLAGS

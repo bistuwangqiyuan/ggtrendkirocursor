@@ -21,6 +21,8 @@ Trend Now is a real-time Google Trends data visualization platform built with As
 - **LLM Auto-Failover**: Configure multiple OpenAI-compatible endpoints; the service switches to the next one automatically on timeout / HTTP / auth errors.
 - **Hotword SEO Landing Pages**: Every collected trending keyword gets a dedicated landing page at `/t/[slug]` (search stats, trending history, FAQ + Breadcrumb JSON-LD) that captures organic search traffic for the keyword and funnels visitors to the AI business-plan report and registration. All landing pages are listed in the sitemap; `/t` is the browsable index.
 - **Site Monitoring**: Uptime + SEO health monitoring for your own deployed sites (Vercel/Netlify/any domain). Register sites via `POST /api/monitor/sites` (admin secret), a scheduled function probes each site every 6h (HTTP status, latency, title/description/canonical/viewport/H1/OG/JSON-LD/robots.txt/sitemap checks, 0–100 SEO score), and the `/monitor` dashboard shows the latest state per site.
+- **Paid Report PDFs ($1)**: Reading stays free; the paid artifact is a server-rendered, typeset PDF of a completed report (cover, running footer, page numbers, tables that survive page breaks, buyer licence line, embedded CJK font subset). Checkout is hosted by a merchant of record — **Creem** primary, **Lemon Squeezy** automatic fallback — so no card data touches this site and global VAT/GST is handled for an individual seller. Guests buy with just an email and download immediately from the success page; logged-in buyers get the order attached to their account and re-download from `/orders`. Webhooks are signature-verified and idempotent, refunds revoke access, download links are expiring HMAC tokens, and a verified payment that arrives while Postgres is down is buffered in Blobs and honoured anyway.
+- **Two Netlify Accounts, One Writer**: The same code is deployed twice so one account's exhausted build credits cannot take the product offline (that happened for a month in July 2026). `SITE_ROLE=reader` turns off every cron on the standby, so there is no duplicate Neon wake window and no duplicate LLM spend; its snapshots are published by the same GitHub Actions run that publishes the primary's, inside the compute window Neon is already awake for. A 15-minute workflow probes the live domain and, only on hard failure with the standby proven healthy, moves the custom domain and flips the Aliyun DNS records.
 - **Performance**: Low latency, partial hydration with Astro Islands.
 
 ## Tech Stack
@@ -70,11 +72,34 @@ CRON_SECRET=your-long-random-secret
 # Falls back to CRON_SECRET when unset; with neither set the endpoints are
 # disabled (fail closed, 503).
 ADMIN_SECRET=your-admin-secret
+
+# --- Paid report PDFs (optional; the buy UI disappears when unset) ---
+# A provider is offered only when its API key AND webhook secret are both set:
+# taking money through a channel whose webhook cannot be verified is the one
+# failure with no acceptable recovery.
+CREEM_API_KEY=
+CREEM_PRODUCT_ID=
+CREEM_WEBHOOK_SECRET=
+LEMONSQUEEZY_API_KEY=
+LEMONSQUEEZY_STORE_ID=
+LEMONSQUEEZY_VARIANT_ID=
+LEMONSQUEEZY_WEBHOOK_SECRET=
+# Signs download links and the guest lookup/claim magic links. Falls back to
+# SESSION_SECRET; minimum 16 characters or paid downloads fail closed.
+PAYMENT_TOKEN_SECRET=
+# Only needed so guests can ask for their download link again later.
+RESEND_API_KEY=
+
+# --- Two-account deployment ---
+# `reader` runs no cron at all. Defaults to `writer` when unset, because a lost
+# variable silencing the pipeline is the harder failure to notice.
+SITE_ROLE=writer
 ```
 
 Notes:
 - Without `LLM_API_KEY` (or `LLM_API_ENDPOINTS`), the BP generation endpoints fail closed with HTTP 503 and never fall back to templates.
 - Without `CRON_SECRET`, `POST /api/bp/cron` returns 503 and the scheduled function is effectively disabled (fail-closed).
+- With no payment provider configured the site behaves exactly as it did before payments existed: no buy button, no price claims in the copy.
 
 ## Installation
 

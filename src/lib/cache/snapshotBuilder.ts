@@ -24,6 +24,7 @@ import { slugifyKeyword } from '../utils/slug';
 import { bpService } from '../services/bp';
 import { siteMonitorService } from '../services/siteMonitor';
 import { trendsService } from '../services/trends';
+import { revenueSummary } from '../services/orders';
 import { parseTopicClass } from '../services/trendTriage';
 import type { BpReport } from '../../types';
 import {
@@ -622,6 +623,11 @@ async function buildStatsSnapshot(): Promise<SectionResult> {
     `SELECT MAX(created_at) AS ts FROM bp_reports`
   ).catch(() => null);
 
+  // Sales, if the table exists yet. Left undefined rather than zeroed on failure:
+  // "we could not read revenue" and "we earned nothing" must not look alike on
+  // the page, and this section is also built on deployments that predate payments.
+  const revenue = await revenueSummary(STATS_DAILY_DAYS).catch(() => undefined);
+
   const payload: StatsSnapshot = {
     totals: {
       trends, keywords, bpTotal, bpCompleted, bpFailed, bpDuplicates,
@@ -656,6 +662,9 @@ async function buildStatsSnapshot(): Promise<SectionResult> {
       latestTrendAt: latestTrend?.ts ? toIso(latestTrend.ts) : null,
       latestBpAt: latestBp?.ts ? toIso(latestBp.ts) : null,
     },
+    ...(revenue
+      ? { revenue: { ...revenue, daily: [...revenue.daily].reverse() } }
+      : {}),
   };
 
   return { written: (await writeSnapshot<StatsSnapshot>(SNAPSHOT_KEYS.statsOverview, payload)) ? 1 : 0 };

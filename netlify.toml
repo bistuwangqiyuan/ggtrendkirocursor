@@ -15,6 +15,11 @@
   # ("Cannot find module 'pg-types'") on every scheduled run from 2026-07-04
   # to 2026-07-13 and silently halted all BP generation.
   external_node_modules = ["pg-native"]
+  # The PDF renderer embeds a CJK font, and a PDF must carry its own fonts or
+  # every Chinese report comes out as empty boxes. esbuild only bundles code, so
+  # the file has to be declared: without this the download endpoint fails at
+  # runtime on exactly the requests someone has paid for.
+  included_files = ["public/fonts/**"]
 
 # Give the SSR/API function the maximum synchronous timeout so LLM-backed BP
 # generation has the best chance to finish before Netlify cuts the request.

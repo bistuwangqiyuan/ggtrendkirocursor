@@ -24,6 +24,22 @@
 | `PIPELINE_RECOVERY_MIN_INTERVAL_MINUTES` | 否 | `55` | 有积压时两次补录尝试的最小间隔；快照重建复用同一间隔 |
 | `SNAPSHOT_MAX_AGE_SECONDS` | 否 | `25200`（7h） | 读取侧被判定为「冻结」的年龄阈值（两个写入窗口 + 1h 余量）。超过后 `/api/snapshots/status` 返回 503，看门狗自动重建（§3d） |
 | `ADMIN_SECRET` | 否 | 回退到 `CRON_SECRET` | 运维接口/页面（`/admin/errors`、`/api/admin/*`）鉴权密钥。未设置时用 `CRON_SECRET`，但两者分离更安全 |
+| `SITE_ROLE` | 否 | `writer` | 双部署角色。`reader` 的站点**不跑任何定时任务**（见 §9）；缺省为 `writer`，因为"变量丢失导致管线静默停摆"比"多跑一次"更难发现 |
+
+支付与下载（未配置时买入口自动隐藏，站点行为与加支付前完全一致，见 §10）：
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `CREEM_API_KEY` | 收款需要 | — | Creem（主通道，支持支付宝/银行卡，Merchant of Record） |
+| `CREEM_PRODUCT_ID` | 同上 | — | Creem 侧的 $1 产品 ID。**金额只在供应商侧配置**，浏览器永远不传价格 |
+| `CREEM_WEBHOOK_SECRET` | 同上 | — | Webhook 签名密钥。缺此项则该通道**不会**被启用（收了钱却无法验证付款，是唯一不可接受的失败） |
+| `CREEM_TEST_MODE` | 否 | `false` | `true` 时打 Creem 沙箱域名（测试密钥只对沙箱有效） |
+| `LEMONSQUEEZY_API_KEY` / `_STORE_ID` / `_VARIANT_ID` / `_WEBHOOK_SECRET` | 备用通道需要 | — | Lemon Squeezy，Creem 建单失败时自动接管 |
+| `PAYMENT_PROVIDER_ORDER` | 否 | `creem,lemonsqueezy` | 尝试顺序。未列出的通道仍会被追加，所以写错不会静默停掉一个已配置的通道 |
+| `PAYMENT_PRICE_CENTS` | 否 | `100` | **仅用于前端展示**（≥100）。实际扣款金额取决于供应商产品配置，两者需人工保持一致 |
+| `PAYMENT_TOKEN_SECRET` | 否 | 回退 `SESSION_SECRET` | 签发下载链接与找单/认领魔术链接（HMAC）。至少 16 位，两者皆无则付费下载 fail-closed 返回 503 |
+| `RESEND_API_KEY` | 否 | — | 仅用于游客"找回我的下载"与"认领订单"邮件。未配置时刚付款仍可直接下载（成功页带购买参考号），只是事后无法再要一次链接 |
+| `EMAIL_FROM` | 否 | `ioni.top <no-reply@ioni.top>` | 必须是 Resend 里已验证的域名，否则发信被拒 |
 
 > 二选一：`LLM_API_KEY` 与 `LLM_API_ENDPOINTS` 至少配置其一，否则 BP 生成端点返回 503（fail-closed，不做模板回退）。
 
@@ -268,3 +284,178 @@ BASE_URL=http://localhost:4399 ADMIN_SECRET=<secret> npm run test:migrated
 - **行数相等不等于内容相等**。`--verify` 会对每表计算内容指纹（逐行 md5 排序后折叠，与行序无关）；人为改动目标库一个字段后该步骤会报 `MISMATCH` 并以非零码退出。
 
 旧项目至少保留几天作为回滚路径，确认新项目跑完一个完整 cron 周期（`/api/snapshots/status` 新鲜）后再考虑清理。
+
+## 9. 双 Netlify 账号部署与域名自动切换
+
+2026-07 的教训不是代码问题：账号额度耗尽后**部署被拒了一个月**（§5G），站点还在跑，但改不动任何东西。所以同一份代码部署在两个 Netlify 账号上，任一账号出问题都不影响对外服务。
+
+### 9.1 角色划分（关键：不重复烧钱）
+
+两个部署连同一个 Neon 库、同一份代码，唯一区别是 `SITE_ROLE`：
+
+| | writer | reader |
+|---|---|---|
+| `bp-scheduled`（`0 */3 * * *`） | 跑 | **直接返回**，不拉起批量 |
+| `pipeline-recovery` 补录热词/落库报告 | 跑 | 不跑（队列是 writer 的批量产生的，两边都落库会插入重复热词） |
+| `pipeline-recovery` 快照冻结看门狗 | 跑 | **跑**（它的本职就是页面不能冻结，重建是读操作） |
+| 落库缓冲的支付事件 | 跑 | **跑**（Blobs 按站点隔离，webhook 打到哪个站点就只有那个站点能落它；`provider_order_id` 幂等，两边各落自己的不会重复） |
+| SSR 页面 / 支付 / 下载 | 跑 | 跑（否则切换过去没有意义） |
+
+`SITE_ROLE` 缺省是 `writer`：变量丢失导致管线静默停摆，比多跑一轮更难发现。所以**必须显式**给备用站点设 `SITE_ROLE=reader`。
+
+### 9.2 备用站点的快照从哪来
+
+Netlify Blobs 按站点隔离，备用站点有自己的快照存储，没人填就是空的。[.github/workflows/publish-snapshots.yml](../../../.github/workflows/publish-snapshots.yml) 在同一次运行里依次重建**两个**站点：第二次重建读到的是第一次刚唤醒的 Neon 计算实例，所以边际成本是页面读取时间，而不是一个新的唤醒窗口 + 5 分钟休眠尾。
+
+仓库配置（Settings → Actions）：
+
+| 类型 | 名称 | 说明 |
+|---|---|---|
+| Variable | `PRIMARY_BASE_URL` | 默认 `https://ioni.top` |
+| Variable | `STANDBY_BASE_URL` | 备用站点地址；**未设置时所有备用步骤整段跳过**，可以先合代码后建站 |
+| Secret | `SNAPSHOT_REBUILD_SECRET` | 主站点的 `CRON_SECRET` |
+| Secret | `SNAPSHOT_REBUILD_SECRET_STANDBY` | 仅当备用站点用了不同密钥（否则回退上一项） |
+
+备用站点首次上线需要手工灌一次（否则第一个访客看到空页面）：
+
+```bash
+BASE_URL=https://<standby>.netlify.app CRON_SECRET=<standby-cron-secret> node scripts/snapshot-bootstrap.mjs
+BASE_URL=https://<standby>.netlify.app node scripts/snapshot-freshness.mjs
+```
+
+### 9.3 自动切换
+
+[.github/workflows/failover.yml](../../../.github/workflows/failover.yml)（每 15 分钟）→ [scripts/failover.mjs](../../../scripts/failover.mjs)。
+
+- **什么算宕机**：只有硬不可用——连接失败、超时、5xx，且连续 `PROBES`（默认 3 次，间隔 10s）全部失败。任何一次成功就不切。
+- **内容陈旧故意不作为触发条件**：两个部署读同一个库，陈旧几乎总是管线问题，切域名只会把问题一起搬过去（这类故障由 §3d 的看门狗与发布工作流分别报告）。
+- **备用站点必须先被证明健康**，否则拒绝切换：用坏的换坏的只是多加一段 DNS 传播延迟。两边都宕会明确报 `BOTH DEPLOYMENTS ARE DOWN` 并退出非 0，不动域名。
+- **两步都要做**：Netlify 侧一个自定义域名只能绑一个站点（先从故障站点释放，再绑到备用站点），Aliyun 侧把 `@` 与 `www` 的 CNAME 指向备用站点的 `*.netlify.app`。只做一半会拿到一张指向已不应答站点的证书。
+- 缺少 Aliyun 凭据时：Netlify 那半自动完成，DNS 那半打印出来等人工改，并以非 0 退出（工作流失败 → 邮件通知）。
+
+仓库 Secrets：`NETLIFY_TOKEN_PRIMARY` / `NETLIFY_SITE_ID_PRIMARY` / `NETLIFY_TOKEN_STANDBY` / `NETLIFY_SITE_ID_STANDBY`，可选 `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET`；Variable `PRIMARY_DOMAIN`（默认 `ioni.top`）。**备用账号的 Secret 未配置前工作流自身直接退出**，可以安全先合。
+
+站点 ID 从 `.netlify/state.json` 或 `npx netlify api listSites` 取。
+
+手动操作：
+
+```bash
+# 只看决策，不改任何东西（演练第一步）
+DOMAIN=ioni.top NETLIFY_TOKEN_PRIMARY=... NETLIFY_SITE_ID_PRIMARY=... \
+NETLIFY_TOKEN_STANDBY=... NETLIFY_SITE_ID_STANDBY=... node scripts/failover.mjs --dry-run
+
+# 计划内切换（灰度、维护、切回）
+node scripts/failover.mjs --to=standby
+node scripts/failover.mjs --to=primary
+```
+
+也可在 GitHub Actions 页面手动触发该工作流，`to` 填 `primary`/`standby`，`dry_run` 勾选即只报告。
+
+### 9.4 纯手工兜底（凭据全丢、Actions 也用不了时，约 2 分钟）
+
+1. Netlify 控制台 → 故障站点 → Domain management → 移除 `ioni.top` 与 `www.ioni.top`；
+2. 切到另一个账号 → 健康站点 → Domain management → Add domain → `ioni.top`（自动带 `www`）；
+3. 阿里云 DNS 控制台 → `ioni.top` → 把 `@` 与 `www` 的 CNAME 值改为健康站点的 `<name>.netlify.app`（若 `@` 是 A 记录，先删掉再加 CNAME）；TTL 600。
+4. 等证书签发（通常几分钟），用 `curl -I https://ioni.top` 确认 200。
+
+切换后**必须**做的两件事：把两个支付平台的 webhook URL 指向新的对外地址（否则付款不会被记账，只会进 Blobs 缓冲），以及跑一次 §10.6 的验证清单。
+
+## 10. 支付与付费下载（$1 报告 PDF）
+
+网页阅读永远免费（SEO 不受影响），付费的是**服务端生成的排版 PDF**：封面、页眉页脚、页码、表格不跨页断行、买家授权水印行。免费的"打印"按钮保留——Ctrl+P 本来就拿不走，假装拿得走是不诚实的。
+
+### 10.1 钱的流向
+
+- 两家都是 **Merchant of Record**：它们是法律上的卖方，负责全球 VAT/GST、发票、卡组织合规（PCI 不落到本站，卡号一秒都不经过我们的服务器）。对中国个人开发者是唯一现实可行的结构。
+- **Creem** 为主通道（支持支付宝/银行卡）；**Lemon Squeezy** 为备用，Creem 建单失败时自动接管，且失败会被记录——否则主通道坏一周而收入看起来正常。
+- $1 售价的净额约 **$0.56（Creem）/ $0.45（Lemon Squeezy）**，两家都是次月按平台结算周期打款。定价靠 `PAYMENT_PRICE_CENTS` 展示 + 供应商产品配置，**两处必须人工保持一致**。
+- 一个通道只有在 API 密钥**和** webhook 签名密钥都配置好时才会被启用：收了钱却无法验证付款，是唯一没有可接受恢复手段的失败。两家都没配时买入口自动消失。
+
+### 10.2 一次购买经过的路径
+
+```
+/bp/[id] 买按钮 ──POST /api/pay/checkout──▶ 供应商建单（金额只在供应商侧）
+                        │ 同时写一行 pending 订单（记住 reportId 与账号关联）
+                        ▼
+                 供应商托管收银台（卡 / Apple Pay / 支付宝…）
+                        │
+       ┌────────────────┴─────────────────┐
+       ▼                                  ▼
+webhook（验签）→ orders 表 paid      浏览器带 ?purchase=<reference> 回到 /bp/[id]
+                                          │ 轮询 GET /api/pay/status
+                                          ▼
+                          HMAC 下载令牌（7 天）→ /api/download/bp/[id]?token=…
+```
+
+- **游客**：在买面板填邮箱（会预填到收银台），成功页 URL 带一个服务端生成的随机 `reference`——这就是他的凭据，无需账号、无需 cookie、无需收邮件即可立刻下载。
+- **登录用户**：邮箱与 `user_id` 直接来自会话，订单从创建那一刻就归属账号，出现在「我的下载」`/orders`。
+- **认领**：游客后来注册/登录同一邮箱，需要走 `/orders` 的「认领」按钮，通过魔术链接**验证邮箱**后才归属账号。绝不按裸邮箱匹配——本站注册邮箱未验证，裸匹配等于允许任何人冒名领走别人的下载。
+- **找回**：`/orders` 输入购买邮箱 → 15 分钟有效的魔术链接（Resend 发信）→ 打开该邮箱的订单列表。
+
+### 10.3 安全边界（逐条对应实现）
+
+| 风险 | 处置 |
+|---|---|
+| 客户端篡改价格 | 金额与产品都在供应商侧，浏览器不传价格 |
+| 伪造付款通知 | webhook 先验签（HMAC，原始字节，不重新序列化）后解析；验签失败 401 + 告警 |
+| 供应商重复投递 | `provider_order_id` 唯一 + `ON CONFLICT DO UPDATE`，重放只更新同一行 |
+| 下载链接被转发 | 令牌带 `purpose`/`reportId`/过期时间且在签名内；下载时**重新读订单状态**（所以退款能真正吊销）；每单最多 20 次下载 |
+| 令牌无法单独撤销（无状态代价） | 下载令牌 7 天、魔术链接 15 分钟；退款走状态复核而非撤销令牌 |
+| 刷接口 | checkout 8 次/分/IP、status 60 次/分/IP、下载 12 次/分/IP、找单/认领单独限流 |
+| 越权看别人订单 | 订单页 `no-store` + `robots.txt` 屏蔽 `/orders`；游客访问必须持魔术链接令牌 |
+| 用告警把 Neon 额度打光 | 陌生人能触发的告警（验签失败）每种每分钟最多写一行 `ops_alerts`，且库在宕机时不写；全量明细始终进 Blobs 日志 |
+
+### 10.4 断库时不丢一笔钱
+
+数据库不可用**不允许**表现为"查不到订单"——那会把付了钱的人拒之门外。所以 `orders.ts` 的每个读都先看断路器，宁可抛 `OrdersUnavailableError` 让调用方走替代路径：
+
+| 环节 | 断库时 | 恢复后 |
+|---|---|---|
+| 建单 | 照常跳转收银台，只是不写 pending 行（webhook 自带重建所需的全部信息） |  — |
+| webhook | 验签通过的事件写入 Blobs 缓冲，**仍然回 200**（回 503 会让供应商重试，但 200 更早止损；缓冲件本身就是付款证明）。连缓冲都失败才回 503 请供应商重试，并发 `webhook_unrecorded` 告警 | `pipeline-drain-background` 幂等落库（**两个角色都会落自己站点的缓冲**，见 §9.1） |
+| 成功页轮询 | 读 Blobs 缓冲里的已验签事件，照常签发下载令牌（响应带 `degraded:true`） | 恢复为读库 |
+| 下载 | 只凭签名令牌放行，不计数。令牌只可能在验签付款后签发，所以最坏情况是已退款的人多下一份他本来就有的文件——比拒绝付费用户正确 | 恢复为复核订单状态并计数 |
+
+`/admin/errors` 与 `pipeline-recovery` 的日志会显示缓冲中的支付事件数（`payments=N`），它只读 Blobs，故障期间依然可用。
+
+### 10.5 日常运维
+
+- **看收入**：`/stats` 页面的收入板块（净额 = 已付 − 已退，含近 7/30 天与逐日），数据随三小时批量的快照生成，读页面不碰数据库。
+- **退款**：在供应商后台退款即可，webhook 会把订单置为 `refunded`，下载立即失效（下载端点每次都复核状态）。**不要**直接改库。
+- **告警含义**（`/admin/errors?...&alerts=1` 的 `payments` 类）：
+
+| kind | 含义 | 处置 |
+|---|---|---|
+| `webhook_signature` | 验签失败：要么密钥配错（付款正在被静默丢弃），要么有人在扫端点 | 先核对 `*_WEBHOOK_SECRET`；若与真实付款时间无关联，多为扫描，已限流 |
+| `webhook_buffered` | 已验签、已安全落 Blobs，等库恢复 | 一般无需干预；超过 1 小时不减少见下面手动落库命令 |
+| `webhook_unrecorded` | 库和 Blobs 都拒收，已回 503 请供应商重试 | 最高优先级：查 Neon 与 Blobs 状态，唯一副本还在供应商那里 |
+| `checkout_failed` | 所有通道都建不出单 = 收入停摆 | 查两家平台状态页与密钥有效性；`/api/pay/canary` 会给出具体报错 |
+| `download_failed` | 付了钱但 PDF 生成/授权失败 | 看 `pdf` 类错误日志；字体缺失、报告无 `content_json` 是两个常见原因 |
+| `drain_failed` | 缓冲支付事件落库失败 | 同 `webhook_unrecorded` 的排查路径 |
+| `canary_failed` | 每日探针发现支付通路已坏 | 在有客户撞上之前修 |
+
+- **每日探针**：[.github/workflows/payment-canary.yml](../../../.github/workflows/payment-canary.yml)（01:40 UTC）对两个站点调 `GET /api/pay/canary`（`Authorization: Bearer $CRON_SECRET`）：检查配置完整性，并对每个通道真的建一次 checkout（建完即弃，不产生费用）。不返回 `healthy:true` 就让 job 失败并邮件通知。
+- **手动落库缓冲的支付事件**：
+
+```bash
+curl -X POST "https://<站点>/.netlify/functions/pipeline-drain-background" \
+  -H "Authorization: Bearer $CRON_SECRET"
+# 摘要里的 payments=N 是本次落库数，stuck=N 是仍未落的
+```
+
+- **PDF 字体**：`public/fonts/NotoSansSC-subset.ttf`（约 2 MB，含 GB2312 全部汉字），由 [scripts/build-pdf-font.py](../../../scripts/build-pdf-font.py) 生成，经 `netlify.toml` 的 `included_files` 打进函数包。日志出现 `Font subset is missing …` 说明报告用到了子集外的字符（买家看到 `?`），需要扩子集重新生成。
+
+### 10.6 上线/切换后的验证清单
+
+每一项都要真做，不是假定（真实 $1 支付在验证后可在供应商后台退款，成本只剩通道手续费）：
+
+1. 未配置支付时买入口消失、`/pricing` 文案不承诺收费；配置后买入口出现且价格与供应商一致。
+2. 游客购买：真实付款 → 成功页自动出现下载 → 中文报告与英文报告各下一份，检查中文不是空框、页码正确、水印行有邮箱与订单号。
+3. 找回：用购买邮箱在 `/orders` 要魔术链接 → 15 分钟内可打开订单列表并重新下载；过期链接被拒。
+4. 登录购买：订单立刻出现在 `/orders`，跨设备登录仍可见。
+5. 通道回退：故意把 `CREEM_API_KEY` 改错 → checkout 透明落到 Lemon Squeezy，走完一笔真实付款，且 `/admin/errors` 里能看到 Creem 的失败记录。
+6. 退款：在后台退这几单 → `/orders` 状态变为已退款，旧下载链接 403 `order_refunded`。
+7. 认领：用同一邮箱注册 → 走认领魔术链接 → 游客订单归入账号。
+8. 越权：改 URL 里的 `reportId`（403 `token_scope`）、伪造 token（403）、用别人的 reference（只能开对应报告）。
+9. 断库演练：`npm run test:outage` 期间下单 → webhook 进缓冲、成功页仍给出下载、库恢复后订单出现在 `/orders`。
+10. 域名切换演练：`node scripts/failover.mjs --to=standby` → 站点仍服务、支付仍可用（记得同步 webhook URL），再 `--to=primary` 切回。

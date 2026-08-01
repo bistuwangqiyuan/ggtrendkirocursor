@@ -14,8 +14,23 @@ name: Publish snapshots
 # readers actually see. A failing run mails the repository owner, which is the
 # alert the site could not raise about itself.
 #
+# TWO DEPLOYMENTS, ONE DATABASE WAKE
+# The site runs on two Netlify accounts, and Blobs are per-site: the standby has
+# its own snapshot store, which nobody else fills. Both are published here, one
+# after the other, because the second rebuild reads a Neon compute instance the
+# first one already woke — so the standby costs page-read time, not a new wake
+# window plus its five-minute idle tail.
+#
 # Runs ~25 minutes after each scheduled batch (0 */3 * * * UTC) so it publishes
 # what that batch just wrote.
+#
+# Configuration (repository settings, no code change needed):
+#   vars.PRIMARY_BASE_URL    default https://ioni.top
+#   vars.STANDBY_BASE_URL    the second account's site; standby steps are skipped
+#                            entirely while this is unset
+#   secrets.SNAPSHOT_REBUILD_SECRET           CRON_SECRET of the primary
+#   secrets.SNAPSHOT_REBUILD_SECRET_STANDBY   only if the standby uses a different
+#                                             CRON_SECRET (falls back to the above)
 
 on:
   schedule:
@@ -34,7 +49,11 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      PRIMARY_BASE_URL: ${{ vars.PRIMARY_BASE_URL || 'https://ioni.top' }}
+      STANDBY_BASE_URL: ${{ vars.STANDBY_BASE_URL }}
+      MAX_AGE_MINUTES: ${{ github.event.inputs.max_age_minutes || '240' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,16 +63,31 @@ jobs:
 
       # Each pass wakes Neon, so the pass count is capped: a routine run needs
       # one or two, and a deep backlog is a bootstrap job, not a cron job.
-      - name: Rebuild snapshots
+      - name: Rebuild snapshots (primary)
         env:
-          BASE_URL: https://ioni.top
+          BASE_URL: ${{ env.PRIMARY_BASE_URL }}
           CRON_SECRET: ${{ secrets.SNAPSHOT_REBUILD_SECRET }}
           MAX_PASSES: '8'
         run: node scripts/snapshot-bootstrap.mjs
 
-      - name: Verify what readers see
+      - name: Verify what readers see (primary)
         if: always()
         env:
-          BASE_URL: https://ioni.top
-          MAX_AGE_MINUTES: ${{ github.event.inputs.max_age_minutes || '240' }}
+          BASE_URL: ${{ env.PRIMARY_BASE_URL }}
+        run: node scripts/snapshot-freshness.mjs
+
+      # `always()`: the standby exists precisely for the runs where the primary is
+      # in trouble, so a primary failure above must not skip its refresh.
+      - name: Rebuild snapshots (standby)
+        if: always() && env.STANDBY_BASE_URL != ''
+        env:
+          BASE_URL: ${{ env.STANDBY_BASE_URL }}
+          CRON_SECRET: ${{ secrets.SNAPSHOT_REBUILD_SECRET_STANDBY || secrets.SNAPSHOT_REBUILD_SECRET }}
+          MAX_PASSES: '8'
+        run: node scripts/snapshot-bootstrap.mjs
+
+      - name: Verify what readers see (standby)
+        if: always() && env.STANDBY_BASE_URL != ''
+        env:
+          BASE_URL: ${{ env.STANDBY_BASE_URL }}
         run: node scripts/snapshot-freshness.mjs

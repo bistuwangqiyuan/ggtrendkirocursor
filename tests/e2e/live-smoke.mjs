@@ -690,6 +690,77 @@ async function run() {
     record('R-NEON3', 'authenticated read is not shared-cacheable', 'BLOCKED', 'no auth cookie');
   }
 
+  // ---- Payments: the surface that can be checked without spending money ----
+  // What a real $1 purchase proves cannot be asserted from here, so this covers
+  // the two halves that can be: the pages and policies a buyer must find, and the
+  // refusals that protect the paid artifact. Anything needing a live provider is
+  // BLOCKED rather than FAIL, since a site with no payment keys configured is a
+  // valid state (the buy UI is supposed to disappear).
+  const refunds = await http('/refunds', { headers: { Cookie: 'locale=zh' } });
+  expect(refunds.status === 200 && refunds.body.includes('data-page="refunds"'),
+    'R-PAY1', 'refund policy page renders', `status=${refunds.status}`, `status=${refunds.status}`);
+  expect(sitemap.body.includes('/refunds') && !sitemap.body.includes('/orders'),
+    'R-PAY1', 'sitemap lists /refunds and not /orders',
+    'refunds listed, orders excluded',
+    `refunds=${sitemap.body.includes('/refunds')} ordersLeaked=${sitemap.body.includes('/orders')}`);
+
+  const ordersPage = await http('/orders', { headers: { Cookie: 'locale=zh' } });
+  const ordersCache = ordersPage.headers.get('cache-control') || '';
+  expect(ordersPage.status === 200 && ordersPage.body.includes('id="orders-lookup"'),
+    'R-PAY2', 'guest order lookup form renders', `status=${ordersPage.status}`,
+    `status=${ordersPage.status}`);
+  // The page body is one buyer's purchase list with capability links in it, so a
+  // shared cache must never keep a copy.
+  expect(/no-store/.test(ordersCache), 'R-PAY2', '/orders is not shared-cacheable',
+    `cache-control=${ordersCache}`, `cache-control=${ordersCache || 'absent'}`);
+  expect(robots.body.includes('Disallow: /orders'), 'R-PAY2', 'robots.txt keeps /orders out of the index',
+    'disallowed', 'not disallowed');
+
+  // A download must be refused without a valid token even when the report is
+  // public to read. Report id shape does not matter: the token check comes first.
+  const noToken = await http('/api/download/bp/00000000-0000-0000-0000-000000000000');
+  const forged = await http('/api/download/bp/00000000-0000-0000-0000-000000000000?token=p1.abc.def');
+  const refusedNoToken = jsonOf(noToken.body)?.error || '';
+  if (noToken.status === 503 && refusedNoToken === 'downloads_unavailable') {
+    record('R-PAY3', 'paid download refuses an unsigned request', 'BLOCKED',
+      'no PAYMENT_TOKEN_SECRET/SESSION_SECRET on this deployment');
+  } else {
+    expect(noToken.status === 403 && forged.status === 403,
+      'R-PAY3', 'paid download refuses an unsigned request',
+      `noToken=${noToken.status} forged=${forged.status}`,
+      `noToken=${noToken.status} forged=${forged.status} error=${refusedNoToken}`);
+  }
+
+  // Checkout must never accept a client-supplied price, and must not open a
+  // session for a buyer with no way to find the purchase again.
+  const badEmail = await http('/api/pay/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reportId: '00000000-0000-0000-0000-000000000000', email: 'nope', amountCents: 1 }),
+  });
+  expect(badEmail.status === 400 && jsonOf(badEmail.body)?.error === 'invalid_email',
+    'R-PAY4', 'checkout rejects a missing or malformed buyer email',
+    `status=${badEmail.status}`, `status=${badEmail.status} body=${badEmail.body.slice(0, 120)}`);
+
+  // The canary is the same probe the daily workflow runs: it reports whether a
+  // real checkout can be opened on each configured provider.
+  if (E2E_CRON_SECRET) {
+    const canary = await http('/api/pay/canary', { headers: { Authorization: `Bearer ${E2E_CRON_SECRET}` } });
+    const canaryJson = jsonOf(canary.body);
+    if (canary.status === 200 && canaryJson?.healthy === true) {
+      record('R-PAY5', 'payment providers answer the daily canary', 'PASS',
+        `providers=${(canaryJson.configuration?.providers || []).join(',') || 'none'}`);
+    } else if (canaryJson?.disabled === true) {
+      record('R-PAY5', 'payment providers answer the daily canary', 'BLOCKED',
+        'no provider configured on this deployment');
+    } else {
+      record('R-PAY5', 'payment providers answer the daily canary', 'FAIL',
+        `status=${canary.status} body=${canary.body.slice(0, 200)}`);
+    }
+  } else {
+    record('R-PAY5', 'payment providers answer the daily canary', 'BLOCKED', 'E2E_CRON_SECRET not set');
+  }
+
   // ---- summary ----
   const counts = results.reduce((a, r) => (a[r.status] = (a[r.status] || 0) + 1, a), {});
   const pass = counts.PASS || 0, fail = counts.FAIL || 0, blocked = counts.BLOCKED || 0;

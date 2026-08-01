@@ -4,9 +4,13 @@ import { ALL_SECTIONS, rebuildAllSnapshots, type SnapshotSection } from '../../s
 import { connectSnapshotStoreToLambda } from '../../src/lib/cache/snapshot';
 import { ensureSnapshotsDelivered } from '../../src/lib/cache/snapshotDelivery';
 import { savePipelineState } from '../../src/lib/services/pipelineState';
+import { drainBufferedPaymentEvents } from '../../src/lib/payments/orderBuffer';
+import { applyPaymentEvent } from '../../src/lib/services/orders';
+import { paymentAlert } from '../../src/lib/payments/alerts';
 import { flushErrorLog, recordError } from '../../src/lib/observability/errorLog';
 import { recordOpsAlert } from '../../src/lib/observability/opsAlerts';
 import { runWithDbContext } from '../../src/lib/observability/dbContext';
+import { isWriter, siteRole } from '../../src/lib/utils/siteRole';
 
 /**
  * Land whatever an outage left in Blobs, as soon as the database is reachable.
@@ -60,32 +64,69 @@ export const handler = async (event: {
   return runWithDbContext({ reason: 'cron', route: 'pipeline-drain-background' }, async () => {
     let landed = 0;
 
-    // Hotwords first: a buffered plan may reference a queued trend row, so the
-    // row it points at should exist by the time the plan is written.
-    try {
-      const drained = await trendsCollector.drainPending();
-      landed += drained.inserted;
-      parts.push(
-        `trends=${drained.inserted}` +
-        (drained.expiredRows > 0 ? ` expired=${drained.expiredRows}` : '') +
-        (drained.remaining > 0 ? ` stillQueued=${drained.remaining}` : '')
-      );
-      if (drained.errors.length > 0) {
-        recordError('pipeline-drain', drained.errors.join('; '), { context: { stage: 'drain-intake' } });
+    // A reader deployment may repair its own snapshots but must not land queued
+    // work: the queues are filled by the batch, which only the writer runs, so
+    // draining them from both accounts would insert the same hotwords twice.
+    if (isWriter()) {
+      // Hotwords first: a buffered plan may reference a queued trend row, so the
+      // row it points at should exist by the time the plan is written.
+      try {
+        const drained = await trendsCollector.drainPending();
+        landed += drained.inserted;
+        parts.push(
+          `trends=${drained.inserted}` +
+          (drained.expiredRows > 0 ? ` expired=${drained.expiredRows}` : '') +
+          (drained.remaining > 0 ? ` stillQueued=${drained.remaining}` : '')
+        );
+        if (drained.errors.length > 0) {
+          recordError('pipeline-drain', drained.errors.join('; '), { context: { stage: 'drain-intake' } });
+        }
+      } catch (error) {
+        parts.push('trends=error');
+        recordError('pipeline-drain', error, { context: { stage: 'drain-intake' } });
       }
-    } catch (error) {
-      parts.push('trends=error');
-      recordError('pipeline-drain', error, { context: { stage: 'drain-intake' } });
+
+      try {
+        const replayed = await replayPendingBatches();
+        landed += replayed;
+        parts.push(`reports=${replayed}`);
+        if (replayed > 0) await savePipelineState({ lastFlushAt: new Date().toISOString() });
+      } catch (error) {
+        parts.push('reports=error');
+        recordError('pipeline-drain', error, { context: { stage: 'replay' } });
+      }
+
+    } else {
+      parts.push(`role=${siteRole()} drain=skipped`);
     }
 
+    // Payments are drained by BOTH roles, unlike everything above.
+    //
+    // Blobs are per-site, and the deployment serving the public domain is the one
+    // the provider posts webhooks to — which is the reader. Its buffered payments
+    // are invisible to the writer's store, so gating this on the role would leave
+    // a paid order stranded in Blobs for as long as the reader served traffic.
+    // Landing the same event twice is harmless: it is keyed on
+    // provider_order_id and applied idempotently.
+    //
+    // Never counted into `landed`: a purchase changes no page, so it must not be
+    // the reason snapshots are rebuilt.
     try {
-      const replayed = await replayPendingBatches();
-      landed += replayed;
-      parts.push(`reports=${replayed}`);
-      if (replayed > 0) await savePipelineState({ lastFlushAt: new Date().toISOString() });
+      const drained = await drainBufferedPaymentEvents(async (paymentEvent) => {
+        await applyPaymentEvent(paymentEvent);
+      });
+      if (drained.applied > 0 || drained.remaining > 0) {
+        parts.push(`payments=${drained.applied}` + (drained.remaining > 0 ? ` stuck=${drained.remaining}` : ''));
+      }
+      if (drained.errors.length > 0) {
+        await paymentAlert('drain_failed', `buffered payments could not be landed: ${drained.errors.join('; ')}`, {
+          applied: drained.applied,
+          remaining: drained.remaining,
+        });
+      }
     } catch (error) {
-      parts.push('reports=error');
-      recordError('pipeline-drain', error, { context: { stage: 'replay' } });
+      parts.push('payments=error');
+      await paymentAlert('drain_failed', (error as Error).message, { stage: 'drain-payments' });
     }
 
     // Rebuild when something landed, or when the watchdog asked because readers

@@ -1,0 +1,53 @@
+name: Payment canary
+
+# Daily proof that a customer could pay.
+#
+# Every other check on this site notices when something is broken. A broken
+# payment path is invisible: pages render, the pipeline runs, and the only signal
+# is revenue that stays at zero — which is indistinguishable from a quiet day.
+# An expired provider API key or a product archived in a dashboard would sit there
+# until someone tried to buy.
+#
+# So this asks each configured provider to open a checkout session and abandons
+# it. No order row is created and nothing is charged. On failure the endpoint
+# writes an ops alert and this job fails, which mails the repository owner.
+#
+# Configuration:
+#   vars.PRIMARY_BASE_URL   default https://ioni.top
+#   vars.STANDBY_BASE_URL   optional; probed too when set, since it takes payments
+#   secrets.SNAPSHOT_REBUILD_SECRET           CRON_SECRET of the primary
+#   secrets.SNAPSHOT_REBUILD_SECRET_STANDBY   only if the standby differs
+
+on:
+  schedule:
+    - cron: '40 1 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: payment-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PRIMARY_BASE_URL: ${{ vars.PRIMARY_BASE_URL || 'https://ioni.top' }}
+      STANDBY_BASE_URL: ${{ vars.STANDBY_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe primary
+        env:
+          BASE_URL: ${{ env.PRIMARY_BASE_URL }}
+          CRON_SECRET: ${{ secrets.SNAPSHOT_REBUILD_SECRET }}
+        run: bash scripts/payment-canary-probe.sh
+
+      # The standby takes real payments whenever the domain is pointed at it, so a
+      # broken key there is a live problem, not a rehearsal one.
+      - name: Probe standby
+        if: always() && env.STANDBY_BASE_URL != ''
+        env:
+          BASE_URL: ${{ env.STANDBY_BASE_URL }}
+          CRON_SECRET: ${{ secrets.SNAPSHOT_REBUILD_SECRET_STANDBY || secrets.SNAPSHOT_REBUILD_SECRET }}
+        run: bash scripts/payment-canary-probe.sh

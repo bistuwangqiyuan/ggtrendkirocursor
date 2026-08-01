@@ -127,6 +127,26 @@ export interface StatsSnapshot {
   };
   monitor: { sites: number; up: number; down: number; avgSeoScore: number | null };
   freshness: { latestTrendAt: string | null; latestBpAt: string | null };
+  /**
+   * Sales, as of the last rebuild. Absent on snapshots written before payments
+   * existed and on deployments with no `orders` table yet, so readers must treat
+   * it as optional rather than as zero.
+   */
+  revenue?: {
+    paidOrders: number;
+    refundedOrders: number;
+    grossCents: number;
+    refundedCents: number;
+    netCents: number;
+    currency: string;
+    last7dCents: number;
+    last30dCents: number;
+    downloads: number;
+    firstPaidAt: string | null;
+    lastPaidAt: string | null;
+    /** Newest last, matching `daily` above. */
+    daily: { day: string; orders: number; cents: number }[];
+  };
 }
 
 // ---------------------------------------------------------------------------

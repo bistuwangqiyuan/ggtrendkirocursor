@@ -70,7 +70,10 @@ const navItems = [
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
           </button>
           <div id="user-menu" class="hidden absolute right-0 mt-2 w-44 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
-            <button id="logout-btn" type="button" class="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-white rounded-lg">
+            <a href="/orders" class="block px-4 py-2.5 text-sm text-gray-300 no-underline hover:bg-gray-800 hover:text-white rounded-t-lg">
+              {t.pay.myDownloads}
+            </a>
+            <button id="logout-btn" type="button" class="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-white rounded-b-lg">
               {t.nav.logout}
             </button>
           </div>
@@ -113,9 +116,14 @@ const navItems = [
     ))}
     <div class="border-t border-gray-800 my-4"></div>
     {user ? (
-      <button id="mobile-logout-btn" type="button" class="block w-full text-left px-4 py-3 rounded-lg text-base text-gray-300 hover:bg-gray-800">
-        {t.nav.logout}
-      </button>
+      <>
+        <a href="/orders" class="block px-4 py-3 rounded-lg text-base text-gray-300 no-underline hover:bg-gray-800">
+          {t.pay.myDownloads}
+        </a>
+        <button id="mobile-logout-btn" type="button" class="block w-full text-left px-4 py-3 rounded-lg text-base text-gray-300 hover:bg-gray-800">
+          {t.nav.logout}
+        </button>
+      </>
     ) : (
       <>
         <a href="/login" class="block px-4 py-3 rounded-lg text-base text-gray-300 hover:bg-gray-800 no-underline">{t.nav.login}</a>

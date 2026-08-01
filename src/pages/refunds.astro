@@ -1,0 +1,29 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getTranslations } from '../lib/i18n';
+import { applyPageCache, CACHE_PROFILES } from '../lib/cache/httpCache';
+
+// Pure content with no data dependency: let the edge serve it to anonymous
+// visitors and crawlers so these routes never invoke a function per request.
+applyPageCache(Astro, CACHE_PROFILES.staticPage);
+
+const locale = Astro.locals.locale || 'zh';
+const t = getTranslations(locale);
+const r = t.legal.refunds;
+---
+
+<Layout title={r.title} description={r.metaDescription}>
+  <div class="max-w-3xl mx-auto prose prose-invert" data-page="refunds">
+    <h1 class="text-3xl font-bold text-white mb-2">{r.title}</h1>
+    <p class="text-sm text-gray-500 mb-6">{t.common.lastUpdated}: {t.legal.lastUpdatedDate}</p>
+
+    <p class="text-base text-gray-300 mb-8">{r.intro}</p>
+
+    {r.sections.map(section => (
+      <section class="legal-section">
+        <h3>{section.heading}</h3>
+        <p>{section.body}</p>
+      </section>
+    ))}
+  </div>
+</Layout>

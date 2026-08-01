@@ -179,10 +179,10 @@ describe('runMaintenance', () => {
 
     const result = await runMaintenance();
 
-    // newsletter, ops-alerts, trends, site-checks, error-log, ops-alert-retention.
-    // Additive migrations swallow per-statement failures by design, and the intake
-    // queue lives in Blobs rather than Postgres.
-    expect(result.errors).toHaveLength(6);
+    // newsletter, ops-alerts, orders, trends, site-checks, error-log,
+    // ops-alert-retention. Additive migrations swallow per-statement failures by
+    // design, and the intake queue lives in Blobs rather than Postgres.
+    expect(result.errors).toHaveLength(7);
     expect(result.trendsDeleted).toBe(0);
   });
 });

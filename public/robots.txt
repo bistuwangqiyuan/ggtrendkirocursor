@@ -1,5 +1,7 @@
 User-agent: *
 Allow: /
 Disallow: /api/
+# Per-buyer pages; the links inside them are download capabilities.
+Disallow: /orders
 
 Sitemap: https://ggtrendkirocursor.netlify.app/sitemap.xml

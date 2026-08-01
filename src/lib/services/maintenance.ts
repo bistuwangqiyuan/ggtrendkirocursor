@@ -14,6 +14,7 @@ import { ADDITIVE_STATEMENTS, NEWSLETTER_STATEMENTS } from '../db/schema';
 import { recordError, pruneOldLogs, retentionDays } from '../observability/errorLog';
 import { ensureOpsAlertsTable, pruneOpsAlerts } from '../observability/opsAlerts';
 import { pruneExpiredTrendBatches } from './trendIntake';
+import { ensureOrdersTable } from './orders';
 
 export const TRENDS_RETENTION_DEFAULT_DAYS = 30;
 export const SITE_CHECKS_RETENTION_DEFAULT_DAYS = 90;
@@ -122,6 +123,9 @@ export async function runMaintenance(): Promise<MaintenanceResult> {
   const steps: [string, () => Promise<void>][] = [
     ['newsletter', async () => { result.newsletterTableEnsured = await ensureNewsletterTable(); }],
     ['ops-alerts', async () => { await ensureOpsAlertsTable(); }],
+    // Before anything can be sold: the webhook can create this itself, but only
+    // as emergency repair, and a payment is a bad moment to discover a migration.
+    ['orders', async () => { await ensureOrdersTable(); }],
     ['additive-migrations', async () => { result.columnsAdded = await applyAdditiveMigrations(); }],
     ['trends-retention', async () => { result.trendsDeleted = await pruneTrends(); }],
     ['site-checks-retention', async () => { result.siteChecksDeleted = await pruneSiteChecks(); }],

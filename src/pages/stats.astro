@@ -21,6 +21,7 @@ const stats = read.data;
 const degraded = read.pending;
 
 const { totals, daily, topicMix, content, monitor, freshness } = stats;
+const revenue = stats.revenue;
 
 const completionRate = totals.bpTotal > 0
   ? Math.round((totals.bpCompleted / totals.bpTotal) * 100)
@@ -59,6 +60,22 @@ const topicPct = (n: number) => (topicTotal > 0 ? Math.round((n / topicTotal) * 
 
 const fmt = (n: number) => n.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US');
 const asDate = (iso: string | null) => (iso ? formatDateTime(new Date(iso), locale) : '—');
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+// Gross, refunds and net side by side, because a page that showed gross alone
+// would flatter the numbers: refunds are part of how this product is sold.
+const revenueCards = revenue
+  ? [
+      { label: t.stats.metrics.paidOrders, value: fmt(revenue.paidOrders) },
+      { label: t.stats.metrics.netRevenue, value: money(revenue.netCents) },
+      { label: t.stats.metrics.revenue7d, value: money(revenue.last7dCents) },
+      { label: t.stats.metrics.revenue30d, value: money(revenue.last30dCents) },
+      { label: t.stats.metrics.refunds, value: `${fmt(revenue.refundedOrders)} · ${money(revenue.refundedCents)}` },
+      { label: t.stats.metrics.pdfDownloads, value: fmt(revenue.downloads) },
+    ]
+  : [];
+
+const revenueByDay = new Map((revenue?.daily ?? []).map((d) => [d.day, d]));
 ---
 
 <Layout title={t.stats.title} description={t.stats.metaDescription}>
@@ -94,6 +111,26 @@ const asDate = (iso: string | null) => (iso ? formatDateTime(new Date(iso), loca
       </div>
     </section>
 
+    {revenue && (
+      <section aria-labelledby="stats-revenue">
+        <h2 id="stats-revenue" class="mb-1 text-xl font-semibold text-white">{t.stats.revenueSection}</h2>
+        <p class="mb-4 max-w-3xl text-sm text-gray-400">{t.stats.revenueNote}</p>
+        <div class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6" data-testid="stats-revenue">
+          {revenueCards.map((c) => (
+            <div class="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-5">
+              <p class="text-2xl font-bold tabular-nums text-white">{c.value}</p>
+              <p class="mt-1 text-xs leading-snug text-gray-400">{c.label}</p>
+            </div>
+          ))}
+        </div>
+        <p class="mt-3 text-xs text-gray-500">
+          {t.stats.firstSale}: <span class="text-gray-400">{asDate(revenue.firstPaidAt)}</span>
+          <span class="mx-2">·</span>
+          {t.stats.lastSale}: <span class="text-gray-400">{asDate(revenue.lastPaidAt)}</span>
+        </p>
+      </section>
+    )}
+
     <section aria-labelledby="stats-topics">
       <h2 id="stats-topics" class="mb-1 text-xl font-semibold text-white">{t.stats.topicMix}</h2>
       <p class="mb-4 max-w-3xl text-sm text-gray-400">{t.stats.topicsNote}</p>
@@ -124,11 +161,12 @@ const asDate = (iso: string | null) => (iso ? formatDateTime(new Date(iso), loca
               <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.bpCompleted}</th>
               <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.bpFailed}</th>
               <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.usersRegistered}</th>
+              {revenue && <th class="px-5 py-3.5 tracking-wider text-right">{t.stats.columns.revenue}</th>}
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-800">
             {dailyRows.length === 0 ? (
-              <tr><td colspan="6" class="px-5 py-16 text-center text-gray-400" data-testid="stats-daily-empty">{t.stats.noDaily}</td></tr>
+              <tr><td colspan={revenue ? 7 : 6} class="px-5 py-16 text-center text-gray-400" data-testid="stats-daily-empty">{t.stats.noDaily}</td></tr>
             ) : (
               dailyRows.map((d) => (
                 <tr class="transition-colors hover:bg-gray-800/50">
@@ -145,6 +183,13 @@ const asDate = (iso: string | null) => (iso ? formatDateTime(new Date(iso), loca
                   <td class="px-5 py-3 text-right tabular-nums text-green-400/90">{fmt(d.bpCompleted)}</td>
                   <td class="px-5 py-3 text-right tabular-nums text-red-400/80">{d.bpFailed ? fmt(d.bpFailed) : '—'}</td>
                   <td class="px-5 py-3 text-right tabular-nums">{d.usersRegistered ? fmt(d.usersRegistered) : '—'}</td>
+                  {revenue && (
+                    <td class="px-5 py-3 text-right tabular-nums text-emerald-300/90">
+                      {revenueByDay.has(d.date)
+                        ? `${money(revenueByDay.get(d.date)!.cents)} · ${fmt(revenueByDay.get(d.date)!.orders)}`
+                        : '—'}
+                    </td>
+                  )}
                 </tr>
               ))
             )}

@@ -2,6 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import { getTranslations } from '../lib/i18n';
 import { applyPageCache, CACHE_PROFILES } from '../lib/cache/httpCache';
+import { paymentsEnabled, priceLabel } from '../lib/payments';
 
 // Pure content with no data dependency: let the edge serve it to anonymous
 // visitors and crawlers so these routes never invoke a function per request.
@@ -12,6 +13,10 @@ const t = getTranslations(locale);
 const p = t.pricing;
 
 const tierOrder = ['free', 'pro', 'team', 'build', 'usage', 'enterprise'] as const;
+
+const selling = paymentsEnabled();
+const price = priceLabel();
+const live = p.live;
 ---
 
 <Layout title={p.title} description={p.metaDescription}>
@@ -20,6 +25,25 @@ const tierOrder = ['free', 'pro', 'team', 'build', 'usage', 'enterprise'] as con
       <h1 class="mkt-headline">{p.title}</h1>
       <p class="mkt-subhead mx-auto">{p.subtitle}</p>
     </section>
+
+    {selling && (
+      <section class="mb-12 rounded-2xl border border-emerald-500/25 bg-gradient-to-br from-emerald-950/40 to-gray-900/60 p-7">
+        <span class="mkt-pill">{live.badge}</span>
+        <h2 class="mt-4 text-2xl font-bold text-white">{live.title.replace('{price}', price)}</h2>
+        <p class="mt-2 max-w-2xl text-sm leading-relaxed text-gray-300">{live.desc}</p>
+        <ul class="mt-4 space-y-2">
+          {live.bullets.map((b) => (
+            <li class="flex gap-2 text-sm text-gray-300"><span class="shrink-0 text-emerald-400">✓</span>{b}</li>
+          ))}
+        </ul>
+        <div class="mt-6 flex flex-wrap items-center gap-3">
+          <a href="/bp" class="btn !rounded-lg">{live.cta}</a>
+          <a href="/orders" class="btn-outline !rounded-lg">{t.pay.myDownloads}</a>
+          <a href="/refunds" class="text-sm text-gray-400 underline hover:text-gray-200">{t.legal.refunds.title}</a>
+        </div>
+        <p class="mt-4 text-xs text-gray-500">{live.note}</p>
+      </section>
+    )}
 
     <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 mb-10">
       {tierOrder.map(key => {
@@ -52,7 +76,7 @@ const tierOrder = ['free', 'pro', 'team', 'build', 'usage', 'enterprise'] as con
     </div>
 
     <div class="max-w-2xl mx-auto space-y-4 text-sm text-gray-400 text-center pb-12">
-      <p>{p.note}</p>
+      <p>{p.note.replace('{price}', price)}</p>
       <p class="text-gray-500">{p.disclaimer}</p>
     </div>
   </div>

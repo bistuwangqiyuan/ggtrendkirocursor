@@ -11,6 +11,7 @@ import { flushErrorLog, recordError } from '../../src/lib/observability/errorLog
 import { recordOpsAlert } from '../../src/lib/observability/opsAlerts';
 import { runWithDbContext } from '../../src/lib/observability/dbContext';
 import { catchUpBatchSize, loadPipelineState, missedRuns, savePipelineState } from '../../src/lib/services/pipelineState';
+import { isWriter, siteRole } from '../../src/lib/utils/siteRole';
 
 /**
  * The single scheduled window in which this site is allowed to touch Postgres.
@@ -96,6 +97,15 @@ export const handler = async (event: {
   if (provided !== secret) {
     console.error('[bp-batch] unauthorized invocation rejected');
     return { statusCode: 401, body: 'unauthorized' };
+  }
+
+  // Both Netlify accounts deploy this file and share one CRON_SECRET, so the
+  // secret alone does not establish that this deployment is the one allowed to
+  // write. Refusing here rather than only in the scheduler means a stray manual
+  // POST cannot double the LLM spend either.
+  if (!isWriter()) {
+    console.log(`[bp-batch] role=${siteRole()}; the writer deployment owns this batch`);
+    return { statusCode: 200, body: 'skipped: reader role' };
   }
 
   const parts: string[] = [];

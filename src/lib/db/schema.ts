@@ -1,5 +1,5 @@
 /**
- * The ten tables this site owns, as executable DDL.
+ * The eleven tables this site owns, as executable DDL.
  *
  * Single source of truth, shared by `/api/db-init` (provision / repair), the
  * maintenance job (which backfills tables missing in production) and
@@ -24,6 +24,7 @@ export const OWNED_TABLES = [
   'monitored_sites',
   'site_checks',
   'ops_alerts',
+  'orders',
 ] as const;
 
 export type OwnedTable = (typeof OWNED_TABLES)[number];
@@ -63,6 +64,58 @@ export const OPS_ALERT_STATEMENTS = [
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE INDEX IF NOT EXISTS idx_ops_alerts_created_at ON ops_alerts(created_at DESC)`,
+];
+
+/**
+ * Paid downloads.
+ *
+ * The money itself is held by a merchant-of-record platform (Creem, or Lemon
+ * Squeezy when Creem cannot open a session), so this table is not an accounting
+ * ledger — it is the record of who is entitled to download what, plus enough
+ * provider detail to reconcile against their dashboard.
+ *
+ * `provider_order_id` is UNIQUE because that is what makes the webhook safe:
+ * providers retry deliveries, and a payment recorded twice would look like two
+ * purchases. `ON CONFLICT (provider_order_id)` turns every retry into an update
+ * of the same row.
+ *
+ * `user_id` is nullable on purpose. Most buyers of a one-dollar file will never
+ * create an account, so orders exist independently of `users`, and a logged-in
+ * purchase simply also carries the account. `email` is the identity that always
+ * exists, which is why the guest lookup is keyed on it.
+ */
+export const ORDER_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    provider VARCHAR(20) NOT NULL,
+    provider_order_id VARCHAR(200) UNIQUE,
+    provider_checkout_id VARCHAR(200),
+    -- Our own random reference for the attempt, handed to the provider and given
+    -- back to the buyer in the success URL. It is how a guest with no account and
+    -- no cookie proves, on return, which purchase is theirs.
+    reference VARCHAR(64),
+    product VARCHAR(40) NOT NULL DEFAULT 'bp_pdf',
+    report_id UUID,
+    email VARCHAR(255),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    amount_cents INT,
+    currency VARCHAR(10) DEFAULT 'USD',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    download_count INT NOT NULL DEFAULT 0,
+    last_downloaded_at TIMESTAMP WITH TIME ZONE,
+    paid_at TIMESTAMP WITH TIME ZONE,
+    refunded_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )`,
+  // Lower(email) rather than email: buyers type their address into the provider's
+  // checkout and into the lookup form, and the two casings must find each other.
+  `CREATE INDEX IF NOT EXISTS idx_orders_email_lower ON orders(LOWER(email))`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_report_id ON orders(report_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_status_created_at ON orders(status, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_checkout_id ON orders(provider_checkout_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_reference ON orders(reference)`,
 ];
 
 export const NEWSLETTER_STATEMENTS = [
@@ -208,6 +261,7 @@ export const BASE_STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_site_checks_site_id_checked_at ON site_checks(site_id, checked_at DESC)`,
   ...OPS_ALERT_STATEMENTS,
+  ...ORDER_STATEMENTS,
 ];
 
 // Columns the application code requires on each table.
@@ -221,6 +275,7 @@ export const REQUIRED_COLUMNS: Record<string, string[]> = {
   monitored_sites: ['id', 'name', 'url', 'enabled', 'created_at'],
   site_checks: ['id', 'site_id', 'ok', 'http_status', 'response_ms', 'seo_score', 'seo_checks', 'error', 'checked_at'],
   ops_alerts: ['id', 'source', 'message', 'context', 'created_at'],
+  orders: ['id', 'provider', 'provider_order_id', 'provider_checkout_id', 'reference', 'product', 'report_id', 'email', 'user_id', 'amount_cents', 'currency', 'status', 'download_count', 'last_downloaded_at', 'paid_at', 'refunded_at', 'created_at', 'updated_at'],
 };
 
 // Destructive recreate of the auth/feedback tables (drops mismatched legacy schema).
