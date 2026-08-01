@@ -47,8 +47,10 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   if (!email || !EMAIL.test(email)) return json({ success: false, error: 'invalid_email' }, 400);
 
   // Only completed reports are sellable, and the check reads the snapshot rather
-  // than Postgres so the buy button costs no database time.
-  const report = await getBpByIdFromSnapshot(reportId);
+  // than Postgres so the buy button costs no database time. `.data` matters: the
+  // reader returns a read envelope, and treating it as the report itself is how
+  // every purchase came back "report_not_ready" until the drill caught it.
+  const report = (await getBpByIdFromSnapshot(reportId)).data;
   if (!report) {
     const known = await bpIdExistsInSnapshot(reportId);
     return json({ success: false, error: known === false ? 'unknown_report' : 'report_unavailable' }, known === false ? 404 : 503);

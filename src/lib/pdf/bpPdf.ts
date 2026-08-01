@@ -544,8 +544,16 @@ export async function renderBpPdf(report: BpReport, meta: PdfMeta = {}): Promise
   doc.registerFontkit(fontkit);
   const fontBytes = await loadFontBytes();
   // subset: true keeps only the glyphs this document uses, so a 2 MB font
-  // contributes tens of kilobytes to the file the buyer downloads.
-  const font = await doc.embedFont(fontBytes, { subset: true });
+  // contributes tens of kilobytes to the file the buyer downloads. Fall back to
+  // the full font if subsetting throws — fontkit under some bundlers has been
+  // seen to reject large CJK glyph sets while Latin-only subsets succeed.
+  let font: PDFFont;
+  try {
+    font = await doc.embedFont(fontBytes, { subset: true });
+  } catch (subsetError) {
+    console.warn('[pdf] subset embed failed, embedding full font:', (subsetError as Error).message);
+    font = await doc.embedFont(fontBytes, { subset: false });
+  }
 
   const missing = new Set<string>();
   // fontkit is already loaded for embedding; asking it which codepoints exist is
@@ -733,4 +741,19 @@ export function pdfFilename(report: BpReport): string {
     .slice(0, 60);
   const date = new Date(report.createdAt).toISOString().slice(0, 10);
   return `${slug || 'report'}-${date}.pdf`;
+}
+
+/**
+ * `Content-Disposition` value that survives Chinese (and any non-ASCII) titles.
+ *
+ * HTTP header values are ByteStrings: a filename containing 付 (code point
+ * 20184) throws in undici/Node before the PDF bytes ever leave the function —
+ * which is exactly how a successfully rendered Chinese report came back as
+ * `render_failed` while the English twin downloaded fine. The ASCII `filename`
+ * is the fallback for old clients; `filename*` carries the real UTF-8 name.
+ */
+export function contentDisposition(filename: string): string {
+  const ascii =
+    filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'report.pdf';
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }

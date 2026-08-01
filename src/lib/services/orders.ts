@@ -3,7 +3,7 @@
  *
  * WHAT MAKES THIS DIFFERENT FROM THE REST OF THE DATA LAYER
  * Elsewhere in this codebase a database outage is allowed to look like an empty
- * result — a page with no trends is a degraded page, not a wrong one. Here it is
+ * result ? a page with no trends is a degraded page, not a wrong one. Here it is
  * not acceptable: "no order found" and "cannot currently tell" lead to opposite
  * actions, and confusing them would either deny a paying customer their file or
  * hand it to someone who never paid. So every read here checks the breaker first
@@ -11,7 +11,7 @@
  * callers decide what to do about it (usually: fall back to the signed webhook in
  * the Blobs buffer).
  */
-import { isDbDown, query, queryOne } from '../db/client';
+import { isDbDown, query as dbQuery } from '../db/client';
 import { ORDER_STATEMENTS } from '../db/schema';
 import type { PaymentEvent, PaymentProvider } from '../payments/types';
 
@@ -48,7 +48,7 @@ export interface Order {
 /**
  * How many times one purchase may be downloaded.
  *
- * Not DRM — the file is a PDF and the buyer can keep it. It is a bound on abuse:
+ * Not DRM ? the file is a PDF and the buyer can keep it. It is a bound on abuse:
  * a paid link posted publicly would otherwise let one dollar serve unlimited
  * server-side PDF renders. Generous enough that no honest buyer will meet it.
  */
@@ -106,11 +106,52 @@ function assertAvailable(): void {
   if (isDbDown()) throw new OrdersUnavailableError();
 }
 
+/**
+ * Is this failure the database being unreachable, or is it our SQL?
+ *
+ * The breaker only short-circuits calls made AFTER a failure, so the first
+ * request into an outage ? and every request during the breaker's half-open probe
+ * ? gets the driver's own error instead. Left untranslated it reaches the page as
+ * a 500, which is how an outage turned "my downloads" into a crash rather than the
+ * degraded notice the page is built to show.
+ *
+ * Deliberately matched on the message rather than on "did the breaker just trip",
+ * because the breaker trips on any failure including a missing table ? and that
+ * one must stay recognisable, since applyPaymentEvent repairs it.
+ */
+const OUTAGE_PATTERNS =
+  /circuit breaker|timed out|timeout|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNRESET|EPIPE|ETIMEDOUT|Connection terminated|terminating connection|server closed the connection|too many (clients|connections)|Pool not initialized|connection error|compute (is )?(suspended|quota)|exceeded.*quota/i;
+
+function isOutage(error: unknown): boolean {
+  return OUTAGE_PATTERNS.test((error as Error)?.message || '');
+}
+
+/**
+ * Every statement in this file goes through these, so a caller gets one of two
+ * honest answers: the data, or `OrdersUnavailableError`. Anything else ? bad SQL,
+ * a missing table ? propagates untouched, because those are bugs and dressing
+ * them up as an outage would hide them behind a retry.
+ */
+async function sql<T>(text: string, params?: unknown[]): Promise<T[]> {
+  assertAvailable();
+  try {
+    return await dbQuery<T>(text, params as any[]);
+  } catch (error) {
+    if (isOutage(error)) throw new OrdersUnavailableError();
+    throw error;
+  }
+}
+
+async function sqlOne<T>(text: string, params?: unknown[]): Promise<T | null> {
+  const rows = await sql<T>(text, params);
+  return rows.length > 0 ? rows[0] : null;
+}
+
 /** Idempotent. Called by the maintenance pass and by the webhook's repair path. */
 export async function ensureOrdersTable(): Promise<void> {
-  await query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+  await sql(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
   for (const statement of ORDER_STATEMENTS) {
-    await query(statement);
+    await sql(statement);
   }
 }
 
@@ -133,7 +174,7 @@ export async function createPendingOrder(input: {
   currency?: string;
 }): Promise<Order | null> {
   assertAvailable();
-  const rows = await query<OrderRow>(
+  const rows = await sql<OrderRow>(
     `INSERT INTO orders
        (provider, provider_checkout_id, reference, product, report_id, email, user_id, amount_cents, currency, status)
      VALUES ($1, $2, $3, 'bp_pdf', $4::uuid, $5, $6::uuid, $7, $8, 'pending')
@@ -165,7 +206,7 @@ export async function applyPaymentEvent(event: PaymentEvent): Promise<Order | nu
     return await applyPaymentEventOnce(event);
   } catch (error) {
     // The table is created by the maintenance pass, which runs every three hours
-    // — but the first purchase must not be the thing that waits for it. Create it
+    // ? but the first purchase must not be the thing that waits for it. Create it
     // and retry once; any other error is the caller's to handle (it buffers).
     if (!/relation .*orders.* does not exist/i.test((error as Error).message)) throw error;
     await ensureOrdersTable();
@@ -178,7 +219,7 @@ async function applyPaymentEventOnce(event: PaymentEvent): Promise<Order | null>
   assertAvailable();
 
   if (event.kind === 'refunded') {
-    const rows = await query<OrderRow>(
+    const rows = await sql<OrderRow>(
       `UPDATE orders
           SET status = 'refunded', refunded_at = COALESCE(refunded_at, NOW()), updated_at = NOW()
         WHERE provider = $1 AND provider_order_id = $2
@@ -204,7 +245,7 @@ async function applyPaymentEventOnce(event: PaymentEvent): Promise<Order | null>
   if (event.reference) claimBy.push(['reference', event.reference]);
 
   for (const [column, value] of claimBy) {
-    const claimed = await query<OrderRow>(
+    const claimed = await sql<OrderRow>(
       `UPDATE orders
           SET provider_order_id = $1,
               status = CASE WHEN status = 'refunded' THEN 'refunded' ELSE 'paid' END,
@@ -235,8 +276,8 @@ async function applyPaymentEventOnce(event: PaymentEvent): Promise<Order | null>
 
   // No pending row to adopt (a replayed event, or a checkout created while the
   // database was down): the unique provider_order_id makes this the idempotent
-  // path — a retry updates the same row instead of inserting a second purchase.
-  const rows = await query<OrderRow>(
+  // path ? a retry updates the same row instead of inserting a second purchase.
+  const rows = await sql<OrderRow>(
     `INSERT INTO orders
        (provider, provider_order_id, provider_checkout_id, reference, product, report_id, email, user_id,
         amount_cents, currency, status, paid_at)
@@ -275,7 +316,7 @@ async function applyPaymentEventOnce(event: PaymentEvent): Promise<Order | null>
 
 export async function getOrder(id: string): Promise<Order | null> {
   assertAvailable();
-  const row = await queryOne<OrderRow>(`SELECT ${COLUMNS} FROM orders WHERE id = $1`, [id]);
+  const row = await sqlOne<OrderRow>(`SELECT ${COLUMNS} FROM orders WHERE id = $1`, [id]);
   return row ? toOrder(row) : null;
 }
 
@@ -293,7 +334,7 @@ export async function findEntitlement(
   const userId = identity.userId || null;
   if (!email && !userId) return null;
 
-  const row = await queryOne<OrderRow>(
+  const row = await sqlOne<OrderRow>(
     `SELECT ${COLUMNS} FROM orders
       WHERE report_id = $1::uuid AND status = 'paid'
         AND ((LOWER(email) = $2 AND $2 IS NOT NULL) OR (user_id = $3::uuid AND $3 IS NOT NULL))
@@ -307,7 +348,7 @@ export async function findEntitlement(
 /** The order for one checkout attempt, so the success page can poll it. */
 export async function findOrderByCheckout(provider: PaymentProvider, checkoutId: string): Promise<Order | null> {
   assertAvailable();
-  const row = await queryOne<OrderRow>(
+  const row = await sqlOne<OrderRow>(
     `SELECT ${COLUMNS} FROM orders WHERE provider = $1 AND provider_checkout_id = $2
       ORDER BY created_at DESC LIMIT 1`,
     [provider, checkoutId]
@@ -324,7 +365,7 @@ export async function findOrderByCheckout(provider: PaymentProvider, checkoutId:
  */
 export async function findOrderByReference(reference: string): Promise<Order | null> {
   assertAvailable();
-  const row = await queryOne<OrderRow>(
+  const row = await sqlOne<OrderRow>(
     `SELECT ${COLUMNS} FROM orders WHERE reference = $1 ORDER BY created_at DESC LIMIT 1`,
     [reference]
   );
@@ -333,7 +374,7 @@ export async function findOrderByReference(reference: string): Promise<Order | n
 
 export async function listOrdersForUser(userId: string): Promise<Order[]> {
   assertAvailable();
-  const rows = await query<OrderRow>(
+  const rows = await sql<OrderRow>(
     `SELECT ${COLUMNS} FROM orders WHERE user_id = $1::uuid AND status <> 'pending'
       ORDER BY created_at DESC LIMIT 200`,
     [userId]
@@ -343,7 +384,7 @@ export async function listOrdersForUser(userId: string): Promise<Order[]> {
 
 export async function listOrdersForEmail(email: string): Promise<Order[]> {
   assertAvailable();
-  const rows = await query<OrderRow>(
+  const rows = await sql<OrderRow>(
     `SELECT ${COLUMNS} FROM orders WHERE LOWER(email) = $1 AND status <> 'pending'
       ORDER BY created_at DESC LIMIT 200`,
     [email.trim().toLowerCase()]
@@ -370,7 +411,7 @@ export async function listPurchases(identity: { userId?: string | null; email?: 
   const email = identity.email?.trim().toLowerCase() || null;
   if (!userId && !email) return [];
 
-  const rows = await query<OrderRow & { report_title: string | null; report_keyword: string | null }>(
+  const rows = await sql<OrderRow & { report_title: string | null; report_keyword: string | null }>(
     `SELECT ${COLUMNS.split(',')
       .map((c) => `o.${c.trim()}`)
       .join(', ')},
@@ -400,7 +441,7 @@ export async function listPurchases(identity: { userId?: string | null; email?: 
  */
 export async function attachOrdersToUser(email: string, userId: string): Promise<number> {
   assertAvailable();
-  const rows = await query<{ id: string }>(
+  const rows = await sql<{ id: string }>(
     `UPDATE orders SET user_id = $1::uuid, updated_at = NOW()
       WHERE LOWER(email) = $2 AND user_id IS NULL
       RETURNING id`,
@@ -417,14 +458,14 @@ export async function attachOrdersToUser(email: string, userId: string): Promise
  */
 export async function noteDownload(orderId: string): Promise<{ allowed: boolean; count: number }> {
   assertAvailable();
-  const row = await queryOne<{ download_count: number }>(
+  const row = await sqlOne<{ download_count: number }>(
     `UPDATE orders SET download_count = download_count + 1, last_downloaded_at = NOW(), updated_at = NOW()
       WHERE id = $1 AND status = 'paid' AND download_count < $2
       RETURNING download_count`,
     [orderId, MAX_DOWNLOADS_PER_ORDER]
   );
   if (row) return { allowed: true, count: Number(row.download_count) };
-  const current = await queryOne<{ download_count: number; status: string }>(
+  const current = await sqlOne<{ download_count: number; status: string }>(
     `SELECT download_count, status FROM orders WHERE id = $1`,
     [orderId]
   );
@@ -452,7 +493,7 @@ export interface RevenueSummary {
  */
 export async function revenueSummary(days = 30): Promise<RevenueSummary> {
   assertAvailable();
-  const totals = await queryOne<{
+  const totals = await sqlOne<{
     paid_orders: string;
     refunded_orders: string;
     gross_cents: string;
@@ -476,7 +517,7 @@ export async function revenueSummary(days = 30): Promise<RevenueSummary> {
      FROM orders`
   );
 
-  const daily = await query<{ day: string; orders: string; cents: string }>(
+  const daily = await sql<{ day: string; orders: string; cents: string }>(
     `SELECT TO_CHAR(DATE_TRUNC('day', paid_at), 'YYYY-MM-DD') AS day,
             COUNT(*) AS orders,
             COALESCE(SUM(amount_cents), 0) AS cents

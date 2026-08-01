@@ -457,5 +457,31 @@ curl -X POST "https://<站点>/.netlify/functions/pipeline-drain-background" \
 6. 退款：在后台退这几单 → `/orders` 状态变为已退款，旧下载链接 403 `order_refunded`。
 7. 认领：用同一邮箱注册 → 走认领魔术链接 → 游客订单归入账号。
 8. 越权：改 URL 里的 `reportId`（403 `token_scope`）、伪造 token（403）、用别人的 reference（只能开对应报告）。
-9. 断库演练：`npm run test:outage` 期间下单 → webhook 进缓冲、成功页仍给出下载、库恢复后订单出现在 `/orders`。
+9. 断库演练：`npm run test:outage` 期间下单 → webhook 进缓冲、成功页仍给出下载、库恢复后订单出现在 `/orders`。本地无真实卡时，用 `npm run test:pay` 覆盖签名 / 入库 / 退款 / 断库缓冲全路径（不碰真实供应商）。
 10. 域名切换演练：`node scripts/failover.mjs --to=standby` → 站点仍服务、支付仍可用（记得同步 webhook URL），再 `--to=primary` 切回。
+
+### 10.7 上线前你需要提供的凭据（缺一不可开收）
+
+代码与本地演练不依赖这些；**正式收第一美元**需要你填齐。当前状态（以对话为准）：
+
+| 凭据 | 状态 | 给谁 / 放哪 |
+|---|---|---|
+| Creem：API key、`$1` 产品 ID、webhook signing secret | **账号已注册，审核中** | 审核通过后：在 Creem 建 `$1 Report PDF` 产品；webhook URL 指到 `https://ioni.top/api/pay/webhook/creem`；密钥写入主站与备用站环境变量（`CREEM_*`） |
+| Lemon Squeezy：API key、store id、variant id、webhook secret | 待注册 | 备用通道；webhook → `/api/pay/webhook/lemonsqueezy` |
+| Resend：API key + `ioni.top` DNS 验证 | 待注册 | 游客魔术链接邮件；`RESEND_API_KEY` / `EMAIL_FROM` |
+| 第二 Netlify 账号 PAT（`13426086861@139.com`） | 待提供 | `NETLIFY_TOKEN_STANDBY`；然后：`node scripts/create-standby-site.mjs` → `node scripts/standby-env.mjs --from=.env.standby` |
+| （可选）阿里云 DNS AccessKey | 待提供 | 自动化 failover；没有则只做 Netlify 域名挪移，DNS 手工改 |
+
+一键建备用站并灌环境：
+
+```bash
+# 1) 第二账号 PAT
+NETLIFY_TOKEN_STANDBY=... node scripts/create-standby-site.mjs
+# 2) 填 .env.standby（见 .env.standby.example；SITE_ROLE 由脚本强制为 reader）
+NETLIFY_TOKEN_STANDBY=... NETLIFY_SITE_ID_STANDBY=... node scripts/standby-env.mjs --from=.env.standby
+# 3) 触发部署后灌快照
+BASE_URL=https://<standby>.netlify.app CRON_SECRET=... node scripts/snapshot-bootstrap.mjs
+# 4) GitHub Actions Variables/Secrets：STANDBY_BASE_URL、NETLIFY_TOKEN_STANDBY、NETLIFY_SITE_ID_STANDBY
+```
+
+Creem 审核期间：买入口保持隐藏（未配密钥时 `paymentsEnabled()` 为 false）；本地用 `npm run test:pay` 把支付路径跑绿；审核通过当天填密钥 → 跑 §10.6 → 再切域名。

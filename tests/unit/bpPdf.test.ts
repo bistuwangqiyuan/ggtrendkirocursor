@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { pdfFilename, renderBpPdf } from '../../src/lib/pdf/bpPdf';
+import { contentDisposition, pdfFilename, renderBpPdf } from '../../src/lib/pdf/bpPdf';
 import { truncateToWidth, tokenize, wrapText } from '../../src/lib/pdf/layout';
 import type { BpContent, BpReport } from '../../src/types';
 
@@ -168,5 +168,16 @@ describe('renderBpPdf', () => {
   it('falls back to a usable filename when there is no title', () => {
     const name = pdfFilename(report({ contentJson: null, keyword: '///' }));
     expect(name).toBe('report-2026-08-01.pdf');
+  });
+
+  it('keeps Content-Disposition ASCII-safe for Chinese titles', () => {
+    // undici throws if a header value contains a code point > 255 — that is what
+    // made every Chinese PDF download return render_failed after a successful render.
+    const header = contentDisposition(pdfFilename(report()));
+    for (let i = 0; i < header.length; i++) {
+      expect(header.charCodeAt(i)).toBeLessThanOrEqual(255);
+    }
+    expect(header).toMatch(/^attachment; filename="[^"]+"; filename\*=UTF-8''/);
+    expect(header).toContain(encodeURIComponent(pdfFilename(report())));
   });
 });

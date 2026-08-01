@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { PaymentEvent } from '../../src/lib/payments/types';
 
 const query = vi.fn();
-const queryOne = vi.fn();
 const isDbDown = vi.fn(() => false);
 
-vi.mock('../../src/lib/db/client', () => ({ query, queryOne, isDbDown }));
+// orders.ts routes every statement through `query` (as dbQuery) and translates
+// outages into OrdersUnavailableError. queryOne is no longer imported.
+vi.mock('../../src/lib/db/client', () => ({ query, isDbDown }));
 
 const {
   applyPaymentEvent,
@@ -44,7 +45,7 @@ function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 function sql(): string[] {
-  return [...query.mock.calls, ...queryOne.mock.calls].map((c) => String(c[0]).replace(/\s+/g, ' '));
+  return query.mock.calls.map((c) => String(c[0]).replace(/\s+/g, ' '));
 }
 
 const paidEvent: PaymentEvent = {
@@ -63,7 +64,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   isDbDown.mockReturnValue(false);
   query.mockResolvedValue([]);
-  queryOne.mockResolvedValue(null);
 });
 
 describe('outage behaviour', () => {
@@ -79,7 +79,14 @@ describe('outage behaviour', () => {
     await expect(listPurchases({ email: 'buyer@example.com' })).rejects.toBeInstanceOf(OrdersUnavailableError);
     await expect(attachOrdersToUser('buyer@example.com', 'user-1')).rejects.toBeInstanceOf(OrdersUnavailableError);
     expect(query).not.toHaveBeenCalled();
-    expect(queryOne).not.toHaveBeenCalled();
+  });
+
+  it('translates a connection failure into OrdersUnavailableError, not a 500', async () => {
+    // The breaker only short-circuits AFTER a failure. The first request into an
+    // outage gets the driver's own error; without this translation the orders
+    // page 500s instead of showing its degraded notice.
+    query.mockRejectedValue(new Error('ECONNREFUSED 192.0.2.1:5432'));
+    await expect(listPurchases({ email: 'buyer@example.com' })).rejects.toBeInstanceOf(OrdersUnavailableError);
   });
 });
 
@@ -152,8 +159,9 @@ describe('applyPaymentEvent', () => {
   });
 
   it('does not swallow other errors behind a table-creation retry', async () => {
-    query.mockRejectedValue(new Error('connection terminated'));
-    await expect(applyPaymentEvent(paidEvent)).rejects.toThrow(/connection terminated/);
+    // A syntax error is a bug, not an outage — it must stay recognisable.
+    query.mockRejectedValue(new Error('syntax error at or near "ORDERS"'));
+    await expect(applyPaymentEvent(paidEvent)).rejects.toThrow(/syntax error/);
     expect(sql().some((s) => s.includes('CREATE TABLE'))).toBe(false);
   });
 
@@ -195,29 +203,29 @@ describe('createPendingOrder', () => {
 
 describe('entitlement', () => {
   it('accepts either the account or the email, and only paid orders', async () => {
-    queryOne.mockResolvedValueOnce(row());
+    query.mockResolvedValueOnce([row()]);
     const order = await findEntitlement('report-1', { userId: 'user-1', email: 'BUYER@example.com' });
     expect(order?.status).toBe('paid');
     expect(sql()[0]).toContain("status = 'paid'");
-    expect(queryOne.mock.calls[0][1]).toEqual(['report-1', 'buyer@example.com', 'user-1']);
+    expect(query.mock.calls[0][1]).toEqual(['report-1', 'buyer@example.com', 'user-1']);
   });
 
   it('does not query at all without an identity', async () => {
     expect(await findEntitlement('report-1', {})).toBeNull();
-    expect(queryOne).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
   });
 });
 
 describe('download counting', () => {
   it('checks and increments in one statement so parallel clicks cannot both pass', async () => {
-    queryOne.mockResolvedValueOnce({ download_count: 3 });
+    query.mockResolvedValueOnce([{ download_count: 3 }]);
     expect(await noteDownload('order-1')).toEqual({ allowed: true, count: 3 });
     expect(sql()[0]).toMatch(/UPDATE orders SET download_count = download_count \+ 1/);
-    expect(queryOne.mock.calls[0][1]).toEqual(['order-1', MAX_DOWNLOADS_PER_ORDER]);
+    expect(query.mock.calls[0][1]).toEqual(['order-1', MAX_DOWNLOADS_PER_ORDER]);
   });
 
   it('reports the current count when the cap is reached', async () => {
-    queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ download_count: 20, status: 'paid' });
+    query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ download_count: 20, status: 'paid' }]);
     expect(await noteDownload('order-1')).toEqual({ allowed: false, count: 20 });
   });
 });
@@ -248,18 +256,21 @@ describe('claiming and listing', () => {
 
 describe('revenueSummary', () => {
   it('reports net separately from gross so refunds are not hidden', async () => {
-    queryOne.mockResolvedValueOnce({
-      paid_orders: '10',
-      refunded_orders: '2',
-      gross_cents: '1000',
-      refunded_cents: '200',
-      last7: '300',
-      last30: '900',
-      downloads: '17',
-      first_paid_at: new Date('2026-08-01T00:00:00Z'),
-      last_paid_at: new Date('2026-08-05T00:00:00Z'),
-    });
-    query.mockResolvedValueOnce([{ day: '2026-08-05', orders: '1', cents: '100' }]);
+    query
+      .mockResolvedValueOnce([
+        {
+          paid_orders: '10',
+          refunded_orders: '2',
+          gross_cents: '1000',
+          refunded_cents: '200',
+          last7: '300',
+          last30: '900',
+          downloads: '17',
+          first_paid_at: new Date('2026-08-01T00:00:00Z'),
+          last_paid_at: new Date('2026-08-05T00:00:00Z'),
+        },
+      ])
+      .mockResolvedValueOnce([{ day: '2026-08-05', orders: '1', cents: '100' }]);
 
     const summary = await revenueSummary(30);
     expect(summary).toMatchObject({

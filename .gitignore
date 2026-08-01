@@ -52,3 +52,6 @@ coverage/
 
 # Local snapshot store (filesystem fallback for Netlify Blobs)
 .snapshots/
+
+.env.standby
+

@@ -20,7 +20,7 @@
 import type { APIRoute } from 'astro';
 import { bpService } from '../../../../lib/services/bp';
 import { getBpByIdFromSnapshot } from '../../../../lib/cache/snapshotReaders';
-import { pdfFilename, renderBpPdf } from '../../../../lib/pdf/bpPdf';
+import { contentDisposition, pdfFilename, renderBpPdf } from '../../../../lib/pdf/bpPdf';
 import { verifyToken } from '../../../../lib/payments/tokens';
 import { getOrder, MAX_DOWNLOADS_PER_ORDER, noteDownload, OrdersUnavailableError } from '../../../../lib/services/orders';
 import { recordError } from '../../../../lib/observability/errorLog';
@@ -101,7 +101,7 @@ export const GET: APIRoute = async ({ params, request, url, locals }) => {
   }
 
   // The snapshot first, as everywhere else, so a download does not wake Neon.
-  let report: BpReport | null = await getBpByIdFromSnapshot(reportId);
+  let report: BpReport | null = (await getBpByIdFromSnapshot(reportId)).data;
   if (!report?.contentJson) {
     const fresh = await bpService.getById(reportId);
     if (fresh.success) report = fresh.data;
@@ -144,19 +144,25 @@ export const GET: APIRoute = async ({ params, request, url, locals }) => {
       );
     }
 
-    return new Response(rendered.bytes as unknown as BodyInit, {
+    // Node's fetch/Response accepts Buffer more reliably than a detached
+    // Uint8Array view across the Astro adapter boundary.
+    return new Response(Buffer.from(rendered.bytes), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${pdfFilename(report)}"`,
+        // Must stay ASCII-safe — see contentDisposition(). Putting a Chinese
+        // title straight into this header is what made every CJK download 500.
+        'Content-Disposition': contentDisposition(pdfFilename(report)),
         'Content-Length': String(rendered.bytes.length),
         // A paid file must never be cached by a shared cache.
         'Cache-Control': 'private, no-store',
       },
     });
   } catch (error) {
+    const message = (error as Error).message || String(error);
+    console.error(`[download] PDF render failed for ${reportId}:`, message, (error as Error).stack);
     recordError('pdf', error, { route: '/api/download/bp/[id]', context: { reportId } });
-    await paymentAlert('download_failed', `PDF render failed for report ${reportId}: ${(error as Error).message}`, {
+    await paymentAlert('download_failed', `PDF render failed for report ${reportId}: ${message}`, {
       reportId,
     });
     return problem(500, 'render_failed', 'The report could not be rendered. Your purchase is not lost — please retry.');
