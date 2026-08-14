@@ -14,6 +14,8 @@ describe('detectModelFamily', () => {
     expect(detectModelFamily('qwen-plus')).toBe('qwen');
     expect(detectModelFamily('qwen3-max')).toBe('qwen');
     expect(detectModelFamily('deepseek-chat')).toBe('deepseek');
+    expect(detectModelFamily('deepseek-v4-pro')).toBe('deepseek');
+    expect(detectModelFamily('deepseek-v4-flash', 'https://api.deepseek.com')).toBe('deepseek');
     expect(detectModelFamily('gpt-4o')).toBe('gpt');
     expect(detectModelFamily('claude-3-7-sonnet')).toBe('claude');
     expect(detectModelFamily('gemini-2.5-pro')).toBe('gemini');
@@ -35,6 +37,8 @@ describe('extractModelVersion', () => {
     expect(extractModelVersion('claude-3-7-sonnet')).toEqual({ major: 3, minor: 7 });
     expect(extractModelVersion('gpt-4o-2024-08-06')).toEqual({ major: 4, minor: 0 });
     expect(extractModelVersion('deepseek-chat')).toEqual({ major: 0, minor: 0 });
+    expect(extractModelVersion('deepseek-v4-pro')).toEqual({ major: 4, minor: 0 });
+    expect(extractModelVersion('deepseek-v4-flash')).toEqual({ major: 4, minor: 0 });
   });
 
   test('does not treat dated snapshot tags as a version number', () => {
@@ -111,10 +115,21 @@ describe('pickBestModel', () => {
   test('returns the configured model when the listing is empty', () => {
     expect(pickBestModel([], 'glm', 'glm-4')).toBe('glm-4');
   });
+
+  test('auto-upgrades deepseek-chat to deepseek-v4-pro (not flash)', () => {
+    const ids = ['deepseek-chat', 'deepseek-v4-flash', 'deepseek-v4-pro'];
+    expect(pickBestModel(ids, 'deepseek', 'deepseek-chat')).toBe('deepseek-v4-pro');
+  });
+
+  test('does not treat deepseek-v4 as a vision/specialized variant', () => {
+    const ids = ['deepseek-v4-pro', 'deepseek-v4-flash'];
+    expect(pickBestModel(ids, 'deepseek', 'deepseek-v4-flash')).toBe('deepseek-v4-pro');
+  });
 });
 
 describe('providerRank', () => {
   test('uses curated defaults', () => {
+    expect(providerRank('deepseek')).toBeGreaterThan(providerRank('gpt'));
     expect(providerRank('gpt')).toBeGreaterThan(providerRank('qwen'));
     expect(providerRank('glm')).toBeGreaterThan(providerRank('kimi'));
     expect(providerRank('unknown-thing')).toBe(50);

@@ -35,11 +35,11 @@ const MODELS_FETCH_TIMEOUT_MS = 6000;
  * the LLM_PROVIDER_RANK env (JSON map, e.g. {"glm":99,"qwen":80}).
  */
 const DEFAULT_PROVIDER_RANK: Record<string, number> = {
+  deepseek: 99,
   gpt: 95,
   claude: 94,
   gemini: 92,
   glm: 90,
-  deepseek: 88,
   qwen: 86,
   grok: 84,
   kimi: 80,
@@ -50,7 +50,7 @@ const DEFAULT_PROVIDER_RANK: Record<string, number> = {
  * with the app's response_format=json_object + temperature chat contract). The
  * configured model is always exempt (see pickBestModel). */
 const EXCLUDE_RE =
-  /(embedding|embed|rerank|vision|-v\b|-v\d|image|cogview|flux|stable|paint|audio|tts|asr|whisper|voice|realtime|moderation|guard|ocr|video|search|coder|code-|-code|math|rerank|detect|caption)/i;
+  /(embedding|embed|rerank|vision|-vl\b|image|cogview|flux|stable|paint|audio|tts|asr|whisper|voice|realtime|moderation|guard|ocr|video|search|coder|code-|-code|math|rerank|detect|caption)/i;
 
 /** Tier keywords -> weight. Flagship tiers win within a generation. */
 const TIER_RULES: { re: RegExp; weight: number }[] = [

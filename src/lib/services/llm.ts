@@ -5,7 +5,7 @@
  *   LLM_API_KEY, LLM_API_BASE, LLM_MODEL
  *
  * Multiple endpoints (auto-switch on failure):
- *   LLM_API_ENDPOINTS='[{"name":"dashscope","base":"https://...","key":"sk-...","model":"qwen-plus"},...]'
+ *   LLM_API_ENDPOINTS='[{"name":"deepseek","base":"https://api.deepseek.com","key":"sk-...","model":"deepseek-v4-pro"},...]'
  *
  * Shared:
  *   LLM_TIMEOUT_MS (default 45000)
@@ -18,8 +18,8 @@ import {
   getCachedResolvedModel,
 } from './modelRegistry';
 
-const DEFAULT_BASE = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-const DEFAULT_MODEL = 'qwen-plus';
+const DEFAULT_BASE = 'https://api.deepseek.com';
+const DEFAULT_MODEL = 'deepseek-v4-pro';
 const DEFAULT_TIMEOUT_MS = 45000;
 /** Skip endpoints that failed recently (ms). */
 const ENDPOINT_COOLDOWN_MS = 120_000;
@@ -244,6 +244,12 @@ async function chatOnce(
           { role: 'system', content: opts.systemPrompt },
           { role: 'user', content: opts.userPrompt },
         ],
+        // DeepSeek V4 defaults to thinking mode, which can consume the token
+        // budget and return empty `content`. JSON generation needs the payload
+        // in `content`, so disable thinking for this family only.
+        ...(detectModelFamily(endpoint.model, endpoint.base) === 'deepseek'
+          ? { thinking: { type: 'disabled' } }
+          : {}),
       }),
     });
 
