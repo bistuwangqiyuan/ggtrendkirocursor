@@ -92,7 +92,7 @@ flowchart TD
 ## LLM 编排与 JSON 契约
 
 - 接口：`POST {LLM_API_BASE}/chat/completions`，Header `Authorization: Bearer {LLM_API_KEY}`，body `{ model, messages, temperature, response_format:{type:'json_object'} }`。
-- 默认：`LLM_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1`，`LLM_MODEL=qwen-plus`（均可被环境变量覆盖）。
+- 默认：`LLM_API_BASE=https://api.deepseek.com`，`LLM_MODEL=deepseek-v4-pro`（均可被环境变量覆盖）。
 - 超时：`AbortController` + `LLM_TIMEOUT_MS`（默认 45000）；失败/解析失败重试 1 次。
 - 输出契约（强制 JSON）：
 

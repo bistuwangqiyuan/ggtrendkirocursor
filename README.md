@@ -55,12 +55,12 @@ NODE_ENV=development
 
 # Option A: single OpenAI-compatible endpoint
 LLM_API_KEY=sk-xxxx
-LLM_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1   # default if unset
-LLM_MODEL=qwen-plus                                              # default if unset
+LLM_API_BASE=https://api.deepseek.com                            # default if unset
+LLM_MODEL=deepseek-v4-pro                                        # default if unset
 
 # Option B: multiple endpoints with auto-failover (takes precedence over Option A)
 # On failure (timeout / HTTP 4xx-5xx / auth), the next endpoint is tried automatically.
-# LLM_API_ENDPOINTS=[{"name":"dashscope","base":"https://dashscope.aliyuncs.com/compatible-mode/v1","key":"sk-xxx","model":"qwen-plus"},{"name":"openai","base":"https://api.openai.com/v1","key":"sk-yyy","model":"gpt-4o-mini"}]
+# LLM_API_ENDPOINTS=[{"name":"deepseek","base":"https://api.deepseek.com","key":"sk-xxx","model":"deepseek-v4-pro"},{"name":"dashscope","base":"https://dashscope.aliyuncs.com/compatible-mode/v1","key":"sk-yyy","model":"qwen-plus"}]
 
 LLM_TIMEOUT_MS=45000
 

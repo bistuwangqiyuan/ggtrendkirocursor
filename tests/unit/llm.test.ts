@@ -62,7 +62,7 @@ describe('parseLlmEndpoints', () => {
     expect(eps).toHaveLength(2);
     expect(eps[0].name).toBe('a');
     expect(eps[1].apiKey).toBe('key-b');
-    expect(eps[1].model).toBe('qwen-plus'); // default
+    expect(eps[1].model).toBe('deepseek-v4-pro'); // default
   });
 
   test('skips entries without keys', () => {
